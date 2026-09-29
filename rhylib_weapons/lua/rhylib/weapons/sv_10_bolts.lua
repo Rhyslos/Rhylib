@@ -98,7 +98,7 @@ local function sendShot(owner, weapon, origin, dir, speed)
 end
 
 -- Called from the weapon's PrimaryAttack on the server.
-function Bolts.Fire(owner, weapon, origin, dir)
+function Bolts.Fire(owner, weapon, origin, dir, damage)
     local speed = weapon.BoltSpeed
     local bolt = {
         owner = owner,
@@ -106,7 +106,7 @@ function Bolts.Fire(owner, weapon, origin, dir)
         pos = origin,
         dir = dir,
         speed = speed,
-        damage = weapon.Damage,
+        damage = damage or weapon.Damage,
         die = CurTime() + Config.Get("weapons", "boltLife"),
     }
 

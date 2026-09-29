@@ -29,7 +29,14 @@ local matGlow = Material("sprites/light_glow02_add")
 local function muzzlePos(shooter, fallback)
     if not IsValid(shooter) then return fallback end
 
-    if shooter == LocalPlayer() and not shooter:ShouldDrawLocalPlayer() then
+    local firstPerson = shooter == LocalPlayer() and not shooter:ShouldDrawLocalPlayer()
+    local active = shooter.GetActiveWeapon and shooter:GetActiveWeapon()
+    if IsValid(active) and active.GetPropMuzzle then
+        local p = active:GetPropMuzzle(firstPerson)
+        if p then return p end
+    end
+
+    if firstPerson then
         local vm = shooter:GetViewModel()
         local att = IsValid(vm) and vm:GetAttachment(1)
         return att and att.Pos or fallback
