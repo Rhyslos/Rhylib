@@ -157,8 +157,7 @@ function PANEL:Paint(pw, ph)
     end
 end
 
-function PANEL:DragTarget()
-    local d = self.drag
+function PANEL:DragTarget(d)
     local mx, my = self:CursorPos()
     local cx, cy = self:CellAt(mx, my)
     return cx - d.offX, cy - d.offY
@@ -166,7 +165,7 @@ end
 
 function PANEL:PaintDrag(s)
     local d = self.drag
-    local tx, ty = self:DragTarget()
+    local tx, ty = self:DragTarget(d)
     local w, h = Items.Size(d.inst.id, d.rot)
     local inside = tx >= 0 and ty >= 0 and tx + w <= Inv.w and ty + h <= Inv.h
 
@@ -249,7 +248,7 @@ function PANEL:OnMouseReleased(code)
         return
     end
 
-    local tx, ty = self:DragTarget()
+    local tx, ty = self:DragTarget(d)
     if tx ~= d.inst.x or ty ~= d.inst.y or d.rot ~= d.inst.rot then
         Inv.RequestMove(d.inst, tx, ty, d.rot)
     end
