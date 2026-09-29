@@ -10,11 +10,13 @@
             category = "ammo",     -- weapon, ammo, medical, gear, misc (sets the colour)
             model = "models/items/boxmrounds.mdl",  -- used when dropped
         })
+    Optional: large = true (not allowed in backpacks), slot = "back" (worn
+    in the back slot), grid = { 5, 2 } (a worn item that adds a grid).
 
     Weapons become items automatically if their SWEP table sets InvW/InvH.
 
-    An item instance in a container:
-        { uid, id, x, y, rot, count, data }
+    An item instance:
+        { uid, c, id, x, y, rot, count, data }     -- c = container id (see below)
     x, y are the top-left cell (0-based). rot swaps width and height.
     Only items with fill = true stack when full; partly used ones stay single.
 
@@ -108,6 +110,16 @@ Rhylib.Hook.Add("InitPostEntity", "inventory.items", function()
     Items.EnsureReady()
 end, -10)
 
+-- Placeholder model; no bodygroups yet.
+Items.Register("backpack", {
+    name = "Backpack",
+    w = 2, h = 2,
+    category = "gear",
+    slot = "back",
+    grid = { 5, 2 },
+    model = "models/props_c17/suitcase001a.mdl",
+})
+
 --------------------------------------------------------------------------
 -- Grid rules (used by the server to validate and the client to preview)
 --------------------------------------------------------------------------
@@ -163,12 +175,60 @@ function Items.MergeTarget(items, inst, x, y)
 end
 
 --------------------------------------------------------------------------
+-- Containers
+--
+-- A player has up to three containers, each with its own items table:
+--   1  main grid (5 x 3)
+--   2  backpack grid, only while a backpack is worn (size from the backpack)
+--   3  back slot: holds one item with slot = "back"
+-- Both server and client keep state shaped like { cont = { [id] = { w, h, items } } }
+-- so the same placement rules run on both.
+--------------------------------------------------------------------------
+
+Items.MAIN = 1
+Items.BACK = 2
+Items.SLOT_BACK = 3
+Items.CONT_BITS = 2
+
+-- Which items a container accepts at all.
+function Items.ContainerAllows(cid, def)
+    if cid == Items.SLOT_BACK then return def.slot == "back" end
+    if cid == Items.BACK then return not def.large and not def.grid end
+    return true
+end
+
+-- Can item `id` go to container cid at x, y? ignoreUid: the item being moved.
+function Items.CanPlace(state, id, cid, x, y, rot, ignoreUid)
+    local def = Items.defs[id]
+    local c = state.cont[cid]
+    if not def or not c or not Items.ContainerAllows(cid, def) then return false end
+    if cid == Items.SLOT_BACK then
+        if x ~= 0 or y ~= 0 then return false end
+        for uid in pairs(c.items) do
+            if uid ~= ignoreUid then return false end
+        end
+        return true
+    end
+    return Items.Fits(c.w, c.h, c.items, id, x, y, rot, ignoreUid)
+end
+
+-- A worn backpack can only come off when it's empty.
+function Items.CanLeave(state, inst)
+    if inst.c == Items.SLOT_BACK then
+        local back = state.cont[Items.BACK]
+        if back and next(back.items) ~= nil then return false end
+    end
+    return true
+end
+
+--------------------------------------------------------------------------
 -- Network encoding: about 6 bytes per item
 --------------------------------------------------------------------------
 
 function Items.WriteInstance(inst)
     local def = Items.defs[inst.id]
     net.WriteUInt(inst.uid, Items.UID_BITS)
+    net.WriteUInt(inst.c or Items.MAIN, Items.CONT_BITS)
     net.WriteUInt(Items.NetId(inst.id), Items.NET_BITS)
     net.WriteUInt(inst.x, Items.POS_BITS)
     net.WriteUInt(inst.y, Items.POS_BITS)
@@ -181,6 +241,7 @@ end
 
 function Items.ReadInstance()
     local uid = net.ReadUInt(Items.UID_BITS)
+    local c = net.ReadUInt(Items.CONT_BITS)
     local def = Items.FromNet(net.ReadUInt(Items.NET_BITS))
     local x = net.ReadUInt(Items.POS_BITS)
     local y = net.ReadUInt(Items.POS_BITS)
@@ -188,5 +249,5 @@ function Items.ReadInstance()
     local count = net.ReadUInt(Items.COUNT_BITS)
     local data = {}
     if def and def.fill then data.fill = net.ReadUInt(8) / 255 end
-    return { uid = uid, id = def and def.id, x = x, y = y, rot = rot, count = count, data = data }
+    return { uid = uid, c = c, id = def and def.id, x = x, y = y, rot = rot, count = count, data = data }
 end
