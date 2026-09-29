@@ -1,0 +1,17 @@
+# Built Workshop packages
+*.gma
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+
+# Local test data
+sv.db
+cl.db
+
+Clone Wars RP suite – project plan.pdf
+CLAUDE.md
