@@ -40,7 +40,7 @@ local G = W.Grapple
 
 G.ITEM = "grapple"
 G.AMMO = "rhylib_grapple"
-G.MAX_POINTS = 10
+G.MAX_POINTS = 16  -- must match the network vars in rhylib_rope.lua
 G.DT_ROPE = 31
 G.DT_S = 27
 G.DT_MANTLE = 27

@@ -6,8 +6,8 @@
     reach every player who comes near, once. Press E on the hook to pick
     it back up (not while anyone is climbing).
 
-    Looks: the hook is a small black block (about pickle size) sticking out
-    of the surface, the rope a dark grey line. Both are drawn directly, no
+    Looks: the hook is a small dark grey block sticking out
+    of the surface, the rope a black line. Both are drawn directly, no
     model. The hook's use box is a bit bigger than it looks, so it's easy
     to press E on.
 ]]
@@ -31,7 +31,7 @@ function ENT:SetupDataTables()
     self:NetworkVar("Bool", 0, "HasLedge")
     self:NetworkVar("Vector", 0, "Ledge")     -- where a climber stands after going over the top
     self:NetworkVar("Float", 0, "Born")       -- when the rope started lowering
-    for i = 1, 10 do
+    for i = 1, 16 do  -- G.MAX_POINTS
         self:NetworkVar("Vector", i, "P" .. i)          -- rope points, hook first
         self:NetworkVar("Angle", i - 1, "N" .. i)       -- wall normal of segment i, as an angle
     end
@@ -160,10 +160,10 @@ if SERVER then
 end
 
 if CLIENT then
-    local COL_ROPE = Color(58, 60, 62)          -- dark grey
-    local COL_HOOK = Color(14, 14, 14)          -- black
-    local HOOK_MINS = Vector(-1.5, -1, -1)      -- along the surface normal: 1.5 in, 4.5 out
-    local HOOK_MAXS = Vector(4.5, 1, 1)         -- about 11 x 4 x 4 cm
+    local COL_ROPE = Color(14, 14, 14)          -- black
+    local COL_HOOK = Color(58, 60, 62)          -- dark grey
+    local HOOK_MINS = Vector(-2.25, -1.5, -1.5)  -- along the surface normal: 2.25 in, 6.75 out
+    local HOOK_MAXS = Vector(6.75, 1.5, 1.5)    -- about 17 x 6 x 6 cm
 
     function ENT:Draw()
         -- No DrawModel: the hook and rope are drawn as plain shapes.
@@ -185,8 +185,8 @@ if CLIENT then
         end
 
         render.StartBeam(last + (tip and 1 or 0))
-        for i = 1, last do render.AddBeam(pts[i], 1.2, 0, COL_ROPE) end
-        if tip then render.AddBeam(tip, 1.2, 0, COL_ROPE) end
+        for i = 1, last do render.AddBeam(pts[i], 1.8, 0, COL_ROPE) end
+        if tip then render.AddBeam(tip, 1.8, 0, COL_ROPE) end
         render.EndBeam()
     end
 end

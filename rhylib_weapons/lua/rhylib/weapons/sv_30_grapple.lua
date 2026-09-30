@@ -13,8 +13,8 @@
       - Hook on a wall: hang from there. If the hook is just below the top
         of the wall and there's room to stand up there, that's the ledge.
       - Hook on a ceiling: hang straight down.
-    Then the rope drops, sliding down slopes it lands on, until it reaches
-    walkable ground, runs out of length or points.
+    Then the rope drops, sliding down any slope it lands on (walkable or
+    not), until the ground is nearly flat or it runs out of length or points.
 ]]
 
 local W = Rhylib.Weapons
@@ -22,6 +22,7 @@ local G = W.Grapple
 local Config = Rhylib.Config
 
 local UP = Vector(0, 0, 1)
+local FLAT = 0.95  -- surface normal z at or above this = flat ground (under about 18 degrees): the rope stops
 local DOWN = Vector(0, 0, -1)
 local HULL_MIN, HULL_MAX = Vector(-16, -16, 0), Vector(16, 16, 72)
 
@@ -70,8 +71,8 @@ function G.BuildRope(hitPos, hitNormal, shootDir)
     local top, ledge = 1, nil
     local cur, wallN
 
-    if hitNormal.z > 0.7 then
-        -- On top of something: find the edge back toward the shooter.
+    if hitNormal.z >= FLAT then
+        -- On top of something flat: find the edge back toward the shooter.
         local back = flat(-shootDir)
         if not back then return nil, "No edge to hang the rope from" end
         local edge
@@ -93,7 +94,8 @@ function G.BuildRope(hitPos, hitNormal, shootDir)
         pts[1] = hitPos + hitNormal * 2
         cur, wallN = pts[1], nil
     else
-        -- Wall: hang from the hook, and look for a ledge just above it.
+        -- Wall or slope: hang from the hook (the drop below slides down a
+        -- slope), and look for a ledge just above it.
         wallN = flat(hitNormal)
         if not wallN then return nil, "The hook couldn't grip there" end
         pts[1] = hitPos + wallN * 3
@@ -119,8 +121,8 @@ function G.BuildRope(hitPos, hitNormal, shootDir)
         local mid = (pts[#pts] + hit) * 0.5
         nrm[#pts] = (wallN and wallBehind(mid, wallN)) and wallN or nil
 
-        if not didHit or hitN.z > 0.7 then
-            -- Dangling in the air, or down on walkable ground.
+        if not didHit or hitN.z >= FLAT then
+            -- Dangling in the air, or down on flat ground.
             pts[#pts + 1] = didHit and hit + UP * 2 or hit
             break
         end
@@ -133,7 +135,7 @@ function G.BuildRope(hitPos, hitNormal, shootDir)
         if slide:LengthSqr() < 0.0001 then break end
         slide:Normalize()
         local s = trace(p, p + slide * math.min(remaining, 400))
-        local sHit, sGround = s.Hit, s.Hit and s.HitNormal.z > 0.7
+        local sHit, sGround = s.Hit, s.Hit and s.HitNormal.z >= FLAT
         local sEnd = s.HitPos + (sHit and s.HitNormal * 3 or Vector(0, 0, 0))
         remaining = remaining - p:Distance(sEnd)
         nrm[#pts] = hitN
