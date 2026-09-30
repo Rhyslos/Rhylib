@@ -1,0 +1,429 @@
+--[[
+    Outside containers ("storages"): anything a player opens next to their
+    own inventory, like a locker, a supply crate or an armoury.
+
+    Two kinds:
+      grid   a normal container with its own items (lockers, crates).
+      depot  an endless supply: one of each stocked item, always there.
+             Taking one gives a fresh, full, *issued* item; putting a
+             stocked item back just removes it.
+
+    Other addons create them on an entity:
+        Inv.CreateStorage(ent, {
+            kind = "grid", w = 6, h = 6, title = "Locker",
+            onChanged = function(storage) ... end,   -- save it, etc.
+            controls = function(storage, ply) return { canLock = true, locked = false } end,
+        })
+        Inv.CreateStorage(ent, { kind = "depot", title = "Armoury", stock = { "rhylib_dc15s", ... } })
+        Inv.OpenStorage(ply, ent)
+
+    One open storage per player, shown as container Items.EXT (4) in the
+    inventory window. Everyone looking into the same storage sees changes.
+    Storages close when you walk away, die, or the entity is removed.
+
+    Network:
+      inv.ext     (to one player) open with the full contents, or closed
+      inv.extupd  (batched, to viewers) item changed / removed
+      inv.take    (request) storage item -> your container at x, y
+      inv.extmove (request) move within a grid storage
+      inv.close   (request) you closed the window
+]]
+
+local Inv = Rhylib.Inventory
+local Items = Rhylib.Items
+local I = Inv.Internal
+
+local EXT = Items.EXT
+local SLOT_BACK = Items.SLOT_BACK
+local OP_REMOVE, OP_SET = 0, 1
+local MAX_DIST = 160
+
+Inv.storages = Inv.storages or {}  -- [entity] = storage
+
+Rhylib.Net.Register("inv.ext")
+local extBatch = Rhylib.Net.CreateBatch("inv.extupd", function(ch)
+    net.WriteUInt(ch.op, 1)
+    if ch.op == OP_SET then
+        Items.WriteInstance(ch.inst)
+    else
+        net.WriteUInt(ch.uid, Items.UID_BITS)
+    end
+end)
+
+--------------------------------------------------------------------------
+-- Creating
+--------------------------------------------------------------------------
+
+local function nextUid(storage)
+    for _ = 1, 65535 do
+        local uid = storage.nextUid
+        storage.nextUid = uid % 65535 + 1
+        if not storage.items[uid] then return uid end
+    end
+end
+
+-- Lays the depot's stock out in a grid, one of each, like a shop shelf.
+local function layoutDepot(storage)
+    Items.EnsureReady()
+    local c = { w = storage.w, h = 16, items = {} }
+    local used = 0
+    for i, id in ipairs(storage.stock) do
+        local def = Items.defs[id]
+        if def then
+            -- Lying flat reads best on a shelf; only turn it if it can't fit flat.
+            local x, y, rot
+            for yy = 0, c.h - 1 do
+                for xx = 0, c.w - 1 do
+                    if not x and Items.Fits(c.w, c.h, c.items, id, xx, yy, false) then x, y, rot = xx, yy, false end
+                end
+            end
+            if not x then x, y, rot = Items.FindSpot(c, id) end
+            if x then
+                local h = rot and def.w or def.h
+                local inst = { uid = i, id = id, x = x, y = y, rot = rot, c = EXT,
+                    count = def.weapon and 1 or def.stack, data = def.fill and { fill = 1 } or {} }
+                c.items[i] = inst
+                used = math.max(used, y + h)
+            end
+        end
+    end
+    storage.items = c.items
+    storage.h = math.max(used, 1)
+end
+
+function Inv.CreateStorage(ent, opts)
+    local storage = {
+        ent = ent,
+        kind = opts.kind or "grid",
+        w = opts.w or 6,
+        h = opts.h or 6,
+        title = opts.title or "Storage",
+        stock = opts.stock,
+        items = {},
+        nextUid = 1,
+        viewers = {},
+        onChanged = opts.onChanged,
+        controls = opts.controls,
+    }
+    if storage.kind == "depot" then layoutDepot(storage) end
+    Inv.storages[ent] = storage
+    return storage
+end
+
+function Inv.GetStorage(ent)
+    return Inv.storages[ent]
+end
+
+-- Adds items to a grid storage (for filling crates, loading lockers).
+-- Returns how many didn't fit.
+function Inv.StorageAdd(storage, id, count, data, x, y, rot)
+    local def = Items.defs[id]
+    if not def then return count end
+    local left = count or 1
+    while left > 0 do
+        local px, py, prot = x, y, rot
+        if px == nil or not Items.Fits(storage.w, storage.h, storage.items, id, px, py, prot) then
+            px, py, prot = Items.FindSpot(storage, id)
+        end
+        if not px then break end
+        local full = not def.fill or ((data and data.fill) or 1) >= 1
+        local n = full and math.min(def.stack, left) or 1
+        local inst = { uid = nextUid(storage), id = id, c = EXT, x = px, y = py, rot = prot, count = n, data = table.Copy(data or {}) }
+        storage.items[inst.uid] = inst
+        left = left - n
+        x = nil
+    end
+    return left
+end
+
+-- For saving: plain rows.
+function Inv.StorageSerialize(storage)
+    local out = {}
+    for _, o in pairs(storage.items) do
+        out[#out + 1] = { o.id, o.x, o.y, o.rot and 1 or 0, o.count, o.data }
+    end
+    return out
+end
+
+function Inv.StorageLoad(storage, rows)
+    storage.items = {}
+    if not istable(rows) then return end
+    Items.EnsureReady()
+    for _, row in ipairs(rows) do
+        if Items.defs[row[1]] then
+            Inv.StorageAdd(storage, row[1], row[5] or 1, istable(row[6]) and row[6] or {}, row[2], row[3], row[4] == 1)
+        end
+    end
+end
+
+--------------------------------------------------------------------------
+-- Viewers
+--------------------------------------------------------------------------
+
+local function sendChange(storage, op, inst, uid)
+    for ply in pairs(storage.viewers) do
+        if IsValid(ply) then
+            extBatch:Send(ply, op == OP_SET and { op = OP_SET, inst = inst } or { op = OP_REMOVE, uid = uid })
+        end
+    end
+end
+
+local function changedStorage(storage)
+    if storage.onChanged then storage.onChanged(storage) end
+end
+
+local function sendOpen(ply, storage)
+    local ctl = storage.controls and storage.controls(storage, ply) or {}
+    local list = {}
+    for _, o in pairs(storage.items) do list[#list + 1] = o end
+    Rhylib.Net.Start("inv.ext")
+    net.WriteBool(true)
+    net.WriteString(storage.title)
+    net.WriteBool(storage.kind == "depot")
+    net.WriteUInt(storage.w, 5)
+    net.WriteUInt(storage.h, 5)
+    net.WriteBool(ctl.canLock or false)
+    net.WriteBool(ctl.locked or false)
+    net.WriteUInt(#list, 8)
+    for _, o in ipairs(list) do Items.WriteInstance(o) end
+    Rhylib.Profiler.AddNet("inv.ext", net.BytesWritten() or 0)
+    net.Send(ply)
+end
+
+function Inv.OpenStorage(ply, ent)
+    local storage = Inv.storages[ent]
+    if not storage then return end
+    Inv.CloseStorage(ply, true)
+    Inv.Get(ply).ext = storage
+    storage.viewers[ply] = true
+    sendOpen(ply, storage)
+end
+
+-- Resend the whole storage to everyone looking at it (after lock changes etc.).
+function Inv.RefreshStorage(ent)
+    local storage = Inv.storages[ent]
+    if not storage then return end
+    for ply in pairs(storage.viewers) do
+        if IsValid(ply) then sendOpen(ply, storage) end
+    end
+end
+
+-- quiet: don't tell the client (it closed the window itself, or another opens).
+function Inv.CloseStorage(ply, quiet)
+    local st = Inv.states[ply]
+    local storage = st and st.ext
+    if not storage then return end
+    st.ext = nil
+    storage.viewers[ply] = nil
+    if not quiet and IsValid(ply) then
+        Rhylib.Net.Start("inv.ext")
+        net.WriteBool(false)
+        net.Send(ply)
+    end
+end
+
+function Inv.RemoveStorage(ent)
+    local storage = Inv.storages[ent]
+    if not storage then return end
+    for ply in pairs(storage.viewers) do
+        if IsValid(ply) then Inv.CloseStorage(ply) end
+    end
+    Inv.storages[ent] = nil
+end
+
+-- Close storages for anyone who walked away (checked twice a second).
+timer.Create("Rhylib.Inventory.StorageRange", 0.5, 0, function()
+    for ent, storage in pairs(Inv.storages) do
+        if not IsValid(ent) then
+            Inv.RemoveStorage(ent)
+        elseif next(storage.viewers) ~= nil then
+            local pos = ent:GetPos()
+            for ply in pairs(storage.viewers) do
+                if not IsValid(ply) or not ply:Alive() or ply:GetPos():DistToSqr(pos) > MAX_DIST * MAX_DIST then
+                    if IsValid(ply) then Inv.CloseStorage(ply) else storage.viewers[ply] = nil end
+                end
+            end
+        end
+    end
+end)
+
+Rhylib.Hook.Add("PlayerDisconnected", "inventory.storage", function(ply)
+    Inv.CloseStorage(ply, true)
+end, -20)  -- before the inventory state is thrown away
+
+--------------------------------------------------------------------------
+-- Moving items in and out
+--------------------------------------------------------------------------
+
+local function openStorage(ply)
+    local st = Inv.Get(ply)
+    local storage = st.ext
+    if not storage or not IsValid(storage.ent) then return nil end
+    return st, storage
+end
+
+-- Your item -> the storage (dragged onto it at x, y).
+function Inv.Deposit(ply, uid, x, y, rot, single)
+    local st, storage = openStorage(ply)
+    if not st then return end
+    local inst = st.byUid[uid]
+    if not inst then return end
+    if not Items.CanLeave(st, inst) then
+        ply:PrintMessage(HUD_PRINTCENTER, "Empty the backpack first")
+        I.sendSet(ply, st, inst)
+        return
+    end
+    local n = single and 1 or inst.count
+
+    if storage.kind == "depot" then
+        -- Handing stocked gear back: it's just removed.
+        local stocked = false
+        for _, id in ipairs(storage.stock) do
+            if id == inst.id then stocked = true break end
+        end
+        if not stocked then
+            ply:PrintMessage(HUD_PRINTCENTER, "That doesn't go in here")
+            I.sendSet(ply, st, inst)
+            return
+        end
+        if n >= inst.count then I.removeInst(ply, st, uid) else
+            inst.count = inst.count - n
+            I.update(ply, st, inst)
+        end
+        return
+    end
+
+    -- Grid storage: merge onto a matching stack, or place at x, y.
+    I.captureWeapon(ply, inst)
+    -- (uid -1: your item's uid means nothing inside the storage)
+    local probe = { uid = -1, id = inst.id, count = n, data = inst.data }
+    local target = Items.MergeTarget(storage.items, probe, x, y)
+    if target then
+        local def = Items.defs[inst.id]
+        n = math.min(n, def.stack - target.count)
+        target.count = target.count + n
+        sendChange(storage, OP_SET, target)
+    elseif Items.Fits(storage.w, storage.h, storage.items, inst.id, x, y, rot) then
+        local o = { uid = nextUid(storage), id = inst.id, c = EXT, x = x, y = y, rot = rot, count = n, data = table.Copy(inst.data or {}) }
+        storage.items[o.uid] = o
+        sendChange(storage, OP_SET, o)
+    else
+        I.sendSet(ply, st, inst)
+        return
+    end
+    if n >= inst.count then I.removeInst(ply, st, uid) else
+        inst.count = inst.count - n
+        I.update(ply, st, inst)
+    end
+    changedStorage(storage)
+end
+
+-- Storage item -> your container cid at x, y.
+function Inv.Take(ply, suid, cid, x, y, rot, single)
+    local st, storage = openStorage(ply)
+    if not st or cid == EXT then return end
+    local so = storage.items[suid]
+    if not so then return end
+    local def = Items.defs[so.id]
+    if not def then return end
+    if def.weapon and Inv.Has(ply, so.id) then
+        ply:PrintMessage(HUD_PRINTCENTER, "You already carry one")
+        return
+    end
+
+    local depot = storage.kind == "depot"
+    local n = single and 1 or so.count
+    local data = depot and { fill = def.fill and 1 or nil, issued = true } or table.Copy(so.data or {})
+
+    -- Merge onto a matching stack of yours, or place at x, y.
+    local c = st.cont[cid]
+    local probe = { uid = -1, id = so.id, count = n, data = data }
+    local target = c and cid ~= SLOT_BACK and Items.MergeTarget(c.items, probe, x, y)
+    if target then
+        n = math.min(n, def.stack - target.count)
+        if n <= 0 then return end
+        target.count = target.count + n
+        if data.issued then target.data.issued = true end
+        I.update(ply, st, target)
+    elseif Items.CanPlace(st, so.id, cid, x, y, rot) then
+        local inst = { uid = I.nextUid(st), id = so.id, count = n, data = data }
+        I.place(ply, st, inst, cid, x, y, rot)
+        I.giveWeapon(ply, inst)
+    else
+        return
+    end
+
+    if depot then return end  -- endless: nothing leaves the depot
+    if n >= so.count then
+        storage.items[suid] = nil
+        sendChange(storage, OP_REMOVE, nil, suid)
+    else
+        so.count = so.count - n
+        sendChange(storage, OP_SET, so)
+    end
+    changedStorage(storage)
+end
+
+-- Rearranging inside a grid storage.
+function Inv.StorageMove(ply, suid, x, y, rot, single)
+    local st, storage = openStorage(ply)
+    if not st or storage.kind == "depot" then return end
+    local so = storage.items[suid]
+    if not so then return end
+    local def = Items.defs[so.id]
+    local n = single and 1 or so.count
+
+    local target = Items.MergeTarget(storage.items, so, x, y)
+    if target and target ~= so then
+        n = math.min(n, def.stack - target.count)
+        target.count = target.count + n
+        sendChange(storage, OP_SET, target)
+    elseif n < so.count and Items.Fits(storage.w, storage.h, storage.items, so.id, x, y, rot) then
+        local o = { uid = nextUid(storage), id = so.id, c = EXT, x = x, y = y, rot = rot, count = n, data = table.Copy(so.data or {}) }
+        storage.items[o.uid] = o
+        sendChange(storage, OP_SET, o)
+    elseif n >= so.count and Items.Fits(storage.w, storage.h, storage.items, so.id, x, y, rot, suid) then
+        so.x, so.y, so.rot = x, y, rot
+        sendChange(storage, OP_SET, so)
+        changedStorage(storage)
+        return
+    else
+        sendChange(storage, OP_SET, so)  -- put the client's copy back
+        return
+    end
+    if n >= so.count then
+        storage.items[suid] = nil
+        sendChange(storage, OP_REMOVE, nil, suid)
+    else
+        so.count = so.count - n
+        sendChange(storage, OP_SET, so)
+    end
+    changedStorage(storage)
+end
+
+--------------------------------------------------------------------------
+-- Requests
+--------------------------------------------------------------------------
+
+Rhylib.Net.Receive("inv.take", function(ply)
+    local suid = net.ReadUInt(Items.UID_BITS)
+    local cid = net.ReadUInt(Items.CONT_BITS)
+    local x = net.ReadUInt(Items.POS_BITS)
+    local y = net.ReadUInt(Items.POS_BITS)
+    local rot = net.ReadBool()
+    local single = net.ReadBool()
+    Inv.Take(ply, suid, cid, x, y, rot, single)
+end, { rate = 20, burst = 10 })
+
+Rhylib.Net.Receive("inv.extmove", function(ply)
+    local suid = net.ReadUInt(Items.UID_BITS)
+    local x = net.ReadUInt(Items.POS_BITS)
+    local y = net.ReadUInt(Items.POS_BITS)
+    local rot = net.ReadBool()
+    local single = net.ReadBool()
+    Inv.StorageMove(ply, suid, x, y, rot, single)
+end, { rate = 20, burst = 10 })
+
+Rhylib.Net.Receive("inv.close", function(ply)
+    Inv.CloseStorage(ply, true)
+end, { rate = 5, burst = 5 })

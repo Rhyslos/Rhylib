@@ -10,7 +10,12 @@
       - "inv.full"  everything, sent once when the client asks after joining
       - "inv.upd"   batched per tick: changed items, removed items, and
                     container size changes (backpack put on or taken off)
-    Client requests (rate limited): inv.req, inv.move, inv.drop, inv.use
+    Client requests (rate limited): inv.req, inv.move, inv.drop, inv.use,
+    inv.split, inv.combine. Outside containers (lockers, armouries,
+    crates) are in sv_30_storage.lua.
+
+    Issued gear (data.issued, from an armoury or ammo cabinet) isn't
+    dropped on the ground: dropping it hands it back.
 
     Saving: changed inventories are marked dirty and written to SQLite
     every few seconds (Rhylib.Data batches the writes further).
@@ -35,11 +40,13 @@ Config.Register("inventory", "width", 5, "Personal inventory width in cells")
 Config.Register("inventory", "height", 3, "Personal inventory height in cells")
 Config.Register("inventory", "saveInterval", 2, "Seconds between saves of changed inventories")
 Config.Register("inventory", "worldItemLife", 600, "Seconds before a dropped item on the ground is removed (0 = never)")
+Config.Register("inventory", "combineTime", 0.6, "Combining munitions: seconds per partly used magazine or cell (total between 1 and 8 s)")
 
 Inv.states = Inv.states or {}  -- [ply] = state
 Inv.dirty = Inv.dirty or {}    -- [ply] = true
 
 Rhylib.Net.Register("inv.full")
+Rhylib.Net.Register("inv.busy")
 
 local OP_REMOVE, OP_SET, OP_DIMS = 0, 1, 2
 
@@ -65,7 +72,9 @@ local function captureWeapon(ply, inst)
     if not def or not def.weapon then return end
     local wep = ply:GetWeapon(def.weapon)
     if IsValid(wep) and wep.GetInventoryData then
+        local issued = inst.data and inst.data.issued
         inst.data = wep:GetInventoryData() or inst.data
+        inst.data.issued = issued  -- keep the armoury mark
     end
 end
 
@@ -389,15 +398,51 @@ function Inv.Drop(ply, uid)
         ply:PrintMessage(HUD_PRINTCENTER, "Empty the backpack first")
         return
     end
+    if inst.data and inst.data.issued then
+        removeInst(ply, st, uid)  -- issued gear goes back, it never lands on the ground
+        ply:PrintMessage(HUD_PRINTCENTER, "Handed back")
+        return
+    end
     captureWeapon(ply, inst)
     local ent = Inv.SpawnWorldItem(ply, inst.id, inst.count, inst.data)
     if IsValid(ent) then removeInst(ply, st, uid) end
 end
 
-function Inv.Move(ply, uid, cid, x, y, rot)
+-- Moves one item off a stack to x, y (ctrl + drag).
+local function moveOne(ply, st, inst, cid, x, y, rot)
+    local c = st.cont[cid]
+    local target = c and cid ~= SLOT_BACK and Items.MergeTarget(c.items, inst, x, y)
+    if target and target ~= inst then
+        target.count = target.count + 1
+        inst.count = inst.count - 1
+        update(ply, st, target)
+        update(ply, st, inst)
+        return
+    end
+    if Items.CanPlace(st, inst.id, cid, x, y, rot) then
+        local one = { uid = nextUid(st), id = inst.id, count = 1, data = table.Copy(inst.data or {}) }
+        inst.count = inst.count - 1
+        update(ply, st, inst)
+        place(ply, st, one, cid, x, y, rot)
+    else
+        sendSet(ply, st, inst)
+    end
+end
+
+-- single: move just one off a stack.
+function Inv.Move(ply, uid, cid, x, y, rot, single)
+    if cid == Items.EXT then
+        if Inv.Deposit then Inv.Deposit(ply, uid, x, y, rot, single) end
+        return
+    end
     local st = Inv.Get(ply)
     local inst = st.byUid[uid]
     if not inst then return end
+
+    if single and inst.count > 1 then
+        moveOne(ply, st, inst, cid, x, y, rot)
+        return
+    end
 
     if cid ~= inst.c and not Items.CanLeave(st, inst) then
         ply:PrintMessage(HUD_PRINTCENTER, "Empty the backpack first")
@@ -422,6 +467,138 @@ function Inv.Move(ply, uid, cid, x, y, rot)
     else
         sendSet(ply, st, inst)  -- rejected: put the client's copy back
     end
+end
+
+-- Splits a stack in two; the new half goes to the first free spot,
+-- same container first.
+function Inv.Split(ply, uid)
+    local st = Inv.Get(ply)
+    local inst = st.byUid[uid]
+    if not inst or inst.count < 2 then return end
+    local n = math.floor(inst.count / 2)
+    local cid, x, y, rot = inst.c, Items.FindSpot(st.cont[inst.c], inst.id)
+    if not x then cid, x, y, rot = findSpot(st, inst.id) end
+    if not cid or not x then
+        ply:PrintMessage(HUD_PRINTCENTER, "No room to split the stack")
+        return
+    end
+    local half = { uid = nextUid(st), id = inst.id, count = n, data = table.Copy(inst.data or {}) }
+    inst.count = inst.count - n
+    update(ply, st, inst)
+    place(ply, st, half, cid, x, y, rot)
+end
+
+-- Adds items into one container first (stacking onto full stacks, then
+-- free spots), and anything that doesn't fit anywhere else.
+local function addInto(ply, st, id, count, data, cid)
+    local def = Items.defs[id]
+    local c = st.cont[cid]
+    if count <= 0 or not def then return end
+    local full = not def.fill or (data.fill or 1) >= 1
+    if c and full and def.stack > 1 then
+        for _, o in pairs(c.items) do
+            if count <= 0 then break end
+            if o.id == id and o.count < def.stack and Items.IsFull(o) then
+                local add = math.min(def.stack - o.count, count)
+                o.count = o.count + add
+                count = count - add
+                if data.issued then o.data.issued = true end
+                update(ply, st, o)
+            end
+        end
+    end
+    while count > 0 and c do
+        local x, y, rot = Items.FindSpot(c, id)
+        if not x then break end
+        local n = full and math.min(def.stack, count) or 1
+        place(ply, st, { uid = nextUid(st), id = id, count = n, data = table.Copy(data) }, cid, x, y, rot)
+        count = count - n
+    end
+    if count > 0 then Inv.AddOrDrop(ply, id, count, data) end
+end
+
+--------------------------------------------------------------------------
+-- Combine munitions: partly used magazines and power cells in the
+-- backpack are poured together (2 magazines at 30% become one at 60%).
+-- Takes a moment; the result is worked out when the timer ends.
+--------------------------------------------------------------------------
+
+local function partials(back)
+    local groups, n = {}, 0
+    for _, o in pairs(back.items) do
+        local def = Items.defs[o.id]
+        local fill = o.data and o.data.fill or 1
+        if def and def.fill and fill < 0.999 and fill > 0 then
+            groups[o.id] = groups[o.id] or {}
+            table.insert(groups[o.id], o)
+            n = n + 1
+        end
+    end
+    return groups, n
+end
+
+local function sendBusy(ply, endTime)
+    Rhylib.Net.Start("inv.busy")
+    net.WriteFloat(endTime)
+    net.Send(ply)
+end
+
+function Inv.StartCombine(ply)
+    local st = Inv.Get(ply)
+    local back = st.cont[BACK]
+    if not back then
+        ply:PrintMessage(HUD_PRINTCENTER, "Wear a backpack first")
+        return
+    end
+    if st.combineEnd and st.combineEnd > CurTime() then return end
+    local groups, n = partials(back)
+    local useful = false
+    for _, list in pairs(groups) do
+        if #list >= 2 then useful = true break end
+    end
+    if not useful then
+        ply:PrintMessage(HUD_PRINTCENTER, "Nothing to combine in the backpack")
+        return
+    end
+    local dur = math.Clamp(n * Config.Get("inventory", "combineTime"), 1, 8)
+    st.combineEnd = CurTime() + dur
+    sendBusy(ply, st.combineEnd)
+    timer.Create("Rhylib.Combine." .. ply:EntIndex(), dur, 1, function()
+        if IsValid(ply) then Inv.FinishCombine(ply) end
+    end)
+end
+
+function Inv.CancelCombine(ply)
+    local st = Inv.states[ply]
+    if not st or not st.combineEnd then return end
+    st.combineEnd = nil
+    timer.Remove("Rhylib.Combine." .. ply:EntIndex())
+    sendBusy(ply, 0)
+end
+
+function Inv.FinishCombine(ply)
+    local st = Inv.Get(ply)
+    st.combineEnd = nil
+    sendBusy(ply, 0)
+    local back = st.cont[BACK]
+    if not back or not ply:Alive() then return end
+
+    local groups = partials(back)
+    for id, list in pairs(groups) do
+        if #list >= 2 then
+            local sum, issued = 0, false
+            for _, o in ipairs(list) do
+                sum = sum + (o.data.fill or 1) * o.count
+                issued = issued or o.data.issued or false
+                removeInst(ply, st, o.uid)
+            end
+            local full = math.floor(sum + 0.0001)
+            local rest = sum - full
+            addInto(ply, st, id, full, { fill = 1, issued = issued or nil }, BACK)
+            if rest > 0.005 then addInto(ply, st, id, 1, { fill = rest, issued = issued or nil }, BACK) end
+        end
+    end
+    ply:PrintMessage(HUD_PRINTCENTER, "Munitions combined")
 end
 
 function Inv.SendFull(ply)
@@ -466,8 +643,17 @@ Rhylib.Net.Receive("inv.move", function(ply)
     local x = net.ReadUInt(Items.POS_BITS)
     local y = net.ReadUInt(Items.POS_BITS)
     local rot = net.ReadBool()
-    Inv.Move(ply, uid, cid, x, y, rot)
+    local single = net.ReadBool()
+    Inv.Move(ply, uid, cid, x, y, rot, single)
 end, { rate = 20, burst = 10 })
+
+Rhylib.Net.Receive("inv.split", function(ply)
+    Inv.Split(ply, net.ReadUInt(Items.UID_BITS))
+end, { rate = 5, burst = 5 })
+
+Rhylib.Net.Receive("inv.combine", function(ply)
+    Inv.StartCombine(ply)
+end, { rate = 2, burst = 2 })
 
 Rhylib.Net.Receive("inv.drop", function(ply)
     Inv.Drop(ply, net.ReadUInt(Items.UID_BITS))
@@ -526,6 +712,7 @@ end)
 -- Keep clip and cell state before the weapons are removed on death.
 Rhylib.Hook.Add("DoPlayerDeath", "inventory.capture", function(ply)
     Inv.CaptureWeapons(ply)
+    Inv.CancelCombine(ply)
 end)
 
 Rhylib.Hook.Add("PlayerDisconnected", "inventory.save", function(ply)
@@ -547,3 +734,15 @@ Rhylib.Hook.Add("ShutDown", "inventory.save", function()
         if IsValid(ply) then Inv.Save(ply) end
     end
 end, -10)  -- before the data layer's final flush
+
+-- For sv_30_storage.lua: the low-level helpers that keep the client, the
+-- weapons and the save in step.
+Inv.Internal = {
+    place = place,
+    update = update,
+    removeInst = removeInst,
+    nextUid = nextUid,
+    giveWeapon = giveWeapon,
+    captureWeapon = captureWeapon,
+    sendSet = sendSet,
+}

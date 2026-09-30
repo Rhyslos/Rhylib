@@ -144,12 +144,14 @@ function Items.Weight(state)
     local total, cap = 0, Config.Get("inventory", "baseCarry")
     local packMult = Config.Get("inventory", "backpackWeightMult")
     for cid, c in pairs(state.cont) do
-        local mult = cid == Items.BACK and packMult or 1
-        for _, o in pairs(c.items) do
-            local def = Items.defs[o.id]
-            if def then
-                total = total + (def.weight or 0) * o.count * mult
-                if cid == Items.SLOT_BACK and def.carry then cap = cap + def.carry end
+        if cid ~= Items.EXT then  -- an open locker isn't carried
+            local mult = cid == Items.BACK and packMult or 1
+            for _, o in pairs(c.items) do
+                local def = Items.defs[o.id]
+                if def then
+                    total = total + (def.weight or 0) * o.count * mult
+                    if cid == Items.SLOT_BACK and def.carry then cap = cap + def.carry end
+                end
             end
         end
     end
@@ -205,6 +207,19 @@ function Items.At(items, x, y, ignoreUid)
     end
 end
 
+-- First free spot for item `id` in a container { w, h, items }: x, y, rot.
+function Items.FindSpot(c, id)
+    local def = Items.defs[id]
+    if not def or not c then return nil end
+    local square = def.w == def.h
+    for y = 0, c.h - 1 do
+        for x = 0, c.w - 1 do
+            if Items.Fits(c.w, c.h, c.items, id, x, y, false) then return x, y, false end
+            if not square and Items.Fits(c.w, c.h, c.items, id, x, y, true) then return x, y, true end
+        end
+    end
+end
+
 -- If dropping `inst` with its top-left on x, y should merge into a stack, return that stack.
 function Items.MergeTarget(items, inst, x, y)
     local def = Items.defs[inst.id]
@@ -218,10 +233,12 @@ end
 --------------------------------------------------------------------------
 -- Containers
 --
--- A player has up to three containers, each with its own items table:
+-- A player has up to four containers, each with its own items table:
 --   1  main grid (5 x 3)
 --   2  backpack grid, only while a backpack is worn (size from the backpack)
 --   3  back slot: holds one item with slot = "back"
+--   4  an outside container the player has open (locker, armoury, crate),
+--      see sv_30_storage.lua. Its items have their own uids.
 -- Both server and client keep state shaped like { cont = { [id] = { w, h, items } } }
 -- so the same placement rules run on both.
 --------------------------------------------------------------------------
@@ -229,11 +246,13 @@ end
 Items.MAIN = 1
 Items.BACK = 2
 Items.SLOT_BACK = 3
-Items.CONT_BITS = 2
+Items.EXT = 4
+Items.CONT_BITS = 3
 
 -- Which items a container accepts at all.
 function Items.ContainerAllows(cid, def)
     if cid == Items.SLOT_BACK then return def.slot == "back" end
+    if cid == Items.EXT then return true end  -- the storage itself decides (sv_30_storage.lua)
     if cid == Items.BACK then return not def.large and not def.grid end
     return true
 end
@@ -263,7 +282,8 @@ function Items.CanLeave(state, inst)
 end
 
 --------------------------------------------------------------------------
--- Network encoding: about 6 bytes per item
+-- Network encoding: about 6 bytes per item. data.issued (gear from an
+-- armoury or ammo cabinet) is one bit.
 --------------------------------------------------------------------------
 
 function Items.WriteInstance(inst)
@@ -275,6 +295,7 @@ function Items.WriteInstance(inst)
     net.WriteUInt(inst.y, Items.POS_BITS)
     net.WriteBool(inst.rot and true or false)
     net.WriteUInt(math.Clamp(inst.count, 0, 255), Items.COUNT_BITS)
+    net.WriteBool(inst.data and inst.data.issued or false)
     if def and def.fill then
         net.WriteUInt(math.Round(math.Clamp(inst.data and inst.data.fill or 1, 0, 1) * 255), 8)
     end
@@ -288,7 +309,7 @@ function Items.ReadInstance()
     local y = net.ReadUInt(Items.POS_BITS)
     local rot = net.ReadBool()
     local count = net.ReadUInt(Items.COUNT_BITS)
-    local data = {}
+    local data = { issued = net.ReadBool() or nil }
     if def and def.fill then data.fill = net.ReadUInt(8) / 255 end
     return { uid = uid, c = c, id = def and def.id, x = x, y = y, rot = rot, count = count, data = data }
 end

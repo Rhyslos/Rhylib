@@ -7,7 +7,11 @@
 
     Drag items to move them, press R while dragging to rotate, drop onto a
     matching stack to merge, drag outside the window to drop on the ground.
-    Right-click an item for options.
+    Hold Ctrl while starting a drag to take just one off a stack.
+    Right-click an item for options (split a stack, equip, wear, drop).
+
+    With a locker, crate or armoury open, it shows on the right. Drag items
+    between the two. Under the Back slot: Combine munitions.
 
     One panel paints all grids; the only child panel is the model preview.
     Nothing runs while the window is closed except a key check.
@@ -17,7 +21,7 @@ local Inv = Rhylib.Inventory
 local Items = Rhylib.Items
 local UI = Rhylib.UI
 
-local MAIN, BACK, SLOT_BACK = Items.MAIN, Items.BACK, Items.SLOT_BACK
+local MAIN, BACK, SLOT_BACK, EXT = Items.MAIN, Items.BACK, Items.SLOT_BACK, Items.EXT
 
 local keyVar = CreateClientConVar("rhylib_inventory_key", "i", true, false, "Key that opens the Rhylib inventory")
 local sizeVar = CreateClientConVar("rhylib_inventory_cellsize", "100", true, false, "Inventory cell size in pixels at 1080p (48-128); everything else scales with it. Reopen the inventory to apply.")
@@ -39,6 +43,14 @@ local COL_BAD = Color(226, 75, 74, 60)
 local COL_OK_LINE = Color(151, 196, 89)
 local COL_BAD_LINE = Color(226, 75, 74)
 local COL_TIP = Color(20, 21, 19, 245)
+local COL_EXT_CELL = Color(36, 42, 48)
+local COL_EXT_BORDER = Color(70, 96, 122)
+local COL_BUTTON = Color(52, 56, 52)
+local COL_BUTTON_HOVER = Color(66, 72, 66)
+
+local function ctrlDown()
+    return input.IsKeyDown(KEY_LCONTROL) or input.IsKeyDown(KEY_RCONTROL)
+end
 
 -- Cut text to fit a width, cached so it's measured once per item size.
 local fitCache = {}
@@ -149,8 +161,9 @@ function PANEL:SpanPx(n)
 end
 
 function PANEL:LayoutKey()
-    local m, b = Inv.cont[MAIN], Inv.cont[BACK]
+    local m, b, e = Inv.cont[MAIN], Inv.cont[BACK], Inv.cont[EXT]
     return (m and (m.w .. "x" .. m.h) or "-") .. "|" .. (b and (b.w .. "x" .. b.h) or "-")
+        .. "|" .. (e and (e.w .. "x" .. e.h) or "-")
 end
 
 -- Works out where every region sits and sizes the window.
@@ -182,12 +195,25 @@ function PANEL:Relayout()
     end
     self.rightX = gridX
 
-    -- The model fills the full height of the content.
+    -- Combine munitions button, under the Back slot.
+    self.combineRect = { x = slotX, y = top + slotSize + self.gap * 3, w = slotSize, h = math.floor(label * 1.4) }
+
+    -- An open locker, crate or armoury: to the right of your grids.
+    local width = gridX + gridsW + pad
+    local ext = Inv.cont[EXT]
     local contentH = math.max(gridsH, self:SpanPx(3))
+    if ext then
+        local extX = gridX + gridsW + pad * 2
+        self.regions[#self.regions + 1] = { cid = EXT, x = extX, y = top, gw = ext.w, gh = ext.h, title = Inv.ext and Inv.ext.title }
+        width = extX + self:SpanPx(ext.w) + pad
+        contentH = math.max(contentH, self:SpanPx(ext.h))
+    end
+
+    -- The model fills the full height of the content.
     self.model:SetPos(pad, top)
     self.model:SetSize(modelW, contentH)
 
-    self:SetSize(gridX + gridsW + pad, top + contentH + self.footer + pad * 0.5)
+    self:SetSize(width, top + contentH + self.footer + pad * 0.5)
     self:Center()  -- stays centred when a backpack grid appears or disappears
 end
 
@@ -222,7 +248,7 @@ function PANEL:ItemAtCursor()
     return Items.At(c.items, cx, cy), r, cx, cy
 end
 
-function PANEL:DrawItemBox(inst, x, y, pw, ph, alpha)
+function PANEL:DrawItemBox(inst, x, y, pw, ph, alpha, endless)
     local def = Items.Get(inst.id)
     if not def then return end
     local s = self.s
@@ -242,7 +268,9 @@ function PANEL:DrawItemBox(inst, x, y, pw, ph, alpha)
     draw.SimpleText(fitText(def.name, font, pw - pad * 2), font, x + pad, y + pad, UI.Colors.text)
 
     local corner
-    if inst.count > 1 then
+    if endless then
+        corner = "∞"
+    elseif inst.count > 1 then
         corner = "x" .. inst.count
     elseif def.rounds and def.rounds > 1 then
         corner = math.floor((inst.data.fill or 1) * def.rounds + 0.5) .. "/" .. def.rounds
@@ -274,21 +302,28 @@ function PANEL:PaintRegion(r, dragUid)
             draw.SimpleText("Empty", self:Font(14), r.x + r.pw * 0.5, r.y + r.ph * 0.5, UI.Colors.textDim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
         end
     else
-        local isBack = r.cid == BACK
+        local isBack, isExt = r.cid == BACK, r.cid == EXT
+        local cellCol = isExt and COL_EXT_CELL or (isBack and COL_BACK_CELL or COL_CELL)
+        local borderCol = isExt and COL_EXT_BORDER or (isBack and COL_BACK_BORDER or COL_BORDER)
         for y = 0, r.gh - 1 do
             for x = 0, r.gw - 1 do
                 local cx, cy = r.x + x * self.step, r.y + y * self.step
-                surface.SetDrawColor(isBack and COL_BACK_CELL or COL_CELL)
+                surface.SetDrawColor(cellCol)
                 surface.DrawRect(cx, cy, self.cell, self.cell)
-                surface.SetDrawColor(isBack and COL_BACK_BORDER or COL_BORDER)
+                surface.SetDrawColor(borderCol)
                 surface.DrawOutlinedRect(cx, cy, self.cell, self.cell)
             end
         end
+        if isExt and Inv.ext then
+            draw.SimpleText(Inv.ext.title, self:Font(15), r.x, r.y - self.label * 0.5, UI.Colors.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        end
     end
 
+    local endless = r.cid == EXT and Inv.ext and Inv.ext.depot
     for uid, inst in pairs(c.items) do
         local x, y, pw, ph = self:ItemRect(r, inst)
-        self:DrawItemBox(inst, x, y, pw, ph, uid == dragUid and 70 or 255)
+        local dragged = dragUid == uid and self.drag and (self.drag.fromExt == (r.cid == EXT))
+        self:DrawItemBox(inst, x, y, pw, ph, dragged and 70 or 255, endless)
     end
 end
 
@@ -299,7 +334,7 @@ function PANEL:Paint(pw, ph)
     draw.RoundedBox(math.floor(8 * s), 0, 0, pw, ph, UI.Colors.bg)
     draw.SimpleText("Inventory", self:Font(20), self.pad, self.header * 0.5, UI.Colors.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
     self:PaintWeight(pw)
-    draw.SimpleText("Drag to move · R rotates · Right-click for options · Drag out to drop",
+    draw.SimpleText("Drag to move · Ctrl+drag takes one · R rotates · Right-click for options · Drag out to drop",
         self:Font(13), self.pad, ph - self.footer * 0.5 - self.pad * 0.25, UI.Colors.textDim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
 
     draw.SimpleText(Inv.cont[BACK] and "Backpack" or "No backpack worn", self:Font(15), self.rightX, self.backLabelY,
@@ -308,11 +343,64 @@ function PANEL:Paint(pw, ph)
     local dragUid = self.drag and self.drag.inst.uid
     for _, r in ipairs(self.regions) do self:PaintRegion(r, dragUid) end
 
+    self.buttons = {}
+    self:PaintCombine()
+    self:PaintExtControls()
+
     if self.drag then
         self:PaintDrag()
     else
         self:PaintTooltip()
     end
+end
+
+-- A clickable text button; remembered for OnMousePressed.
+function PANEL:Button(x, y, w, h, text, fn, enabled)
+    local mx, my = self:CursorPos()
+    local hover = enabled ~= false and mx >= x and mx <= x + w and my >= y and my <= y + h
+    draw.RoundedBox(math.floor(4 * self.s), x, y, w, h, hover and COL_BUTTON_HOVER or COL_BUTTON)
+    draw.SimpleText(text, self:Font(13), x + w * 0.5, y + h * 0.5, enabled == false and UI.Colors.textDim or UI.Colors.text,
+        TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    if enabled ~= false then self.buttons[#self.buttons + 1] = { x = x, y = y, w = w, h = h, fn = fn } end
+end
+
+-- Combine munitions: a button, or a progress bar while it runs.
+function PANEL:PaintCombine()
+    local r = self.combineRect
+    if not r then return end
+    local now = CurTime()
+    if Inv.busyEnd and Inv.busyEnd > now then
+        local total = math.max(Inv.busyEnd - (Inv.busyStart or now), 0.01)
+        local frac = math.Clamp(1 - (Inv.busyEnd - now) / total, 0, 1)
+        draw.RoundedBox(math.floor(4 * self.s), r.x, r.y, r.w, r.h, COL_BUTTON)
+        surface.SetDrawColor(UI.Colors.accent.r, UI.Colors.accent.g, UI.Colors.accent.b, 90)
+        surface.DrawRect(r.x, r.y, math.floor(r.w * frac), r.h)
+        draw.SimpleText("Combining…", self:Font(13), r.x + r.w * 0.5, r.y + r.h * 0.5, UI.Colors.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        return
+    end
+    self:Button(r.x, r.y, r.w, r.h, "Combine munitions", function() Inv.RequestCombine() end, Inv.cont[BACK] ~= nil)
+end
+
+-- Lock / unclaim buttons for the owner of an open locker.
+function PANEL:PaintExtControls()
+    local ext = Inv.ext
+    if not ext or not ext.canLock then return end
+    local r
+    for _, reg in ipairs(self.regions) do
+        if reg.cid == EXT then r = reg end
+    end
+    if not r then return end
+    local s = self.s
+    local bh = math.floor(self.label * 0.85)
+    local bw = math.floor(80 * s)
+    local right = r.x + self:SpanPx(r.gw)
+    local y = r.y - self.label * 0.5 - bh * 0.5
+    self:Button(right - bw, y, bw, bh, ext.locked and "Unlock" or "Lock", function()
+        hook.Run("Rhylib.StorageControl", "lock")
+    end)
+    self:Button(right - bw * 2 - self.gap, y, bw, bh, "Unclaim", function()
+        hook.Run("Rhylib.StorageControl", "unclaim")
+    end)
 end
 
 -- Carried weight in the header: "12.4 / 20 kg" over a thin bar.
@@ -351,16 +439,44 @@ function PANEL:DragTarget(d)
     return r, cx - d.offX, cy - d.offY
 end
 
+-- Would dropping drag d at region r, x, y do anything?
+function PANEL:DropAllowed(d, r, tx, ty)
+    local c = Inv.cont[r.cid]
+    if not c then return false end
+    local toExt, fromExt = r.cid == EXT, d.fromExt
+    local probe = { uid = -1, id = d.inst.id, count = d.inst.count, data = d.inst.data }
+
+    if toExt and Inv.ext and Inv.ext.depot then
+        if fromExt then return false end
+        for _, o in pairs(c.items) do
+            if o.id == d.inst.id then return true end  -- handing stocked gear back
+        end
+        return false
+    end
+    if toExt and fromExt then
+        return Items.MergeTarget(c.items, d.inst, tx, ty) ~= nil
+            or Items.Fits(c.w, c.h, c.items, d.inst.id, tx, ty, d.rot, not d.single and d.inst.uid or nil)
+    end
+    if toExt then
+        if not Items.CanLeave(Inv, d.inst) then return false end
+        return Items.MergeTarget(c.items, probe, tx, ty) ~= nil or Items.Fits(c.w, c.h, c.items, d.inst.id, tx, ty, d.rot)
+    end
+    if fromExt then
+        return (not r.slot and Items.MergeTarget(c.items, probe, tx, ty) ~= nil)
+            or Items.CanPlace(Inv, d.inst.id, r.cid, tx, ty, d.rot)
+    end
+    local ok = Items.CanLeave(Inv, d.inst) or r.cid == d.inst.c
+    return ok and ((not r.slot and Items.MergeTarget(c.items, d.inst, tx, ty) ~= nil)
+        or Items.CanPlace(Inv, d.inst.id, r.cid, tx, ty, d.rot, not d.single and d.inst.uid or nil))
+end
+
 function PANEL:PaintDrag()
     local d = self.drag
     local s = self.s
     local r, tx, ty = self:DragTarget(d)
 
     if r and Inv.cont[r.cid] then
-        local c = Inv.cont[r.cid]
-        local ok = Items.CanLeave(Inv, d.inst) or r.cid == d.inst.c
-        ok = ok and ((not r.slot and Items.MergeTarget(c.items, d.inst, tx, ty))
-            or Items.CanPlace(Inv, d.inst.id, r.cid, tx, ty, d.rot, d.inst.uid))
+        local ok = self:DropAllowed(d, r, tx, ty)
 
         local x, y, pw, ph
         if r.slot then
@@ -378,7 +494,7 @@ function PANEL:PaintDrag()
     -- The item follows the cursor.
     local mx, my = self:CursorPos()
     local w, h = Items.Size(d.inst.id, d.rot)
-    local ghost = { id = d.inst.id, rot = d.rot, count = d.inst.count, data = d.inst.data }
+    local ghost = { id = d.inst.id, rot = d.rot, count = d.single and 1 or d.inst.count, data = d.inst.data }
     self:DrawItemBox(ghost, mx - d.offX * self.step - self.cell * 0.5, my - d.offY * self.step - self.cell * 0.5,
         self:SpanPx(w), self:SpanPx(h), 200)
 end
@@ -408,6 +524,8 @@ function PANEL:PaintTooltip()
     if def.carry then lines[#lines + 1] = "+" .. def.carry .. " kg carry cap when worn" end
     if def.grid then lines[#lines + 1] = "Adds " .. def.grid[1] .. " x " .. def.grid[2] .. " cells when worn" end
     if def.large then lines[#lines + 1] = "Too large for a backpack" end
+    if inst.data and inst.data.issued then lines[#lines + 1] = "Issued: handed back if dropped" end
+    if inst.c == EXT and Inv.ext and Inv.ext.depot then lines[#lines + 1] = "Endless supply, drag to take (Ctrl: just one)" end
     if def.weapon then lines[#lines + 1] = "Right-click to equip" end
 
     local font = self:Font(14)
@@ -427,17 +545,32 @@ function PANEL:PaintTooltip()
 end
 
 function PANEL:OnMousePressed(code)
+    if code == MOUSE_LEFT and self.buttons then
+        local mx, my = self:CursorPos()
+        for _, b in ipairs(self.buttons) do
+            if mx >= b.x and mx <= b.x + b.w and my >= b.y and my <= b.y + b.h then
+                b.fn()
+                return
+            end
+        end
+    end
+
     local inst, r, cx, cy = self:ItemAtCursor()
     if not inst then return end
+    local fromExt = r.cid == EXT
 
     if code == MOUSE_LEFT then
         local offX, offY = 0, 0
         if not r.slot then offX, offY = cx - inst.x, cy - inst.y end
-        self.drag = { inst = inst, rot = inst.rot, offX = offX, offY = offY }
+        local single = ctrlDown() and (inst.count > 1 or (fromExt and Inv.ext and Inv.ext.depot))
+        self.drag = { inst = inst, rot = inst.rot, offX = offX, offY = offY, fromExt = fromExt, single = single or false }
         self:MouseCapture(true)
-    elseif code == MOUSE_RIGHT then
+    elseif code == MOUSE_RIGHT and not fromExt then
         local def = Items.Get(inst.id)
         local menu = DermaMenu()
+        if inst.count > 1 then
+            menu:AddOption("Split stack", function() Inv.RequestSplit(inst) end)
+        end
         if def and def.weapon then
             menu:AddOption("Equip", function() Inv.RequestUse(inst) end)
         end
@@ -454,11 +587,25 @@ function PANEL:OnMouseReleased(code)
     self:MouseCapture(false)
     local d = self.drag
     self.drag = nil
-    if not Inv.byUid[d.inst.uid] then return end
-
     local mx, my = self:CursorPos()
     local pw, ph = self:GetSize()
-    if mx < 0 or my < 0 or mx > pw or my > ph then
+    local outside = mx < 0 or my < 0 or mx > pw or my > ph
+
+    if d.fromExt then
+        local c = Inv.cont[EXT]
+        if outside or not c or not c.items[d.inst.uid] then return end
+        local r, tx, ty = self:DragTarget(d)
+        if not r then return end
+        if r.cid ~= EXT then
+            Inv.RequestTake(d.inst, r.cid, tx, ty, d.rot, d.single)
+        elseif not Inv.ext.depot and (tx ~= d.inst.x or ty ~= d.inst.y or d.rot ~= d.inst.rot) then
+            Inv.RequestExtMove(d.inst, tx, ty, d.rot, d.single)
+        end
+        return
+    end
+
+    if not Inv.byUid[d.inst.uid] then return end
+    if outside then
         Inv.RequestDrop(d.inst)
         return
     end
@@ -466,7 +613,7 @@ function PANEL:OnMouseReleased(code)
     local r, tx, ty = self:DragTarget(d)
     if not r then return end
     if r.cid ~= d.inst.c or tx ~= d.inst.x or ty ~= d.inst.y or d.rot ~= d.inst.rot then
-        Inv.RequestMove(d.inst, r.cid, tx, ty, d.rot)
+        Inv.RequestMove(d.inst, r.cid, tx, ty, d.rot, d.single)
     end
 end
 
@@ -484,6 +631,11 @@ function PANEL:Think()
     self.rDown = r
 
     if not LocalPlayer():Alive() then self:Remove() end
+end
+
+-- Closing the window closes the locker / armoury too.
+function PANEL:OnRemove()
+    Inv.CloseExt()
 end
 
 vgui.Register("RhylibInventory", PANEL, "EditablePanel")

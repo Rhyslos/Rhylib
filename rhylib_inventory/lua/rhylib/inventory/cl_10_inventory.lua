@@ -3,6 +3,8 @@
     kept up to date by the batched "inv.upd" changes. The UI reads it.
 
     Same shape as the server: Inv.cont[cid] = { w, h, items }, Inv.byUid.
+    An open outside container (locker, armoury, crate) is Inv.cont[EXT]
+    with its own uids, plus Inv.ext = { title, depot, canLock, locked }.
 ]]
 
 Rhylib.Inventory = Rhylib.Inventory or {}
@@ -11,6 +13,10 @@ local Items = Rhylib.Items
 
 Inv.cont = Inv.cont or { [Items.MAIN] = { w = 5, h = 3, items = {} }, [Items.SLOT_BACK] = { w = 1, h = 1, items = {} } }
 Inv.byUid = Inv.byUid or {}
+
+local EXT = Items.EXT
+Inv.ext = Inv.ext or nil
+Inv.busyEnd = Inv.busyEnd or 0   -- combining munitions until this time
 
 local function setInst(inst)
     if not inst.id then return end
@@ -66,20 +72,110 @@ end, function(ch)
     end
 end)
 
+-- Outside container ------------------------------------------------------
+
+net.Receive(Rhylib.Net.Name("inv.ext"), function()
+    Items.EnsureReady()
+    if not net.ReadBool() then
+        Inv.cont[EXT] = nil
+        Inv.ext = nil
+        return
+    end
+    local ext = {
+        title = net.ReadString(),
+        depot = net.ReadBool(),
+    }
+    local w, h = net.ReadUInt(5), net.ReadUInt(5)
+    ext.canLock = net.ReadBool()
+    ext.locked = net.ReadBool()
+    local c = { w = w, h = h, items = {} }
+    for _ = 1, net.ReadUInt(8) do
+        local inst = Items.ReadInstance()
+        if inst.id then c.items[inst.uid] = inst end
+    end
+    Inv.cont[EXT] = c
+    Inv.ext = ext
+    if not IsValid(Inv.panel) then Inv.Toggle() end
+end)
+
+Rhylib.Net.ReceiveBatch("inv.extupd", function()
+    if net.ReadUInt(1) == 1 then return { set = Items.ReadInstance() } end
+    return { uid = net.ReadUInt(Items.UID_BITS) }
+end, function(ch)
+    local c = Inv.cont[EXT]
+    if not c then return end
+    if ch.set then
+        if ch.set.id then c.items[ch.set.uid] = ch.set end
+    else
+        c.items[ch.uid] = nil
+    end
+end)
+
+net.Receive(Rhylib.Net.Name("inv.busy"), function()
+    Inv.busyEnd = net.ReadFloat()
+    Inv.busyStart = CurTime()
+end)
+
+-- Take a storage item into your container cid at x, y.
+function Inv.RequestTake(inst, cid, x, y, rot, single)
+    Rhylib.Net.Start("inv.take")
+    net.WriteUInt(inst.uid, Items.UID_BITS)
+    net.WriteUInt(cid, Items.CONT_BITS)
+    net.WriteUInt(x, Items.POS_BITS)
+    net.WriteUInt(y, Items.POS_BITS)
+    net.WriteBool(rot)
+    net.WriteBool(single or false)
+    net.SendToServer()
+end
+
+function Inv.RequestExtMove(inst, x, y, rot, single)
+    Rhylib.Net.Start("inv.extmove")
+    net.WriteUInt(inst.uid, Items.UID_BITS)
+    net.WriteUInt(x, Items.POS_BITS)
+    net.WriteUInt(y, Items.POS_BITS)
+    net.WriteBool(rot)
+    net.WriteBool(single or false)
+    net.SendToServer()
+end
+
+function Inv.CloseExt()
+    if not Inv.ext then return end
+    Inv.cont[EXT] = nil
+    Inv.ext = nil
+    Rhylib.Net.Start("inv.close")
+    net.SendToServer()
+end
+
+function Inv.RequestSplit(inst)
+    Rhylib.Net.Start("inv.split")
+    net.WriteUInt(inst.uid, Items.UID_BITS)
+    net.SendToServer()
+end
+
+function Inv.RequestCombine()
+    Rhylib.Net.Start("inv.combine")
+    net.SendToServer()
+end
+
+-- Requests ------------------------------------------------------------------
+
 function Inv.RequestFull()
     Rhylib.Net.Start("inv.req")
     net.SendToServer()
 end
 
 -- Moves locally right away so dragging feels instant; the server confirms
--- or sends the item back where it was.
-function Inv.RequestMove(inst, cid, x, y, rot)
+-- or sends the item back where it was. single: just one off a stack
+-- (not moved locally; the server's answer shows it). Moving into the
+-- outside container (cid EXT) is decided by the server too.
+function Inv.RequestMove(inst, cid, x, y, rot, single)
     local c = Inv.cont[cid]
     if not c then return end
     if cid ~= inst.c and not Items.CanLeave(Inv, inst) then return end
+    single = single and inst.count > 1
 
     local merge = cid ~= Items.SLOT_BACK and Items.MergeTarget(c.items, inst, x, y)
-    if not merge then
+    if not merge and not single and cid ~= EXT then
         if not Items.CanPlace(Inv, inst.id, cid, x, y, rot, inst.uid) then return end
         local moved = { uid = inst.uid, id = inst.id, c = cid, x = x, y = y, rot = rot, count = inst.count, data = inst.data }
         setInst(moved)
@@ -91,6 +187,7 @@ function Inv.RequestMove(inst, cid, x, y, rot)
     net.WriteUInt(x, Items.POS_BITS)
     net.WriteUInt(y, Items.POS_BITS)
     net.WriteBool(rot)
+    net.WriteBool(single or false)
     net.SendToServer()
 end
 
