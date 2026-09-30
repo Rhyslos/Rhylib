@@ -1,4 +1,8 @@
--- Health and armour, bottom left. With DarkRP, also job and money.
+--[[
+    Health and armour on a plate in the bottom-left corner (third person).
+    With DarkRP, also job and money. In the helmet visor the armour and
+    health blocks replace this, so nothing is drawn here then.
+]]
 
 local HUD = Rhylib.HUD
 
@@ -6,7 +10,6 @@ local shown = { hp = 100, ar = 0 }  -- smoothed values so bars slide instead of 
 
 Rhylib.Hook.Add("HUDPaint", "hud.status", function()
     if HUD.Hidden() then return end
-    -- In the helmet visor, the armour and health blocks replace this box.
     if HUD.VisorActive and HUD.VisorActive() then return end
     local ply = LocalPlayer()
     local s = HUD.Scale()
@@ -17,46 +20,35 @@ Rhylib.Hook.Add("HUDPaint", "hud.status", function()
     local maxAr = ply.GetMaxArmor and ply:GetMaxArmor() or 100
     if maxAr <= 0 then maxAr = 100 end
 
-    local ft = FrameTime() * 8
-    shown.hp = Lerp(math.min(ft, 1), shown.hp, hp)
-    shown.ar = Lerp(math.min(ft, 1), shown.ar, ar)
+    local ft = math.min(FrameTime() * 8, 1)
+    shown.hp = Lerp(ft, shown.hp, hp)
+    shown.ar = Lerp(ft, shown.ar, ar)
 
     local darkrp = DarkRP and ply.getDarkRPVar
-    local pad = math.floor(12 * s)
-    local w = math.floor(300 * s)
-    local barH = math.floor(10 * s)
-    local rowH = math.floor(34 * s)
+    local rowH = math.floor(30 * s)
+    local infoH = darkrp and math.floor(22 * s) or 0
     local rows = 1 + ((ar > 0) and 1 or 0)
-    local h = pad * 2 + rows * rowH + (darkrp and math.floor(24 * s) or 0)
-    local mx, my = HUD.Margins("status")
-    local x = mx
-    local y = ScrH() - h - my
+    local x, y, w = HUD.Plate(-1, math.floor(300 * s), rows * rowH + infoH)
 
-    HUD.Panel(x, y, w, h)
-    local cx, cy = x + pad, y + pad
-    local labelW = math.floor(44 * s)
-    local barW = w - pad * 2 - labelW - math.floor(8 * s)
+    local labelW = math.floor(48 * s)
+    local barH = math.floor(10 * s)
+    local barW = w - labelW
 
-    -- Health
-    local low = hp / maxHp < 0.3
-    local hcol = low and C.healthLow or C.health
-    HUD.Text(tostring(hp), 26, cx, cy + rowH * 0.5, low and C.healthLow or C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-    HUD.Bar(cx + labelW, cy + (rowH - barH) * 0.5, barW, barH, shown.hp / maxHp, hcol)
-    cy = cy + rowH
-
-    -- Armour (only while you have some)
-    if ar > 0 then
-        HUD.Text(tostring(ar), 26, cx, cy + rowH * 0.5, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-        HUD.Bar(cx + labelW, cy + (rowH - barH) * 0.5, barW, barH, shown.ar / maxAr, C.armor)
-        cy = cy + rowH
+    local function row(value, frac, col, textCol)
+        HUD.Text(tostring(value), 24, x, y + rowH * 0.5, textCol, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        HUD.Bar(x + labelW, y + math.floor((rowH - barH) * 0.5), barW, barH, frac, col)
+        y = y + rowH
     end
 
-    -- DarkRP job and money
+    local low = hp / maxHp < 0.3
+    row(hp, shown.hp / maxHp, low and C.healthLow or C.health, low and C.healthLow or C.text)
+    if ar > 0 then row(ar, shown.ar / maxAr, C.armor, C.text) end
+
     if darkrp then
         local job = ply:getDarkRPVar("job") or team.GetName(ply:Team())
         local money = ply:getDarkRPVar("money") or 0
         local moneyText = DarkRP.formatMoney and DarkRP.formatMoney(money) or ("$" .. money)
-        HUD.Text(job, 16, cx, cy + math.floor(4 * s), C.dim)
-        HUD.Text(moneyText, 16, x + w - pad, cy + math.floor(4 * s), C.text, TEXT_ALIGN_RIGHT)
+        HUD.Text(job, 15, x, y + math.floor(3 * s), C.dim)
+        HUD.Text(moneyText, 15, x + w, y + math.floor(3 * s), C.text, TEXT_ALIGN_RIGHT)
     end
 end)

@@ -123,27 +123,38 @@ Rhylib.Hook.Add("HUDPaint", "hud.hotbar", function()
     end
     if alpha <= 0 then return end
 
-    local bw, bh = math.floor(132 * s), math.floor(44 * s)
+    -- Square-ish boxes between the corner plates. With many weapons they
+    -- shrink to fit the space (down to a minimum width).
     local gap = math.floor(6 * s)
+    local space = ScrW() * 0.44
+    local bw = math.floor(math.Clamp((space - gap * (#list - 1)) / #list, 56 * s, 104 * s))
+    local bh = math.floor(76 * s)
     local total = #list * bw + (#list - 1) * gap
     local x = math.floor((ScrW() - total) * 0.5)
     local _, my = HUD.Margins("hotbar")
     local y = ScrH() - bh - my
-    local font = UI.Font(15)
+    local font = UI.Font(14)
+    local barH = math.max(2, math.floor(3 * s))
 
     for i, w in ipairs(list) do
         local bx = x + (i - 1) * (bw + gap)
         local isActive = w == active
-        HUD.Panel(bx, y, bw, bh, isActive and math.min(255, alpha * 2) or alpha)
-        if isActive then
-            surface.SetDrawColor(C.accent.r, C.accent.g, C.accent.b, math.min(255, alpha * 2))
-            surface.DrawRect(bx, y + bh - math.max(2, math.floor(3 * s)), bw, math.max(2, math.floor(3 * s)))
-        end
         local a = isActive and math.min(255, alpha * 2) or alpha
+        HUD.Panel(bx, y, bw, bh, a)
+        if isActive then
+            surface.SetDrawColor(C.accent.r, C.accent.g, C.accent.b, a)
+            surface.DrawRect(bx, y + bh - barH, bw, barH)
+        end
         HUD.Text(tostring(w:GetSlot() + 1), 13, bx + math.floor(7 * s), y + math.floor(5 * s), C.dim, nil, nil, a)
+
+        -- Name, cut to fit the box.
         local name = w:GetPrintName() or w:GetClass()
         surface.SetFont(font)
-        if surface.GetTextSize(name) > bw - 16 * s then name = string.sub(name, 1, 12) .. "…" end
-        HUD.Text(name, 15, bx + bw * 0.5, y + bh * 0.5 + math.floor(3 * s), isActive and C.text or C.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, a)
+        local maxW = bw - 10 * s
+        if surface.GetTextSize(name) > maxW then
+            while #name > 1 and surface.GetTextSize(name .. "…") > maxW do name = string.sub(name, 1, -2) end
+            name = name .. "…"
+        end
+        HUD.Text(name, 14, bx + bw * 0.5, y + bh * 0.58, isActive and C.text or C.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, a)
     end
 end)

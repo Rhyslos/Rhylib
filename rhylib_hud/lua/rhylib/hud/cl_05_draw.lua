@@ -51,6 +51,7 @@ function HUD.Margins(kind)
         if kind == "ammo" then return math.floor(ScrW() * 0.012), math.floor(ScrH() * 0.022) end
         if kind == "hotbar" then return 0, math.floor(ScrH() * 0.03) end
     end
+    if kind == "hotbar" then return 0, math.floor(10 * HUD.Scale()) end
     local m = math.floor(24 * HUD.Scale())
     return m, m
 end
@@ -61,4 +62,59 @@ function HUD.Hidden()
     if not IsValid(ply) or not ply:Alive() then return true end
     local wep = ply:GetActiveWeapon()
     return IsValid(wep) and wep:GetClass() == "gmod_camera"
+end
+
+--[[
+    Third-person corner plate: a dark plate in a bottom corner, just tall
+    enough for its contents. The outer edge is a little taller than the
+    inner edge, and the inner side slants down to the screen bottom.
+    side: -1 = bottom left, 1 = bottom right.
+    Returns the content box: x, y, w, h.
+]]
+local plateVerts = { { x = 0, y = 0 }, { x = 0, y = 0 }, { x = 0, y = 0 }, { x = 0, y = 0 } }
+local COL_PLATE = Color(16, 18, 17, 205)
+local COL_PLATE_EDGE = Color(0, 0, 0, 220)
+local COL_PLATE_HI = Color(170, 176, 180, 90)
+
+function HUD.Plate(side, contentW, contentH)
+    local W, H = ScrW(), ScrH()
+    local s = HUD.Scale()
+    local pad = math.floor(14 * s)
+    local innerH = contentH + pad * 2
+    local drop = math.floor(H * 0.035)   -- outer edge this much taller
+    local slant = math.floor(W * 0.03)   -- inner edge leans out this far at the bottom
+    local innerX = pad * 2 + contentW
+
+    local function px(x) return side < 0 and x or W - x end
+    local ax, ay = px(0), H - innerH - drop
+    local bx, by = px(innerX), H - innerH
+    local cx, cy = px(innerX + slant), H
+    local dx, dy = px(0), H
+
+    -- Winding for surface.DrawPoly: clockwise on screen.
+    if side < 0 then
+        plateVerts[1].x, plateVerts[1].y = ax, ay
+        plateVerts[2].x, plateVerts[2].y = bx, by
+        plateVerts[3].x, plateVerts[3].y = cx, cy
+        plateVerts[4].x, plateVerts[4].y = dx, dy
+    else
+        plateVerts[1].x, plateVerts[1].y = bx, by
+        plateVerts[2].x, plateVerts[2].y = ax, ay
+        plateVerts[3].x, plateVerts[3].y = dx, dy
+        plateVerts[4].x, plateVerts[4].y = cx, cy
+    end
+    draw.NoTexture()
+    surface.SetDrawColor(COL_PLATE)
+    surface.DrawPoly(plateVerts)
+
+    -- Edges along the top and the slant.
+    surface.SetDrawColor(COL_PLATE_EDGE)
+    surface.DrawLine(ax, ay, bx, by)
+    surface.DrawLine(ax, ay - 1, bx, by - 1)
+    surface.DrawLine(bx, by, cx, cy)
+    surface.SetDrawColor(COL_PLATE_HI)
+    surface.DrawLine(ax, ay + 1, bx, by + 1)
+
+    local x = side < 0 and pad or W - pad - contentW
+    return x, H - innerH + pad, contentW, contentH
 end
