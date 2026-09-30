@@ -2,8 +2,10 @@
     DC-15A blaster rifle. Uses a magazine and a power cell.
     Semi-auto by default (full auto comes from the Autorifleman skill later).
 
-    Added now mainly to test power cell reloads. HL2 pulse rifle models
-    are placeholders; all numbers are first guesses for tuning.
+    Uses a prop model (models/jajoff/sps/cgiweapons/tc13j/dc15a.mdl), so it
+    has no arms in first person. The model's addon must be installed.
+    Tune the Prop* offsets below; saving this file updates them in game.
+    All numbers are first guesses for tuning.
 ]]
 
 AddCSLuaFile()
@@ -14,11 +16,20 @@ SWEP.Category = "Rhylib: Republic"
 SWEP.Spawnable = true
 SWEP.AdminOnly = false
 
+-- The placeholder viewmodel is hidden but still drives the reload timing.
 SWEP.ViewModel = "models/weapons/c_irifle.mdl"
-SWEP.WorldModel = "models/weapons/w_irifle.mdl"
-SWEP.UseHands = true
+SWEP.WorldModel = "models/jajoff/sps/cgiweapons/tc13j/dc15a.mdl"
+SWEP.UseHands = false
 SWEP.HoldType = "ar2"
 SWEP.Slot = 2
+
+SWEP.PropModel = "models/jajoff/sps/cgiweapons/tc13j/dc15a.mdl"
+SWEP.PropScale = 1
+SWEP.PropVMPos = Vector(18, 7, -8)     -- forward, right, up (first person)
+SWEP.PropVMAng = Angle(0, 0, 0)        -- pitch, yaw, roll
+SWEP.PropWMPos = Vector(5, 1, -3)      -- forward, right, up from the right hand
+SWEP.PropWMAng = Angle(-10, 0, 180)
+SWEP.PropMuzzle = Vector(32, 0, 2)     -- muzzle in the prop's own coordinates (longer rifle)
 
 SWEP.Primary = {
     ClipSize = 30,
