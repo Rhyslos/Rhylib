@@ -21,7 +21,9 @@ local previous = nil
 
 local function rebuild(ply)
     list = {}
-    for _, w in ipairs(ply:GetWeapons()) do list[#list + 1] = w end
+    for _, w in ipairs(ply:GetWeapons()) do
+        if IsValid(w) then list[#list + 1] = w end
+    end
     table.sort(list, function(a, b)
         local sa, sb = a:GetSlot(), b:GetSlot()
         if sa ~= sb then return sa < sb end
@@ -94,7 +96,13 @@ end)
 Rhylib.Hook.Add("HUDPaint", "hud.hotbar", function()
     if HUD.Hidden() then return end
     local ply = LocalPlayer()
-    if RealTime() >= nextBuild then
+    -- Rebuild five times a second, or straight away if a cached weapon
+    -- was removed (dying, dropping, being stripped).
+    local stale = RealTime() >= nextBuild
+    for i = 1, #list do
+        if not IsValid(list[i]) then stale = true break end
+    end
+    if stale then
         rebuild(ply)
         nextBuild = RealTime() + 0.2
     end
@@ -105,27 +113,33 @@ Rhylib.Hook.Add("HUDPaint", "hud.hotbar", function()
     local active = ply:GetActiveWeapon()
 
     local since = RealTime() - lastSwitch
+    -- In the helmet visor the bar hides completely when idle, so it
+    -- doesn't block the chin opening.
+    local visor = HUD.VisorActive and HUD.VisorActive()
+    local minAlpha = visor and 0 or 90
     local alpha = 255
-    if fadeVar:GetBool() then
-        alpha = since < 2.5 and 255 or math.max(90, 255 - (since - 2.5) * 400)
+    if fadeVar:GetBool() or visor then
+        alpha = since < 2.5 and 255 or math.max(minAlpha, 255 - (since - 2.5) * 400)
     end
+    if alpha <= 0 then return end
 
     local bw, bh = math.floor(132 * s), math.floor(44 * s)
     local gap = math.floor(6 * s)
     local total = #list * bw + (#list - 1) * gap
     local x = math.floor((ScrW() - total) * 0.5)
-    local y = ScrH() - bh - math.floor(24 * s)
+    local _, my = HUD.Margins("hotbar")
+    local y = ScrH() - bh - my
     local font = UI.Font(15)
 
     for i, w in ipairs(list) do
         local bx = x + (i - 1) * (bw + gap)
         local isActive = w == active
-        HUD.Panel(bx, y, bw, bh, isActive and 255 or alpha)
+        HUD.Panel(bx, y, bw, bh, isActive and math.min(255, alpha * 2) or alpha)
         if isActive then
-            surface.SetDrawColor(C.accent.r, C.accent.g, C.accent.b, 255)
+            surface.SetDrawColor(C.accent.r, C.accent.g, C.accent.b, math.min(255, alpha * 2))
             surface.DrawRect(bx, y + bh - math.max(2, math.floor(3 * s)), bw, math.max(2, math.floor(3 * s)))
         end
-        local a = isActive and 255 or alpha
+        local a = isActive and math.min(255, alpha * 2) or alpha
         HUD.Text(tostring(w:GetSlot() + 1), 13, bx + math.floor(7 * s), y + math.floor(5 * s), C.dim, nil, nil, a)
         local name = w:GetPrintName() or w:GetClass()
         surface.SetFont(font)

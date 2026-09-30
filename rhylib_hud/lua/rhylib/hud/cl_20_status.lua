@@ -6,6 +6,8 @@ local shown = { hp = 100, ar = 0 }  -- smoothed values so bars slide instead of 
 
 Rhylib.Hook.Add("HUDPaint", "hud.status", function()
     if HUD.Hidden() then return end
+    -- In the helmet visor, the armour and health blocks replace this box.
+    if HUD.VisorActive and HUD.VisorActive() then return end
     local ply = LocalPlayer()
     local s = HUD.Scale()
     local C = HUD.Colors
@@ -26,8 +28,9 @@ Rhylib.Hook.Add("HUDPaint", "hud.status", function()
     local rowH = math.floor(34 * s)
     local rows = 1 + ((ar > 0) and 1 or 0)
     local h = pad * 2 + rows * rowH + (darkrp and math.floor(24 * s) or 0)
-    local x = math.floor(24 * s)
-    local y = ScrH() - h - math.floor(24 * s)
+    local mx, my = HUD.Margins("status")
+    local x = mx
+    local y = ScrH() - h - my
 
     HUD.Panel(x, y, w, h)
     local cx, cy = x + pad, y + pad

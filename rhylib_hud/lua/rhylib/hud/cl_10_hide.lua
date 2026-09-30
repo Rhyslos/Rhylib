@@ -6,6 +6,7 @@ local HIDE = {
     CHudAmmo = true,
     CHudSecondaryAmmo = true,
     CHudWeaponSelection = true,
+    CHudQuickInfo = true,          -- HL2's yellow health/ammo brackets around the crosshair
     DarkRP_LocalPlayerHUD = true,  -- DarkRP health, job and money box
     DarkRP_EntityDisplay = true,   -- DarkRP names above heads
 }

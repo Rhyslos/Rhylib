@@ -43,6 +43,18 @@ function HUD.Text(text, size, x, y, col, ax, ay, alpha)
     return draw.SimpleText(text, UI.Font(size), x, y, col, ax or TEXT_ALIGN_LEFT, ay or TEXT_ALIGN_TOP)
 end
 
+-- Distance from the screen edges for a HUD box. kind: "ammo", "hotbar"
+-- or "status". While the helmet visor is showing, the ammo box sits on
+-- the lower-right cheek and the hotbar low in the chin opening.
+function HUD.Margins(kind)
+    if HUD.VisorActive and HUD.VisorActive() then
+        if kind == "ammo" then return math.floor(ScrW() * 0.012), math.floor(ScrH() * 0.022) end
+        if kind == "hotbar" then return 0, math.floor(ScrH() * 0.03) end
+    end
+    local m = math.floor(24 * HUD.Scale())
+    return m, m
+end
+
 -- True while something should hide the HUD (camera tool, dead, etc.).
 function HUD.Hidden()
     local ply = LocalPlayer()
