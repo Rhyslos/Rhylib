@@ -73,6 +73,7 @@ SWEP.FireSound = "weapons/airboat/airboat_gun_energy1.wav"
 -- Fire modes this weapon can switch between (E + R), first one is the default.
 SWEP.FireModes = { "semi" }
 SWEP.SprintRaiseTime = 0.25         -- seconds after sprinting before the gun can fire
+SWEP.Grapple = false                -- true: gets a "grapple" fire mode while you carry a grapple hook
 SWEP.BurstCount = 3
 SWEP.BurstDelay = 0.25              -- extra pause after a burst
 
@@ -186,8 +187,15 @@ function SWEP:Initialize()
     self:SetTriggerReady(true)
 end
 
+-- The grapple mode sits after the weapon's own modes (index #FireModes + 1).
 function SWEP:GetFireModeName()
-    return self.FireModes[self:GetFireMode()] or self.FireModes[1] or "semi"
+    local m = self:GetFireMode()
+    if self.Grapple and m == #self.FireModes + 1 then return "grapple" end
+    return self.FireModes[m] or self.FireModes[1] or "semi"
+end
+
+function SWEP:InGrappleMode()
+    return self.Grapple and self:GetFireMode() == #self.FireModes + 1
 end
 
 -- Magazine helpers --------------------------------------------------------
@@ -227,13 +235,30 @@ end
 if SERVER then
     -- E + R (sent by cl_30_reload.lua).
     function SWEP:CycleFireMode()
-        if self:GetSafety() or #self.FireModes <= 1 then
+        local n = #self.FireModes
+        local G = Rhylib.Weapons.Grapple
+        local owner = self:GetOwner()
+        local grapple = self.Grapple and G and IsValid(owner)
+            and Rhylib.Weapons.Pouch.Count(owner, G.ITEM) > 0
+        local total = n + (grapple and 1 or 0)
+        if self:GetSafety() or total <= 1 then
             self:EmitSound("Weapon_AR2.Empty", 60)
             return
         end
-        self:SetFireMode(self:GetFireMode() % #self.FireModes + 1)
+        local cur = self:GetFireMode()
+        if cur < 1 or cur > total then cur = 1 end
+        local nextMode = cur % total + 1
+        if nextMode == n + 1 then self.preGrappleMode = cur end
+        self:SetFireMode(nextMode)
         self:SetBurstLeft(0)
         self:EmitSound("weapons/smg1/switch_burst.wav", 60)
+    end
+
+    -- Back to the fire mode used before switching to grapple.
+    function SWEP:LeaveGrappleMode()
+        if not self:InGrappleMode() then return end
+        local m = self.preGrappleMode
+        self:SetFireMode(self.FireModes[m or 0] and m or 1)
     end
 
     -- Shift + E + R.
@@ -303,6 +328,10 @@ function SWEP:PrimaryAttack()
         self:EmitSound("Weapon_Pistol.Empty", 60)
         return
     end
+    if mode == "grapple" then
+        self:FireGrapple()
+        return
+    end
     -- Rotary guns wait for spin-up (an empty gun skips it, so the click
     -- and the automatic reload below still happen).
     if self:Clip1() > 0 and not self:SpunUp() then return end
@@ -344,6 +373,24 @@ function SWEP:FireShot()
     elseif IsFirstTimePredicted() then
         Rhylib.Weapons.Bolts.FireLocal(owner, self, origin, dir)
     end
+end
+
+-- One grapple hook (see rhylib/weapons/sh_30_grapple.lua).
+function SWEP:FireGrapple()
+    local owner = self:GetOwner()
+    if not IsValid(owner) or not owner:IsPlayer() then return end
+    self:SetNextPrimaryFire(CurTime() + Rhylib.Config.Get("grapple", "cooldown"))
+    local G = Rhylib.Weapons.Grapple
+    if IsFirstTimePredicted() then
+        self:EmitSound("weapons/crossbow/fire1.wav", 70, 115)
+        owner:SetAnimation(PLAYER_ATTACK1)
+        -- Your own client draws the hook flying out straight away.
+        if CLIENT and owner:GetAmmoCount(G.AMMO) > 0 then
+            Rhylib.Weapons.Bolts.Spawn(owner, owner:GetShootPos(), owner:GetAimVector(),
+                Rhylib.Config.Get("grapple", "hookSpeed"), 5)
+        end
+    end
+    if SERVER then G.Fire(owner, self) end
 end
 
 function SWEP:SecondaryAttack()

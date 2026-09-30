@@ -20,7 +20,10 @@ local STYLES = {
     [2] = { color = Color(255, 70, 60), length = 70, width = 5, glow = 14, life = 1.2 },    -- CIS red
     [3] = { color = Color(80, 255, 120), length = 70, width = 5, glow = 14, life = 1.2 },   -- green
     [4] = { color = Color(255, 170, 80), length = 140, width = 9, glow = 40, life = 6, rocket = true },  -- rocket
+    [5] = { color = Color(58, 60, 62), length = 0, width = 1.2, glow = 0, life = 0.6, hook = true },    -- grapple hook
 }
+local COL_HOOK = Color(14, 14, 14)
+local HOOK_MINS, HOOK_MAXS = Vector(-4.5, -1, -1), Vector(1.5, 1, 1)
 
 local BLEND_TIME = 0.08
 
@@ -90,7 +93,7 @@ local traceResult = {}
 local traceData = { mask = MASK_SHOT, output = traceResult }
 
 local function impact(tr, style)
-    if style.rocket then return end  -- the server sends the explosion
+    if style.rocket or style.hook then return end  -- the server handles these
     local ed = EffectData()
     ed:SetOrigin(tr.HitPos)
     ed:SetNormal(tr.HitNormal)
@@ -146,7 +149,14 @@ Rhylib.Hook.Add("PostDrawTranslucentRenderables", "weapons.bolts", function(dept
     for i = 1, #list do
         local b = list[i]
         local st = b.style
-        if st then
+        if st and st.hook then
+            -- The hook flying out, trailing its line back to the gun.
+            local head = b.pos
+            local from = muzzlePos(b.shooter, head)
+            render.SetColorMaterial()
+            render.DrawBeam(from, head, st.width, 0, 1, st.color)
+            render.DrawBox(head, b.dir:Angle(), HOOK_MINS, HOOK_MAXS, COL_HOOK)
+        elseif st then
             local blend = math.max(0, 1 - (now - b.born) / BLEND_TIME)
             local head = b.pos + b.offset * blend
             local tail = head - b.dir * math.min(st.length, b.travelled + 1)

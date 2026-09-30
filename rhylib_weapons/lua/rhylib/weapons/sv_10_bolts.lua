@@ -72,6 +72,10 @@ local function explode(bolt, pos, normal)
 end
 
 local function applyHit(bolt, tr)
+    if bolt.onHit then
+        bolt.onHit(bolt, tr)  -- special bolts (the grapple hook) handle their own hits
+        return
+    end
     if bolt.explosive then
         explode(bolt, tr.HitPos, tr.HitNormal)
         return
@@ -114,7 +118,7 @@ local function getHumans()
     return humans
 end
 
-local function sendShot(owner, weapon, origin, dir, speed)
+local function sendShot(owner, color, origin, dir, speed)
     local range = Config.Get("weapons", "shotRange")
     local rangeSqr = range * range
     local sp = game.SinglePlayer()  -- in singleplayer the client doesn't predict, so the owner needs it too
@@ -123,7 +127,7 @@ local function sendShot(owner, weapon, origin, dir, speed)
         origin = origin,
         dir = dir,
         speed = math.min(speed, 16383),
-        color = weapon.BoltColor or 1,
+        color = color,
     }
     local list = getHumans()
     for i = 1, #list do
@@ -135,8 +139,10 @@ local function sendShot(owner, weapon, origin, dir, speed)
 end
 
 -- Called from the weapon's PrimaryAttack on the server.
-function Bolts.Fire(owner, weapon, origin, dir, damage)
-    local speed = weapon.BoltSpeed
+-- opts (optional): speed, color, life, onHit(bolt, tr), onExpire(bolt)
+-- override the weapon's own bolt settings (used by the grapple hook).
+function Bolts.Fire(owner, weapon, origin, dir, damage, opts)
+    local speed = opts and opts.speed or weapon.BoltSpeed
     local bolt = {
         owner = owner,
         weapon = weapon,
@@ -144,11 +150,13 @@ function Bolts.Fire(owner, weapon, origin, dir, damage)
         dir = dir,
         speed = speed,
         damage = damage or weapon.Damage,
-        die = CurTime() + (weapon.BoltLife or Config.Get("weapons", "boltLife")),
+        die = CurTime() + (opts and opts.life or weapon.BoltLife or Config.Get("weapons", "boltLife")),
         explosive = weapon.Explosive,
+        onHit = opts and opts.onHit,
+        onExpire = opts and opts.onExpire,
     }
 
-    sendShot(owner, weapon, origin, dir, speed)
+    sendShot(owner, opts and opts.color or weapon.BoltColor or 1, origin, dir, speed)
 
     local isPly = owner:IsPlayer()
     local lag = isPly and math.min(owner:Ping() / 1000, Config.Get("weapons", "lagCompMax")) or 0
@@ -180,6 +188,7 @@ Rhylib.Hook.Add("Tick", "weapons.bolts", function()
     while i <= #list do
         local b = list[i]
         local remove = now > b.die or not b.step  -- (bolts from before an autorefresh)
+        if remove and b.onExpire and b.step then b.onExpire(b) end
 
         if not remove then
             local to = b.nextPos

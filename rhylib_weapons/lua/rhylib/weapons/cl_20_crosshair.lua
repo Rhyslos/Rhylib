@@ -78,6 +78,11 @@ end
 local offsets = { 0, 0, 0 }
 
 function X.Draw(wep, x, y)
+    -- Grapple mode: the hook's landing marker instead (cl_40_grapple.lua).
+    if wep.InGrappleMode and wep:InGrappleMode() and X.DrawGrapple then
+        X.DrawGrapple(wep, x, y)
+        return
+    end
     local ply = LocalPlayer()
     local fov = wep:TranslateFOV(ply:GetFOV())
     local s = ScrH() / 1080

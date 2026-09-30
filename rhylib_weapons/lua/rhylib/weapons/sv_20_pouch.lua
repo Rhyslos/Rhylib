@@ -25,6 +25,7 @@ local Config = Rhylib.Config
 local KINDS = {}
 for id, m in pairs(W.MagTypes) do KINDS[id] = m.ammo end
 KINDS[W.CELL] = "rhylib_cell"
+if W.Grapple then KINDS[W.Grapple.ITEM] = W.Grapple.AMMO end  -- grapple hooks, so the client knows you have one
 
 local function inventory()
     local Inv = Rhylib.Inventory
