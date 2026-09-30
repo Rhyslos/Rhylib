@@ -12,6 +12,13 @@
       Magazines and cells come from the player's pouch (sv_20_pouch.lua)
       until the inventory module replaces it.
 
+    Fire modes and safety:
+      - E + R cycles through the weapon's FireModes ("semi", "auto", "burst").
+      - Shift + E + R toggles safety: the weapon is lowered (passive hold),
+        can't fire or aim, and the crosshair hides.
+      Semi and burst need a fresh trigger pull for each shot or burst.
+      Primary.Automatic must stay true; the fire mode decides instead.
+
     Derived weapons set their own values below. Note: GMod does NOT merge
     the Primary, Secondary and Spread tables from the base, so a weapon
     that changes any field in them must define the whole table.
@@ -55,6 +62,11 @@ SWEP.Damage = 25
 SWEP.BoltSpeed = 7000               -- units per second (max 16383)
 SWEP.BoltColor = 1                  -- 1 blue, 2 red, 3 green
 SWEP.FireSound = "weapons/airboat/airboat_gun_energy1.wav"
+
+-- Fire modes this weapon can switch between (E + R), first one is the default.
+SWEP.FireModes = { "semi" }
+SWEP.BurstCount = 3
+SWEP.BurstDelay = 0.25              -- extra pause after a burst
 
 SWEP.UsesCell = false
 SWEP.CellShots = 500                -- shots from one full power cell
@@ -112,12 +124,29 @@ function SWEP:SetupDataTables()
     self:NetworkVar("Int", 0, "Streak")
     self:NetworkVar("Int", 1, "LastArc")
     self:NetworkVar("Int", 2, "ReloadKind")
+    self:NetworkVar("Int", 3, "FireMode")
+    self:NetworkVar("Int", 4, "BurstLeft")
     self:NetworkVar("Bool", 0, "Aiming")
+    self:NetworkVar("Bool", 1, "Safety")
+    self:NetworkVar("Bool", 2, "TriggerReady")
+
+    -- Lowered hold on every client as soon as safety changes.
+    self:NetworkVarNotify("Safety", self.OnSafetyChanged)
+end
+
+function SWEP:OnSafetyChanged(_, _, on)
+    self:SetHoldType(on and "passive" or self.HoldType)
 end
 
 function SWEP:Initialize()
-    self:SetHoldType(self.HoldType)
+    self:SetHoldType(self:GetSafety() and "passive" or self.HoldType)
     if self.UsesCell then self:SetCell(1) end
+    if self:GetFireMode() == 0 then self:SetFireMode(1) end
+    self:SetTriggerReady(true)
+end
+
+function SWEP:GetFireModeName()
+    return self.FireModes[self:GetFireMode()] or self.FireModes[1] or "semi"
 end
 
 function SWEP:Deploy()
@@ -127,8 +156,31 @@ end
 
 function SWEP:Holster()
     self:SetAiming(false)
+    self:SetBurstLeft(0)
     self:CancelReload()
     return true
+end
+
+if SERVER then
+    -- E + R (sent by cl_30_reload.lua).
+    function SWEP:CycleFireMode()
+        if self:GetSafety() or #self.FireModes <= 1 then
+            self:EmitSound("Weapon_AR2.Empty", 60)
+            return
+        end
+        self:SetFireMode(self:GetFireMode() % #self.FireModes + 1)
+        self:SetBurstLeft(0)
+        self:EmitSound("weapons/smg1/switch_burst.wav", 60)
+    end
+
+    -- Shift + E + R.
+    function SWEP:ToggleSafety()
+        local on = not self:GetSafety()
+        self:SetSafety(on)
+        self:SetAiming(false)
+        self:SetBurstLeft(0)
+        self:EmitSound("weapons/smg1/switch_single.wav", 60)
+    end
 end
 
 --------------------------------------------------------------------------
@@ -152,6 +204,7 @@ function SWEP:TooHeavyToFire()
 end
 
 function SWEP:CanPrimaryAttack()
+    if self:GetSafety() then return false end
     if self:GetReloadKind() ~= RELOAD_NONE then return false end
     if self:TooHeavyToFire() then return false end
 
@@ -171,9 +224,29 @@ function SWEP:CanPrimaryAttack()
     return true
 end
 
+-- Called by the engine every tick while the trigger is held (Automatic
+-- is always true). The fire mode decides whether that fires.
 function SWEP:PrimaryAttack()
+    if self:GetBurstLeft() > 0 then return end  -- a burst is running (Think fires it)
+
+    local mode = self:GetFireModeName()
+    if mode ~= "auto" or self:GetSafety() then
+        if not self:GetTriggerReady() then return end
+        self:SetTriggerReady(false)
+    end
+
+    if self:GetSafety() then
+        self:EmitSound("Weapon_Pistol.Empty", 60)
+        return
+    end
     if not self:CanPrimaryAttack() then return end
 
+    if mode == "burst" then self:SetBurstLeft(self.BurstCount - 1) end
+    self:FireShot()
+end
+
+-- One shot: spread, recoil, ammo, sound and the bolt.
+function SWEP:FireShot()
     local owner = self:GetOwner()
     if not IsValid(owner) then return end
 
@@ -309,13 +382,20 @@ end
 
 -- Clip and cell are kept in the inventory item while the weapon is stored.
 function SWEP:GetInventoryData()
-    return { clip = self:Clip1(), cell = self.UsesCell and self:GetCell() or nil }
+    return {
+        clip = self:Clip1(),
+        cell = self.UsesCell and self:GetCell() or nil,
+        mode = self:GetFireMode(),
+        safe = self:GetSafety() or nil,
+    }
 end
 
 function SWEP:SetInventoryData(data)
     data = data or {}
     self:SetClip1(data.clip or self.Primary.ClipSize)
     if self.UsesCell then self:SetCell(data.cell or 1) end
+    if data.mode and self.FireModes[data.mode] then self:SetFireMode(data.mode) end
+    if data.safe then self:SetSafety(true) end
 end
 
 function SWEP:Think()
@@ -326,7 +406,25 @@ function SWEP:Think()
         self:FinishReload()
     end
 
-    local want = owner:KeyDown(IN_ATTACK2) and not owner:IsSprinting() and not self:IsReloading()
+    -- Trigger released: the next semi shot or burst may fire.
+    if not self:GetTriggerReady() and not owner:KeyDown(IN_ATTACK) then
+        self:SetTriggerReady(true)
+    end
+
+    -- Keep a burst going after the first shot.
+    local left = self:GetBurstLeft()
+    if left > 0 and CurTime() >= self:GetNextPrimaryFire() then
+        if self:CanPrimaryAttack() then
+            self:FireShot()
+            left = left - 1
+            if left == 0 then self:SetNextPrimaryFire(self:GetNextPrimaryFire() + self.BurstDelay) end
+            self:SetBurstLeft(left)
+        else
+            self:SetBurstLeft(0)
+        end
+    end
+
+    local want = owner:KeyDown(IN_ATTACK2) and not owner:IsSprinting() and not self:IsReloading() and not self:GetSafety()
     if want ~= self:GetAiming() then
         self:SetAiming(want)
     end
@@ -342,12 +440,27 @@ if CLIENT then
         return self.aimFrac or 0
     end
 
+    local ease = math.ease and math.ease.InOutSine or function(x) return x end
+
     function SWEP:GetViewModelPosition(pos, ang)
-        self.aimFrac = math.Approach(self.aimFrac or 0, self:GetAiming() and 1 or 0, FrameTime() * 6)
-        local f = math.ease and math.ease.InOutSine(self.aimFrac) or self.aimFrac
-        if f <= 0 then return pos, ang end
-        local off = self.AimPos * f
-        pos = pos + ang:Right() * off.x + ang:Forward() * off.y + ang:Up() * off.z
+        local ft = FrameTime()
+        self.aimFrac = math.Approach(self.aimFrac or 0, self:GetAiming() and 1 or 0, ft * 6)
+        self.safeFrac = math.Approach(self.safeFrac or 0, self:GetSafety() and 1 or 0, ft * 4)
+
+        local f = ease(self.aimFrac)
+        if f > 0 then
+            local off = self.AimPos * f
+            pos = pos + ang:Right() * off.x + ang:Forward() * off.y + ang:Up() * off.z
+        end
+
+        -- On safety: gun lowered and turned inward.
+        local sf = ease(self.safeFrac)
+        if sf > 0 then
+            pos = pos - ang:Up() * (4 * sf) + ang:Right() * (1.5 * sf) - ang:Forward() * (2 * sf)
+            ang = Angle(ang.p, ang.y, ang.r)
+            ang:RotateAroundAxis(ang:Right(), -20 * sf)
+            ang:RotateAroundAxis(ang:Up(), 18 * sf)
+        end
         return pos, ang
     end
 
@@ -362,6 +475,7 @@ if CLIENT then
     end
 
     function SWEP:DoDrawCrosshair(x, y)
+        if self:GetSafety() then return true end  -- no crosshair on safety
         -- In Rhylib third person, rhylib_thirdperson draws it instead.
         local tp = Rhylib.ThirdPerson
         if not (tp and tp.Active and tp.Active()) then
@@ -384,6 +498,10 @@ if CLIENT then
             local cell = self:GetCell()
             local col = cell < Rhylib.Config.Get("weapons", "lowCellThreshold") and UI.Colors.bad or UI.Colors.text
             draw.SimpleText(string.format("Power cell %d%%", math.ceil(cell * 100)), UI.Font(22), ScrW() - 40 * s, ScrH() - 150 * s, col, TEXT_ALIGN_RIGHT, TEXT_ALIGN_BOTTOM)
+        end
+
+        if self:GetSafety() and not Rhylib.HUD then
+            draw.SimpleText("Safety on", UI.Font(18), ScrW() * 0.5, ScrH() * 0.62, UI.Colors.textDim, TEXT_ALIGN_CENTER)
         end
 
         if self:TooHeavyToFire() then

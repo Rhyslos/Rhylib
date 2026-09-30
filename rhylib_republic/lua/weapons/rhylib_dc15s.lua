@@ -42,6 +42,9 @@ SWEP.BoltSpeed = 7000
 SWEP.BoltColor = 1
 SWEP.FireSound = "weapons/airboat/airboat_gun_energy1.wav"
 
+-- Semi first (default), switch with E + R.
+SWEP.FireModes = { "semi", "auto" }
+
 SWEP.UsesCell = false
 SWEP.StartMags = 4
 SWEP.StartCells = 0

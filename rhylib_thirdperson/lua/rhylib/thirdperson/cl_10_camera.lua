@@ -187,7 +187,8 @@ Rhylib.Hook.Add("HUDPaint", "thirdperson.hud", function()
     local wep = ply:GetActiveWeapon()
 
     -- Rhylib weapons draw their crosshair here in third person.
-    if IsValid(wep) and wep.IsRhylib and Rhylib.Weapons and Rhylib.Weapons.Crosshair then
+    if IsValid(wep) and wep.IsRhylib and Rhylib.Weapons and Rhylib.Weapons.Crosshair
+        and not (wep.GetSafety and wep:GetSafety()) then
         Rhylib.Weapons.Crosshair.Draw(wep, ScrW() * 0.5, ScrH() * 0.5)
     end
 

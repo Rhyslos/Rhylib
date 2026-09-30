@@ -119,6 +119,14 @@ Rhylib.Hook.Add("Rhylib.InventoryWeaponPickup", "weapons.startammo", function(pl
     for _ = 1, swep.StartCells or 0 do Pouch.Add(ply, "cells", 1, true) end
 end)
 
+-- E + R (fire mode) and Shift + E + R (safety).
+Rhylib.Net.Receive("wep.mode", function(ply)
+    local safety = net.ReadBool()
+    local wep = ply:GetActiveWeapon()
+    if not (IsValid(wep) and wep.IsRhylib) then return end
+    if safety then wep:ToggleSafety() else wep:CycleFireMode() end
+end, { rate = 4, burst = 3 })
+
 -- Reload requests from the radial menu: 1 = magazine, 2 = power cell.
 Rhylib.Net.Receive("wep.reload", function(ply)
     local kind = net.ReadUInt(2)

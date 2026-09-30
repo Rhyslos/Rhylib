@@ -34,7 +34,7 @@ SWEP.PropMuzzle = Vector(32, 0, 2)     -- muzzle in the prop's own coordinates (
 SWEP.Primary = {
     ClipSize = 30,
     DefaultClip = 30,
-    Automatic = false,
+    Automatic = true,       -- must stay true; FireModes decides
     Ammo = "rhylib_blaster",
 }
 SWEP.Secondary = {
@@ -49,6 +49,8 @@ SWEP.Damage = 35
 SWEP.BoltSpeed = 8000
 SWEP.BoltColor = 1
 SWEP.FireSound = "weapons/airboat/airboat_gun_energy2.wav"
+
+SWEP.FireModes = { "semi" }
 
 SWEP.UsesCell = true
 SWEP.CellShots = 500

@@ -2,6 +2,7 @@
     Reload input and the radial reload menu (client only).
 
     Tap R:  magazine reload.
+    E + R:  next fire mode.   Shift + E + R: safety on/off.
     Hold R: the radial menu opens and the view stops turning. Move the
             mouse toward an option and let go of R to pick it.
             Let go in the middle to cancel.
@@ -72,6 +73,14 @@ Rhylib.Hook.Add("PlayerBindPress", "weapons.reload", function(ply, bind, pressed
     -- R rotates items while the inventory is open.
     if Rhylib.Inventory and IsValid(Rhylib.Inventory.panel) then return true end
     if not activeRhylibWeapon() then return end
+
+    -- E + R: fire mode. Shift + E + R: safety.
+    if ply:KeyDown(IN_USE) then
+        Rhylib.Net.Start("wep.mode")
+        net.WriteBool(ply:KeyDown(IN_SPEED))
+        net.SendToServer()
+        return true
+    end
     R.down = true
     R.downTime = RealTime()
     return true
