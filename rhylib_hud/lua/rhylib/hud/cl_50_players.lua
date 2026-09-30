@@ -1,0 +1,127 @@
+--[[
+    Other players:
+      - Look at someone within range to see their name (in their team
+        colour), job with DarkRP, and health and armour bars.
+      - Icons above heads while someone is talking on voice (bars that
+        move with their voice volume) or typing in chat (bouncing dots).
+
+    Target info uses the eye trace GMod already makes each frame. Icons
+    loop over the players once per frame and skip anyone far away,
+    dead or not being networked to you.
+]]
+
+local HUD = Rhylib.HUD
+local UI = Rhylib.UI
+local Config = Rhylib.Config
+
+local function headPos(ply)
+    local bone = ply:LookupBone("ValveBiped.Bip01_Head1")
+    local pos = bone and ply:GetBonePosition(bone)
+    return pos or ply:EyePos()
+end
+
+local function jobOf(ply)
+    if ply.getDarkRPVar then return ply:getDarkRPVar("job") end
+    return nil
+end
+
+--------------------------------------------------------------------------
+-- Name, health and armour when you look at someone
+--------------------------------------------------------------------------
+
+local target, seenAt, fade = nil, 0, 0
+
+Rhylib.Hook.Add("HUDPaint", "hud.target", function()
+    if HUD.Hidden() then return end
+    local me = LocalPlayer()
+    local range = Config.Get("hud", "targetRange")
+
+    local ent = me:GetEyeTrace().Entity
+    if IsValid(ent) and ent:IsPlayer() and ent:Alive() and ent:GetPos():DistToSqr(me:GetPos()) < range * range then
+        target, seenAt = ent, RealTime()
+    end
+
+    local visible = IsValid(target) and target:Alive() and RealTime() - seenAt < 0.25
+    fade = math.Approach(fade, visible and 1 or 0, FrameTime() * 6)
+    if fade <= 0 or not IsValid(target) then return end
+
+    local scr = (headPos(target) + Vector(0, 0, 16)):ToScreen()
+    if not scr.visible then return end
+
+    local s = HUD.Scale()
+    local C = HUD.Colors
+    local a = math.floor(255 * fade)
+    local x, y = math.floor(scr.x), math.floor(scr.y)
+
+    local job = jobOf(target)
+    local barW, barH = math.floor(120 * s), math.max(3, math.floor(5 * s))
+    local armor = target:GetNW2Int("rhylib_armor", 0)
+
+    -- Stack upward from the head: bars at the bottom, name on top.
+    local cy = y
+    if armor > 0 then
+        HUD.Bar(x - barW * 0.5, cy - barH, barW, barH, armor / 100, C.armor, a)
+        cy = cy - barH - math.floor(3 * s)
+    end
+    local hp, maxHp = math.max(target:Health(), 0), math.max(target:GetMaxHealth(), 1)
+    HUD.Bar(x - barW * 0.5, cy - barH, barW, barH, hp / maxHp, hp / maxHp < 0.3 and C.healthLow or C.health, a)
+    cy = cy - barH - math.floor(6 * s)
+
+    if job then
+        HUD.Text(job, 15, x, cy, C.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_BOTTOM, a)
+        cy = cy - math.floor(17 * s)
+    end
+    local tc = team.GetColor(target:Team())
+    draw.SimpleTextOutlined(target:Nick(), UI.Font(20), x, cy, Color(tc.r, tc.g, tc.b, a), TEXT_ALIGN_CENTER, TEXT_ALIGN_BOTTOM, 1, Color(0, 0, 0, a * 0.6))
+end)
+
+--------------------------------------------------------------------------
+-- Speaking and typing icons above heads
+--------------------------------------------------------------------------
+
+local COL_BG = Color(20, 22, 20, 200)
+local COL_VOICE = Color(151, 196, 89)
+local COL_TYPE = Color(228, 227, 220)
+local R = 24  -- icon radius in 3D2D units
+
+local function drawVoice(ply, t)
+    draw.RoundedBox(R, -R, -R, R * 2, R * 2, COL_BG)
+    local vol = math.Clamp(ply:VoiceVolume() * 3, 0.15, 1)
+    surface.SetDrawColor(COL_VOICE)
+    for i = -1, 1 do
+        local wobble = 0.6 + 0.4 * math.abs(math.sin(t * 9 + i * 1.7))
+        local h = math.max(6, 30 * vol * wobble)
+        surface.DrawRect(i * 11 - 3, -h * 0.5, 6, h)
+    end
+end
+
+local function drawTyping(t)
+    draw.RoundedBox(R, -R, -R, R * 2, R * 2, COL_BG)
+    surface.SetDrawColor(COL_TYPE)
+    for i = -1, 1 do
+        local bounce = math.max(0, math.sin(t * 6 - (i + 1) * 0.9)) * 6
+        surface.DrawRect(i * 12 - 3, -3 - bounce, 6, 6)
+    end
+end
+
+Rhylib.Hook.Add("PostDrawTranslucentRenderables", "hud.icons", function(depth, skybox)
+    if depth or skybox then return end
+    local me = LocalPlayer()
+    local eye = EyePos()
+    local range = Config.Get("hud", "iconRange")
+    local rangeSqr = range * range
+    local ang = Angle(0, EyeAngles().y - 90, 90)
+    local t = RealTime()
+
+    for _, ply in ipairs(player.GetAll()) do
+        if ply:Alive() and not ply:IsDormant() and (ply ~= me or me:ShouldDrawLocalPlayer()) then
+            local speaking, typing = ply:IsSpeaking(), ply:IsTyping()
+            if (speaking or typing) and ply:GetPos():DistToSqr(eye) < rangeSqr then
+                local pos = headPos(ply) + Vector(0, 0, 28)
+                cam.Start3D2D(pos, ang, 0.12)
+                    if speaking then drawVoice(ply, t) else drawTyping(t) end
+                cam.End3D2D()
+            end
+        end
+    end
+end)

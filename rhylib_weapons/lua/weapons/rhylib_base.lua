@@ -379,7 +379,8 @@ if CLIENT then
         local UI = Rhylib.UI
         local s = ScrH() / 1080
 
-        if self.UsesCell then
+        -- rhylib_hud shows the cell in its ammo counter; this is the fallback.
+        if self.UsesCell and not Rhylib.HUD then
             local cell = self:GetCell()
             local col = cell < Rhylib.Config.Get("weapons", "lowCellThreshold") and UI.Colors.bad or UI.Colors.text
             draw.SimpleText(string.format("Power cell %d%%", math.ceil(cell * 100)), UI.Font(22), ScrW() - 40 * s, ScrH() - 150 * s, col, TEXT_ALIGN_RIGHT, TEXT_ALIGN_BOTTOM)
