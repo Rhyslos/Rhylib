@@ -124,13 +124,49 @@ Rhylib.Hook.Add("CreateMove", "thirdperson.aim", function(cmd)
     end
 
     local aimAng = updateAimPoint(ply)
+    local fm, sm = cmd:GetForwardMove(), cmd:GetSideMove()
+
+    -- Noclip (admins flying around): no aim correction at all. The body
+    -- looks exactly where the camera looks, so flying always goes straight
+    -- where you point. Shots then leave the eyes along the camera line,
+    -- a little off the crosshair, which doesn't matter while noclipping.
+    if ply:GetMoveType() == MOVETYPE_NOCLIP then
+        cmd:SetViewAngles(Angle(TP.camAng.p, TP.camAng.y, 0))
+        return
+    end
 
     -- Movement stays relative to the camera, not the corrected aim.
-    local d = math.rad(TP.camAng.y - aimAng.y)
-    local fm, sm = cmd:GetForwardMove(), cmd:GetSideMove()
-    local c, s = math.cos(d), math.sin(d)
-    cmd:SetForwardMove(fm * c + sm * s)
-    cmd:SetSideMove(-fm * s + sm * c)
+    local flying = ply:WaterLevel() >= 2
+    if flying and (fm ~= 0 or sm ~= 0) then
+        -- Swimming moves along the full 3D aim (pitch included),
+        -- plus up/down along world Z. Find the inputs that, along the aim
+        -- directions, add up to the move the camera asked for.
+        local camF, camR = TP.camAng:Forward(), TP.camAng:Right()
+        local want = camF * fm + camR * sm
+        local aimF, aimR = aimAng:Forward(), aimAng:Right()
+
+        local side = want:Dot(aimR)                 -- aim right is level, so this is exact
+        local rest = want - aimR * side             -- lies in the plane of aim forward and world up
+        local flat = math.sqrt(aimF.x * aimF.x + aimF.y * aimF.y)
+        local fwd
+        if flat > 0.05 then
+            fwd = (rest.x * aimF.x + rest.y * aimF.y) / (flat * flat)
+        else
+            fwd = rest:Dot(aimF)                    -- looking straight up or down
+        end
+        local up = rest.z - fwd * aimF.z
+
+        cmd:SetForwardMove(fwd)
+        cmd:SetSideMove(side)
+        cmd:SetUpMove(cmd:GetUpMove() + up)
+    else
+        -- Walking only uses the level direction, so turning the inputs by
+        -- the yaw difference is exact.
+        local d = math.rad(TP.camAng.y - aimAng.y)
+        local c, s = math.cos(d), math.sin(d)
+        cmd:SetForwardMove(fm * c + sm * s)
+        cmd:SetSideMove(-fm * s + sm * c)
+    end
 
     cmd:SetViewAngles(aimAng)
 end)
