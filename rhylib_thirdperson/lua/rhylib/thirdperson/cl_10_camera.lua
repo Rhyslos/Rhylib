@@ -27,6 +27,7 @@ local keyVar = CreateClientConVar("rhylib_thirdperson_key", "p", true, false, "K
 local swapVar = CreateClientConVar("rhylib_thirdperson_swapkey", "n", true, false, "Key that swaps the shoulder")
 local sideVar = CreateClientConVar("rhylib_thirdperson_side", "1", true, false, "1 = right shoulder, -1 = left shoulder")
 local crouchVar = CreateClientConVar("rhylib_thirdperson_crouchup", "14", true, false, "How far the camera rises while crouching, so it clears the arms")
+local crouchMoveVar = CreateClientConVar("rhylib_thirdperson_crouchmove", "0.5", true, false, "While moving crouched, how far the camera rises back toward standing height (0 = crouch height, 1 = standing)")
 local allowedVar = GetConVar("rhylib_thirdperson_allowed")
 
 local sensitivity = GetConVar("sensitivity")
@@ -45,7 +46,7 @@ TP.camPos = nil              -- last camera position
 TP.aimPoint = nil            -- world point under the crosshair
 TP.aimFrac = 0               -- 0 hip, 1 aiming (smoothed)
 TP.side = sideVar:GetFloat() -- smoothed shoulder side
-TP.crouchFrac = 0            -- 0 standing, 1 crouched (smoothed)
+TP.camHeight = nil           -- smoothed camera height above the feet
 
 function TP.Active()
     local ply = LocalPlayer()
@@ -188,15 +189,32 @@ Rhylib.Hook.Add("CalcView", "thirdperson.camera", function(ply, pos, angles, fov
     local f = TP.aimFrac
     local back = Lerp(f, HIP.back, AIM.back)
     local side = Lerp(f, HIP.side, AIM.side) * TP.side
-    TP.crouchFrac = math.Approach(TP.crouchFrac, ply:Crouching() and 1 or 0, ft * 5)
-    local up = Lerp(f, HIP.up, AIM.up) + TP.crouchFrac * crouchVar:GetFloat()
+    local up = Lerp(f, HIP.up, AIM.up)
+
+    -- Camera height above the feet. The real eye height drops almost at
+    -- once when you crouch, while the crouch raise used to fade in after
+    -- it, so the camera dipped and came back up. Instead, glide straight
+    -- from the standing height to the crouched height (plus the raise).
+    -- Moving while crouched, the crouch-walk animation lifts the arms into
+    -- view, so the camera sits part of the way back up (crouchmove).
+    local standH = ply:GetViewOffset().z
+    local wantH = standH
+    if ply:Crouching() then
+        wantH = ply:GetViewOffsetDucked().z + crouchVar:GetFloat()
+        if ply:GetVelocity():Length2DSqr() > 400 then
+            wantH = Lerp(crouchMoveVar:GetFloat(), wantH, standH)
+        end
+    end
+    TP.camHeight = TP.camHeight and TP.camHeight + (wantH - TP.camHeight) * (1 - math.exp(-ft * 10)) or wantH
 
     local ang = TP.camAng
-    local eye = ply:EyePos()
+    local eye = ply:GetPos() + Vector(0, 0, TP.camHeight)
     local want = eye - ang:Forward() * back + ang:Right() * side + ang:Up() * up
 
-    -- Pull the camera in so it never goes through walls.
-    hullData.start = eye
+    -- Pull the camera in so it never goes through walls. Start from the
+    -- real eyes, which are always in open space (under a low ceiling the
+    -- smoothed height can briefly be inside it).
+    hullData.start = ply:EyePos()
     hullData.endpos = want
     hullData.filter = ply
     util.TraceHull(hullData)
