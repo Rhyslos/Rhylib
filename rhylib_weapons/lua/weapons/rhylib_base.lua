@@ -144,8 +144,16 @@ function SWEP:GetCellDamageMult()
     return Lerp(cell / low, Rhylib.Config.Get("weapons", "lowCellMinDamage"), 1)
 end
 
+-- Large weapons (InvLarge) are too heavy to fire while flying a jetpack.
+function SWEP:TooHeavyToFire()
+    local owner = self:GetOwner()
+    local jp = Rhylib.Jetpack
+    return self.InvLarge and IsValid(owner) and owner:IsPlayer() and jp and jp.Flying and jp.Flying(owner) or false
+end
+
 function SWEP:CanPrimaryAttack()
     if self:GetReloadKind() ~= RELOAD_NONE then return false end
+    if self:TooHeavyToFire() then return false end
 
     if self:Clip1() <= 0 then
         self:EmitSound("Weapon_Pistol.Empty")
@@ -354,7 +362,11 @@ if CLIENT then
     end
 
     function SWEP:DoDrawCrosshair(x, y)
-        Rhylib.Weapons.Crosshair.Draw(self, x, y)
+        -- In Rhylib third person, rhylib_thirdperson draws it instead.
+        local tp = Rhylib.ThirdPerson
+        if not (tp and tp.Active and tp.Active()) then
+            Rhylib.Weapons.Crosshair.Draw(self, x, y)
+        end
         return true
     end
 
@@ -371,6 +383,10 @@ if CLIENT then
             local cell = self:GetCell()
             local col = cell < Rhylib.Config.Get("weapons", "lowCellThreshold") and UI.Colors.bad or UI.Colors.text
             draw.SimpleText(string.format("Power cell %d%%", math.ceil(cell * 100)), UI.Font(22), ScrW() - 40 * s, ScrH() - 150 * s, col, TEXT_ALIGN_RIGHT, TEXT_ALIGN_BOTTOM)
+        end
+
+        if self:TooHeavyToFire() then
+            draw.SimpleText("Too heavy to fire while flying", UI.Font(20), ScrW() * 0.5, ScrH() * 0.62, UI.Colors.bad, TEXT_ALIGN_CENTER)
         end
 
         local kind = self:GetReloadKind()

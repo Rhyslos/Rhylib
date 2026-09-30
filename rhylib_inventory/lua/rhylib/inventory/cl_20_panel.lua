@@ -2,8 +2,8 @@
     Inventory window (client only).
 
     Press I (rhylib_inventory_key) or run rhylib_inventory to open or close.
-    Left: your player model (drag to turn it) and the Back slot.
-    Right: the main grid and, while a backpack is worn, the backpack grid.
+    Left to right: your player model (drag to turn it), the Back slot,
+    then the main grid with the backpack grid under it while one is worn.
 
     Drag items to move them, press R while dragging to rotate, drop onto a
     matching stack to merge, drag outside the window to drop on the ground.
@@ -159,35 +159,36 @@ function PANEL:Relayout()
     local pad, label = self.pad, self.label
     local main = Inv.cont[MAIN] or { w = 5, h = 3 }
     local back = Inv.cont[BACK]
+    local top = self.header + label   -- row labels ("Back", "Backpack") sit above this
 
-    -- Left column: model, then the Back slot.
-    local leftW = self:SpanPx(3)
-    local modelH = self:SpanPx(4)
-    local lx, ly = pad, self.header
-    self.model:SetPos(lx, ly)
-    self.model:SetSize(leftW, modelH)
+    -- Columns, left to right: model, Back slot, grids.
+    local modelW = self:SpanPx(3)
     local slotSize = self:SpanPx(2)
-    local slotY = ly + modelH + label
+    local slotX = pad + modelW + pad
+    local gridX = slotX + slotSize + pad
+
+    -- Grids: main, then the backpack under it.
+    local gridsH = self:SpanPx(main.h) + label
+    local gridsW = self:SpanPx(main.w)
+    self.backLabelY = top + self:SpanPx(main.h) + label * 0.5 + self.gap
     self.regions = {
-        { cid = SLOT_BACK, slot = true, x = lx + (leftW - slotSize) * 0.5, y = slotY, pw = slotSize, ph = slotSize, title = "Back" },
+        { cid = SLOT_BACK, slot = true, x = slotX, y = top, pw = slotSize, ph = slotSize, title = "Back" },
+        { cid = MAIN, x = gridX, y = top, gw = main.w, gh = main.h },
     }
-    local leftH = modelH + label + slotSize
-
-    -- Right column: main grid, then the backpack.
-    local rx = lx + leftW + pad
-    local ry = self.header
-    self.regions[#self.regions + 1] = { cid = MAIN, x = rx, y = ry, gw = main.w, gh = main.h }
-    local rightH = self:SpanPx(main.h) + label
-    local rightW = self:SpanPx(main.w)
-    self.backLabelY = ry + self:SpanPx(main.h) + label * 0.5 + self.gap
     if back then
-        self.regions[#self.regions + 1] = { cid = BACK, x = rx, y = ry + rightH, gw = back.w, gh = back.h }
-        rightH = rightH + self:SpanPx(back.h)
-        rightW = math.max(rightW, self:SpanPx(back.w))
+        self.regions[#self.regions + 1] = { cid = BACK, x = gridX, y = top + gridsH, gw = back.w, gh = back.h }
+        gridsH = gridsH + self:SpanPx(back.h)
+        gridsW = math.max(gridsW, self:SpanPx(back.w))
     end
-    self.rightX = rx
+    self.rightX = gridX
 
-    self:SetSize(rx + rightW + pad, self.header + math.max(leftH, rightH) + self.footer + pad * 0.5)
+    -- The model fills the full height of the content.
+    local contentH = math.max(gridsH, self:SpanPx(3))
+    self.model:SetPos(pad, top)
+    self.model:SetSize(modelW, contentH)
+
+    self:SetSize(gridX + gridsW + pad, top + contentH + self.footer + pad * 0.5)
+    self:Center()  -- stays centred when a backpack grid appears or disappears
 end
 
 -- Region and cell under panel coordinates. Grids allow a small margin so
