@@ -34,6 +34,7 @@ local MAIN, BACK, SLOT_BACK = Items.MAIN, Items.BACK, Items.SLOT_BACK
 Config.Register("inventory", "width", 5, "Personal inventory width in cells")
 Config.Register("inventory", "height", 3, "Personal inventory height in cells")
 Config.Register("inventory", "saveInterval", 2, "Seconds between saves of changed inventories")
+Config.Register("inventory", "worldItemLife", 600, "Seconds before a dropped item on the ground is removed (0 = never)")
 
 Inv.states = Inv.states or {}  -- [ply] = state
 Inv.dirty = Inv.dirty or {}    -- [ply] = true
@@ -108,10 +109,26 @@ local function nextUid(st)
     end
 end
 
+-- Changes are collected and Rhylib.InventoryChanged runs once per player
+-- per tick, not once per item (a load or a stacked pickup can touch many
+-- items at once, and listeners recount the whole inventory).
+Inv.pending = Inv.pending or {}  -- [ply] = true
+
 local function changed(ply)
     Inv.dirty[ply] = true
-    hook.Run("Rhylib.InventoryChanged", ply)
+    Inv.pending[ply] = true
 end
+
+-- Before the net batches flush (priority 1000), so updates and listeners
+-- land in the same tick.
+Rhylib.Hook.Add("Tick", "inventory.changed", function()
+    if next(Inv.pending) == nil then return end
+    local list = Inv.pending
+    Inv.pending = {}
+    for ply in pairs(list) do
+        if IsValid(ply) then hook.Run("Rhylib.InventoryChanged", ply) end
+    end
+end, 900)
 
 local function sendSet(ply, st, inst)
     if st.ready then updBatch:Send(ply, { op = OP_SET, inst = inst }) end
@@ -175,19 +192,23 @@ end
 
 -- First free spot for a new item: worn slot if it fits there, then the
 -- main grid, then the backpack.
+local ROTS_SQUARE, ROTS_BOTH = { false }, { false, true }
+local SEARCH = { MAIN, BACK }
+
 local function findSpot(st, id)
     local def = Items.defs[id]
     if def.slot == "back" and Items.CanPlace(st, id, SLOT_BACK, 0, 0, false) then
         return SLOT_BACK, 0, 0, false
     end
-    local rots = def.w == def.h and { false } or { false, true }
-    for _, cid in ipairs({ MAIN, BACK }) do
+    local rots = def.w == def.h and ROTS_SQUARE or ROTS_BOTH
+    for i = 1, #SEARCH do
+        local cid = SEARCH[i]
         local c = st.cont[cid]
         if c and Items.ContainerAllows(cid, def) then
             for y = 0, c.h - 1 do
                 for x = 0, c.w - 1 do
-                    for _, rot in ipairs(rots) do
-                        if Items.Fits(c.w, c.h, c.items, id, x, y, rot) then return cid, x, y, rot end
+                    for r = 1, #rots do
+                        if Items.Fits(c.w, c.h, c.items, id, x, y, rots[r]) then return cid, x, y, rots[r] end
                     end
                 end
             end
@@ -502,6 +523,7 @@ Rhylib.Hook.Add("PlayerDisconnected", "inventory.save", function(ply)
     Inv.Save(ply)
     Inv.states[ply] = nil
     Inv.dirty[ply] = nil
+    Inv.pending[ply] = nil
 end)
 
 timer.Create("Rhylib.Inventory.Save", Config.Get("inventory", "saveInterval"), 0, function()

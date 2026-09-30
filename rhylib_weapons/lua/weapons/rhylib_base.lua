@@ -500,17 +500,18 @@ if CLIENT then
             draw.SimpleText(string.format("Power cell %d%%", math.ceil(cell * 100)), UI.Font(22), ScrW() - 40 * s, ScrH() - 150 * s, col, TEXT_ALIGN_RIGHT, TEXT_ALIGN_BOTTOM)
         end
 
-        if self:GetSafety() and not Rhylib.HUD then
-            draw.SimpleText("Safety on", UI.Font(18), ScrW() * 0.5, ScrH() * 0.62, UI.Colors.textDim, TEXT_ALIGN_CENTER)
-        end
-
-        if self:TooHeavyToFire() then
-            draw.SimpleText("Too heavy to fire while flying", UI.Font(20), ScrW() * 0.5, ScrH() * 0.62, UI.Colors.bad, TEXT_ALIGN_CENTER)
-        end
-
+        -- One message under the crosshair at a time, most important first.
+        local text, col, size
         local kind = self:GetReloadKind()
-        if kind ~= RELOAD_NONE then
-            draw.SimpleText(RELOAD_TEXT[kind] or "", UI.Font(20), ScrW() * 0.5, ScrH() * 0.62, UI.Colors.textDim, TEXT_ALIGN_CENTER)
+        if self:TooHeavyToFire() then
+            text, col, size = "Too heavy to fire while flying", UI.Colors.bad, 20
+        elseif kind ~= RELOAD_NONE then
+            text, col, size = RELOAD_TEXT[kind], UI.Colors.textDim, 20
+        elseif self:GetSafety() and not Rhylib.HUD then
+            text, col, size = "Safety on", UI.Colors.textDim, 18
+        end
+        if text then
+            draw.SimpleText(text, UI.Font(size), ScrW() * 0.5, ScrH() * 0.62, col, TEXT_ALIGN_CENTER)
         end
     end
 
@@ -560,6 +561,8 @@ if CLIENT then
         return true
     end
 
+    local handBone = {}
+
     function SWEP:DrawWorldModel(flags)
         local owner = self:GetOwner()
         if not self.PropModel or not IsValid(owner) then
@@ -567,7 +570,13 @@ if CLIENT then
             return
         end
 
-        local bone = owner:LookupBone("ValveBiped.Bip01_R_Hand")
+        -- Hand bone id per player model, so LookupBone runs once per model.
+        local mdl = owner:GetModel() or ""
+        local bone = handBone[mdl]
+        if bone == nil then
+            bone = owner:LookupBone("ValveBiped.Bip01_R_Hand") or false
+            handBone[mdl] = bone
+        end
         local matrix = bone and owner:GetBoneMatrix(bone)
         local ent = self:GetPropEntity("propWM")
         if not matrix or not ent then return end

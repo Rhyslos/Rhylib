@@ -14,8 +14,17 @@ local HUD = Rhylib.HUD
 local UI = Rhylib.UI
 local Config = Rhylib.Config
 
+-- Head bone id per model, so LookupBone runs once per model, not per frame.
+local headBone = {}
+local UP16, UP28 = Vector(0, 0, 16), Vector(0, 0, 28)
+
 local function headPos(ply)
-    local bone = ply:LookupBone("ValveBiped.Bip01_Head1")
+    local mdl = ply:GetModel() or ""
+    local bone = headBone[mdl]
+    if bone == nil then
+        bone = ply:LookupBone("ValveBiped.Bip01_Head1") or false
+        headBone[mdl] = bone
+    end
     local pos = bone and ply:GetBonePosition(bone)
     return pos or ply:EyePos()
 end
@@ -30,6 +39,7 @@ end
 --------------------------------------------------------------------------
 
 local target, seenAt, fade = nil, 0, 0
+local nameCol, outlineCol = Color(255, 255, 255), Color(0, 0, 0)
 
 Rhylib.Hook.Add("HUDPaint", "hud.target", function()
     if HUD.Hidden() then return end
@@ -45,7 +55,7 @@ Rhylib.Hook.Add("HUDPaint", "hud.target", function()
     fade = math.Approach(fade, visible and 1 or 0, FrameTime() * 6)
     if fade <= 0 or not IsValid(target) then return end
 
-    local scr = (headPos(target) + Vector(0, 0, 16)):ToScreen()
+    local scr = (headPos(target) + UP16):ToScreen()
     if not scr.visible then return end
 
     local s = HUD.Scale()
@@ -72,7 +82,9 @@ Rhylib.Hook.Add("HUDPaint", "hud.target", function()
         cy = cy - math.floor(17 * s)
     end
     local tc = team.GetColor(target:Team())
-    draw.SimpleTextOutlined(target:Nick(), UI.Font(20), x, cy, Color(tc.r, tc.g, tc.b, a), TEXT_ALIGN_CENTER, TEXT_ALIGN_BOTTOM, 1, Color(0, 0, 0, a * 0.6))
+    nameCol.r, nameCol.g, nameCol.b, nameCol.a = tc.r, tc.g, tc.b, a
+    outlineCol.a = a * 0.6
+    draw.SimpleTextOutlined(target:Nick(), UI.Font(20), x, cy, nameCol, TEXT_ALIGN_CENTER, TEXT_ALIGN_BOTTOM, 1, outlineCol)
 end)
 
 --------------------------------------------------------------------------
@@ -117,7 +129,7 @@ Rhylib.Hook.Add("PostDrawTranslucentRenderables", "hud.icons", function(depth, s
         if ply:Alive() and not ply:IsDormant() and (ply ~= me or me:ShouldDrawLocalPlayer()) then
             local speaking, typing = ply:IsSpeaking(), ply:IsTyping()
             if (speaking or typing) and ply:GetPos():DistToSqr(eye) < rangeSqr then
-                local pos = headPos(ply) + Vector(0, 0, 28)
+                local pos = headPos(ply) + UP28
                 cam.Start3D2D(pos, ang, 0.12)
                     if speaking then drawVoice(ply, t) else drawTyping(t) end
                 cam.End3D2D()

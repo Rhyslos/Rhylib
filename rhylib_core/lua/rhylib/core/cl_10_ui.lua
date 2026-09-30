@@ -22,20 +22,28 @@ UI.Colors = {
     bad = Color(226, 75, 74),
 }
 
+-- fonts[weight][size] = font name. A lookup costs two table reads, with
+-- no string building, so it is safe to call every frame.
 UI.fonts = UI.fonts or {}
 
 function UI.Font(size, weight)
     weight = weight or 500
-    local name = "Rhylib." .. size .. "." .. weight
-    if not UI.fonts[name] then
-        surface.CreateFont(name, {
-            font = "Roboto",
-            size = math.Round(size * ScrH() / 1080),
-            weight = weight,
-            extended = true,
-        })
-        UI.fonts[name] = true
+    local byWeight = UI.fonts[weight]
+    if not byWeight then
+        byWeight = {}
+        UI.fonts[weight] = byWeight
     end
+    local name = byWeight[size]
+    if name then return name end
+
+    name = "Rhylib." .. size .. "." .. weight
+    surface.CreateFont(name, {
+        font = "Roboto",
+        size = math.Round(size * ScrH() / 1080),
+        weight = weight,
+        extended = true,
+    })
+    byWeight[size] = name
     return name
 end
 

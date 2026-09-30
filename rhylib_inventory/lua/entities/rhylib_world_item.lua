@@ -41,6 +41,10 @@ if SERVER then
 
         self:SetItemName(def and def.name or "Unknown item")
         self:SetItemCount(self.itemCount or 1)
+
+        -- Dropped items don't pile up forever.
+        local life = Rhylib.Config.Get("inventory", "worldItemLife") or 0
+        if life > 0 then SafeRemoveEntityDelayed(self, life) end
     end
 
     function ENT:Use(ply)
@@ -54,17 +58,20 @@ if SERVER then
             self:SetItemCount(left)
             ply:EmitSound("items/ammo_pickup.wav", 60)
         else
-            ply:PrintMessage(HUD_PRINTCENTER, "No room in your inventory")
+            local def = Rhylib.Items.Get(self.itemId)
+            local dupe = def and def.weapon and Rhylib.Inventory.Has(ply, self.itemId)
+            ply:PrintMessage(HUD_PRINTCENTER, dupe and "You already carry one" or "No room in your inventory")
         end
     end
 end
 
 if CLIENT then
-    -- Show the name when looking at it up close.
+    -- Show the name when looking at it up close. The cheap distance check
+    -- runs first, so far-away items never touch the eye trace.
     function ENT:Draw()
         self:DrawModel()
         local ply = LocalPlayer()
-        if ply:GetEyeTrace().Entity ~= self or ply:GetPos():DistToSqr(self:GetPos()) > 150 * 150 then return end
+        if ply:GetPos():DistToSqr(self:GetPos()) > 150 * 150 or ply:GetEyeTrace().Entity ~= self then return end
 
         local count = self:GetItemCount()
         local text = self:GetItemName() .. (count > 1 and (" x" .. count) or "")

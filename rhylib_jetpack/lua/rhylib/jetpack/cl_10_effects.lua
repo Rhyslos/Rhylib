@@ -65,8 +65,10 @@ Rhylib.Hook.Add("PostPlayerDraw", "jetpack.draw", function(ply)
 end)
 
 -- One looping sound per thrusting player, started and stopped on change.
+-- Checked 10 times a second instead of every frame; nobody hears 0.1 s.
 local sounds = {}
-Rhylib.Hook.Add("Think", "jetpack.sound", function()
+Rhylib.Hook.Remove("Think", "jetpack.sound")  -- older versions ran per frame
+timer.Create("Rhylib.Jetpack.Sound", 0.1, 0, function()
     for _, ply in ipairs(player.GetAll()) do
         local on = ply:GetDTBool(J.DT_THRUST) and ply:Alive()
         local snd = sounds[ply]

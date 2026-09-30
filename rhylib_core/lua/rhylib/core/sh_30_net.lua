@@ -123,6 +123,7 @@ if SERVER then
             self.perPly[ply] = q
         end
         q[#q + 1] = item
+        self.dirty = true
     end
 
     function Batch:SendTo(players, item)
@@ -131,6 +132,7 @@ if SERVER then
 
     function Batch:Broadcast(item)
         self.all[#self.all + 1] = item
+        self.dirty = true
     end
 
     local function sendQueue(batch, queue, sendFn, target)
@@ -145,13 +147,27 @@ if SERVER then
         end
     end
 
+    local function clear(q)
+        for i = #q, 1, -1 do q[i] = nil end
+    end
+
+    -- Queue tables are kept and emptied, so a busy tick allocates nothing
+    -- here and an idle tick costs one flag check.
     function Batch:Flush()
+        if not self.dirty then return end
+        self.dirty = false
         for ply, q in pairs(self.perPly) do
-            if IsValid(ply) and #q > 0 then sendQueue(self, q, net.Send, ply) end
+            if not IsValid(ply) then
+                self.perPly[ply] = nil  -- allowed while iterating with pairs
+            elseif #q > 0 then
+                sendQueue(self, q, net.Send, ply)
+                clear(q)
+            end
         end
-        if #self.all > 0 then sendQueue(self, self.all, net.Broadcast) end
-        self.perPly = {}
-        self.all = {}
+        if #self.all > 0 then
+            sendQueue(self, self.all, net.Broadcast)
+            clear(self.all)
+        end
     end
 
     -- Runs last in the tick, after modules have queued their events.

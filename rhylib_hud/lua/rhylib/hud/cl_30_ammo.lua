@@ -64,6 +64,8 @@ local function drawContent(ply, wep, x, y, w, sizes)
     end
 end
 
+local sizes = {}  -- reused every frame
+
 Rhylib.Hook.Add("HUDPaint", "hud.ammo", function()
     if HUD.Hidden() then return end
     local ply = LocalPlayer()
@@ -72,11 +74,9 @@ Rhylib.Hook.Add("HUDPaint", "hud.ammo", function()
     if wep:Clip1() < 0 and wep:GetPrimaryAmmoType() < 0 then return end
 
     local s = HUD.Scale()
-    local sizes = {
-        name = math.floor(20 * s),
-        count = math.floor(46 * s),
-        cell = (wep.IsRhylib and wep.UsesCell) and math.floor(34 * s) or 0,
-    }
+    sizes.name = math.floor(20 * s)
+    sizes.count = math.floor(46 * s)
+    sizes.cell = (wep.IsRhylib and wep.UsesCell) and math.floor(34 * s) or 0
     local contentH = sizes.name + sizes.count + sizes.cell
 
     if HUD.VisorActive and HUD.VisorActive() then

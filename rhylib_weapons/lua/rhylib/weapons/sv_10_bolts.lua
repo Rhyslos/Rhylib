@@ -79,6 +79,17 @@ local function applyHit(bolt, tr)
     end
 end
 
+-- player.GetHumans() builds a new table each call. Build it once per tick,
+-- not once per shot (a firefight can be dozens of shots in one tick).
+local humans, humansTick = {}, -1
+local function getHumans()
+    local tick = engine.TickCount()
+    if tick ~= humansTick then
+        humans, humansTick = player.GetHumans(), tick
+    end
+    return humans
+end
+
 local function sendShot(owner, weapon, origin, dir, speed)
     local range = Config.Get("weapons", "shotRange")
     local rangeSqr = range * range
@@ -90,8 +101,10 @@ local function sendShot(owner, weapon, origin, dir, speed)
         speed = math.min(speed, 16383),
         color = weapon.BoltColor or 1,
     }
-    for _, ply in ipairs(player.GetHumans()) do
-        if (ply ~= owner or sp) and ply:GetPos():DistToSqr(origin) < rangeSqr then
+    local list = getHumans()
+    for i = 1, #list do
+        local ply = list[i]
+        if IsValid(ply) and (ply ~= owner or sp) and ply:GetPos():DistToSqr(origin) < rangeSqr then
             shotBatch:Send(ply, item)
         end
     end
@@ -125,7 +138,11 @@ function Bolts.Fire(owner, weapon, origin, dir, damage)
         return
     end
 
-    bolt.pos = tr.HitPos
+    -- Two position vectors per bolt, swapped each tick, plus a fixed step,
+    -- so the tick loop below allocates no vectors.
+    bolt.pos = Vector(tr.HitPos)
+    bolt.nextPos = Vector()
+    bolt.step = dir * (speed * engine.TickInterval())
     Bolts.active[#Bolts.active + 1] = bolt
 end
 
@@ -133,21 +150,23 @@ Rhylib.Hook.Add("Tick", "weapons.bolts", function()
     local list = Bolts.active
     if #list == 0 then return end
 
-    local step = engine.TickInterval()
     local now = CurTime()
     local i = 1
     while i <= #list do
         local b = list[i]
-        local remove = now > b.die
+        local remove = now > b.die or not b.step  -- (bolts from before an autorefresh)
 
         if not remove then
-            local to = b.pos + b.dir * (b.speed * step)
-            local tr = trace(b.pos, to, IsValid(b.owner) and b.owner or nil)
+            local to = b.nextPos
+            to:Set(b.pos)
+            to:Add(b.step)
+            local owner = b.owner
+            local tr = trace(b.pos, to, IsValid(owner) and owner or nil)
             if tr.Hit then
                 applyHit(b, tr)
                 remove = true
             else
-                b.pos = to
+                b.nextPos, b.pos = b.pos, to
             end
         end
 

@@ -139,6 +139,9 @@ local function pickOption(list, s)
     return best
 end
 
+local COL_DEADZONE = Color(0, 0, 0, 120)
+local COL_PICK = Color(60, 72, 88, 235)
+
 Rhylib.Hook.Add("HUDPaint", "weapons.reload", function()
     if not R.open then return end
     local wep = activeRhylibWeapon()
@@ -152,7 +155,7 @@ Rhylib.Hook.Add("HUDPaint", "weapons.reload", function()
 
     -- Centre: cancel zone.
     local dz = DEADZONE * s
-    draw.RoundedBox(dz, cx - dz, cy - dz, dz * 2, dz * 2, Color(0, 0, 0, 120))
+    draw.RoundedBox(dz, cx - dz, cy - dz, dz * 2, dz * 2, COL_DEADZONE)
     draw.SimpleText(pick and "" or "Cancel", UI.Font(15), cx, cy, UI.Colors.textDim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
 
     local w, h = 200 * s, 64 * s
@@ -162,7 +165,7 @@ Rhylib.Hook.Add("HUDPaint", "weapons.reload", function()
         local isPick = pick == opt
         local empty = opt.count <= 0
 
-        local bg = isPick and Color(60, 72, 88, 235) or UI.Colors.bg
+        local bg = isPick and COL_PICK or UI.Colors.bg
         draw.RoundedBox(8 * s, ox - w * 0.5, oy - h * 0.5, w, h, bg)
         if isPick then
             surface.SetDrawColor(empty and UI.Colors.bad or UI.Colors.accent)

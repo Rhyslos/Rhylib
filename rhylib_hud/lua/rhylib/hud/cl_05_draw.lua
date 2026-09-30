@@ -33,13 +33,21 @@ function HUD.Bar(x, y, w, h, frac, col, alpha)
     end
 end
 
+-- One reusable colour for faded draws, so nothing is allocated per frame.
+local scratch = Color(0, 0, 0, 0)
+local function faded(col, alpha)
+    scratch.r, scratch.g, scratch.b, scratch.a = col.r, col.g, col.b, col.a * alpha / 255
+    return scratch
+end
+
 function HUD.Panel(x, y, w, h, alpha)
     local c = HUD.Colors.panel
-    draw.RoundedBox(math.floor(6 * HUD.Scale()), x, y, w, h, Color(c.r, c.g, c.b, c.a * (alpha or 255) / 255))
+    if alpha and alpha < 255 then c = faded(c, alpha) end
+    draw.RoundedBox(math.floor(6 * HUD.Scale()), x, y, w, h, c)
 end
 
 function HUD.Text(text, size, x, y, col, ax, ay, alpha)
-    if alpha and alpha < 255 then col = Color(col.r, col.g, col.b, alpha) end
+    if alpha and alpha < 255 then col = faded(col, alpha) end
     return draw.SimpleText(text, UI.Font(size), x, y, col, ax or TEXT_ALIGN_LEFT, ay or TEXT_ALIGN_TOP)
 end
 
