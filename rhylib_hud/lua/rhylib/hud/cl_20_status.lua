@@ -26,9 +26,7 @@ Rhylib.Hook.Add("HUDPaint", "hud.status", function()
 
     local darkrp = DarkRP and ply.getDarkRPVar
     local rowH = math.floor(30 * s)
-    local infoH = darkrp and math.floor(22 * s) or 0
-    local rows = 1 + ((ar > 0) and 1 or 0)
-    local x, y, w = HUD.Plate(-1, math.floor(300 * s), rows * rowH + infoH)
+    local x, y, w = HUD.Plate(-1)
 
     local labelW = math.floor(48 * s)
     local barH = math.floor(10 * s)

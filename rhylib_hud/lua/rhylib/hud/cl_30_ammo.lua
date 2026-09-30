@@ -23,8 +23,13 @@ local function drawContent(ply, wep, x, y, w, sizes)
     local clip = wep:Clip1()
     local ammoType = wep:GetPrimaryAmmoType()
 
-    -- Weapon name
+    -- Weapon name, and the fire mode on the right
     HUD.Text(wep:GetPrintName() or "", 16, x, y, C.dim)
+    if wep.GetFireModeName then
+        local safe = wep:GetSafety()
+        local label = safe and "SAFE" or string.upper(wep:GetFireModeName())
+        HUD.Text(label, 14, right, y + math.floor(1 * s), safe and C.fuel or C.accent, TEXT_ALIGN_RIGHT)
+    end
     y = y + sizes.name
 
     -- Shots / magazine size, spares on the right
@@ -83,7 +88,7 @@ Rhylib.Hook.Add("HUDPaint", "hud.ammo", function()
         HUD.Panel(x, y, w, contentH + pad * 2)
         drawContent(ply, wep, x + pad, y + pad, w - pad * 2, sizes)
     else
-        local x, y, w = HUD.Plate(1, math.floor(260 * s), contentH)
+        local x, y, w = HUD.Plate(1)
         drawContent(ply, wep, x, y, w, sizes)
     end
 end)

@@ -65,9 +65,10 @@ function HUD.Hidden()
 end
 
 --[[
-    Third-person corner plate: a dark plate in a bottom corner, just tall
-    enough for its contents. The outer edge is a little taller than the
-    inner edge, and the inner side slants down to the screen bottom.
+    Third-person corner plate: a dark plate in a bottom corner. Both
+    plates are always the same fixed size, whatever they hold. The outer
+    edge is a little taller than the inner edge, and the inner side
+    slants down to the screen bottom.
     side: -1 = bottom left, 1 = bottom right.
     Returns the content box: x, y, w, h.
 ]]
@@ -76,9 +77,13 @@ local COL_PLATE = Color(16, 18, 17, 205)
 local COL_PLATE_EDGE = Color(0, 0, 0, 220)
 local COL_PLATE_HI = Color(170, 176, 180, 90)
 
-function HUD.Plate(side, contentW, contentH)
+HUD.PLATE_W = 300   -- content size at 1080p, same for both plates
+HUD.PLATE_H = 100
+
+function HUD.Plate(side)
     local W, H = ScrW(), ScrH()
     local s = HUD.Scale()
+    local contentW, contentH = math.floor(HUD.PLATE_W * s), math.floor(HUD.PLATE_H * s)
     local pad = math.floor(14 * s)
     local innerH = contentH + pad * 2
     local drop = math.floor(H * 0.035)   -- outer edge this much taller
