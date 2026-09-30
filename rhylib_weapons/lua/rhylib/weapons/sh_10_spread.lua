@@ -37,12 +37,18 @@ function Spread.BaseCone(wep)
     return wep:GetAiming() and wep.Spread.aim or wep.Spread.hip
 end
 
--- How far each arc has moved outward, in degrees.
--- Stamina penalty will be added here once the stamina module exists.
+-- How far each arc has moved outward, in degrees. Low stamina (with
+-- rhylib_stamina) pushes all three arcs out evenly.
 function Spread.Offsets(wep, t)
     local bloom, k1, k2, k3 = Spread.GetState(wep, t)
     local m = wep:GetAiming() and wep.Spread.aimOffsetMult or 1
-    return (bloom + k1) * m, (bloom + k2) * m, (bloom + k3) * m
+    local tired = 0
+    local S = Rhylib.Stamina
+    local owner = wep:GetOwner()
+    if S and IsValid(owner) and owner:IsPlayer() then
+        tired = S.SpreadPenalty(owner, Spread.BaseCone(wep))
+    end
+    return (bloom + k1) * m + tired, (bloom + k2) * m + tired, (bloom + k3) * m + tired
 end
 
 -- Average cone: the area shots actually land in.

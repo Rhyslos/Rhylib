@@ -11,7 +11,9 @@
             model = "models/items/boxmrounds.mdl",  -- used when dropped
         })
     Optional: large = true (not allowed in backpacks), slot = "back" (worn
-    in the back slot), grid = { 5, 2 } (a worn item that adds a grid).
+    in the back slot), grid = { 5, 2 } (a worn item that adds a grid),
+    weight = 0.5 (kg, per item), carry = 6 (worn item that raises the
+    carry cap by this many kg), rounds = 60 (magazines: shots when full).
 
     Weapons become items automatically if their SWEP table sets InvW/InvH.
 
@@ -98,6 +100,7 @@ function Items.RegisterWeapons()
                     category = "weapon",
                     weapon = class,
                     large = full.InvLarge,
+                    weight = full.InvWeight,
                 })
             end
         end
@@ -117,8 +120,46 @@ Items.Register("backpack", {
     category = "gear",
     slot = "back",
     grid = { 5, 2 },
+    weight = 1.5,
+    carry = 6,
     model = "models/props_c17/suitcase001a.mdl",
 })
+
+--------------------------------------------------------------------------
+-- Weight
+--
+-- Total = every item's weight x count. Items inside a backpack count at
+-- backpackWeightMult, because the pack spreads the load. The carry cap is
+-- baseCarry plus the `carry` of whatever is worn on the back.
+-- The server sends both numbers to the stamina module through two NW2
+-- vars; the inventory window works them out itself from its own copy.
+--------------------------------------------------------------------------
+
+local Config = Rhylib.Config
+Config.Register("inventory", "baseCarry", 20, "Carry cap in kg without a backpack")
+Config.Register("inventory", "backpackWeightMult", 0.7, "Items inside a backpack count at this fraction of their weight")
+
+-- state: { cont = { [cid] = { items } } }. Returns weight, cap in kg.
+function Items.Weight(state)
+    local total, cap = 0, Config.Get("inventory", "baseCarry")
+    local packMult = Config.Get("inventory", "backpackWeightMult")
+    for cid, c in pairs(state.cont) do
+        local mult = cid == Items.BACK and packMult or 1
+        for _, o in pairs(c.items) do
+            local def = Items.defs[o.id]
+            if def then
+                total = total + (def.weight or 0) * o.count * mult
+                if cid == Items.SLOT_BACK and def.carry then cap = cap + def.carry end
+            end
+        end
+    end
+    return total, cap
+end
+
+-- Weight and cap for any player, from the networked values.
+function Items.PlayerWeight(ply)
+    return ply:GetNW2Float("rhylib_weight", 0), ply:GetNW2Float("rhylib_carry", Config.Get("inventory", "baseCarry"))
+end
 
 --------------------------------------------------------------------------
 -- Grid rules (used by the server to validate and the client to preview)

@@ -33,7 +33,7 @@ local function drawContent(ply, wep, x, y, w, sizes)
     y = y + sizes.name
 
     -- Shots / magazine size, spares on the right
-    local maxClip = wep:GetMaxClip1()
+    local maxClip = wep.GetMagSize and wep:GetMagSize() or wep:GetMaxClip1()
     local low = maxClip > 0 and clip / maxClip <= 0.2
     local clipCol = clip == 0 and C.bad or (low and C.fuel or C.text)
     local mid = y + sizes.count * 0.5
@@ -44,11 +44,24 @@ local function drawContent(ply, wep, x, y, w, sizes)
         end
     end
 
-    local reserve = ply:GetAmmoCount(ammoType)
-    if wep.IsRhylib then
+    if wep.IsRhylib and wep.GetMag then
+        -- Spares of the loaded type, then other types this gun takes.
+        local mag = wep:GetMag()
+        local reserve = mag and ply:GetAmmoCount(mag.ammo) or 0
+        local label = mag and string.lower(mag.short) or ""
+        if mag and mag.rounds > 1 then label = label .. (reserve == 1 and " mag" or " mags") end
+        if mag and mag.rounds == 1 and reserve ~= 1 then label = label .. "s" end
+        for _, id in ipairs(wep.Mags) do
+            local other = Rhylib.Weapons.MagTypes[id]
+            if other and other ~= mag then
+                local n = ply:GetAmmoCount(other.ammo)
+                if n > 0 then label = label .. " · +" .. n .. " " .. string.lower(other.short) end
+            end
+        end
         HUD.Text(tostring(reserve), 24, right, y + math.floor(2 * s), reserve > 0 and C.text or C.bad, TEXT_ALIGN_RIGHT)
-        HUD.Text(reserve == 1 and "magazine" or "magazines", 13, right, y + sizes.count - math.floor(2 * s), C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_BOTTOM)
+        HUD.Text(label, 13, right, y + sizes.count - math.floor(2 * s), C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_BOTTOM)
     elseif ammoType >= 0 then
+        local reserve = ply:GetAmmoCount(ammoType)
         HUD.Text(tostring(reserve), 24, right, mid, C.text, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
     end
     y = y + sizes.count

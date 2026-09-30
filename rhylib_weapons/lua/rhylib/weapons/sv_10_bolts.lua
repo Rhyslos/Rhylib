@@ -12,6 +12,9 @@
 
     Other players get one small "shot" event (batched per tick) and draw
     the bolt themselves. The shooter's own client already drew it.
+
+    Rockets are bolts too (weapon.Explosive set): slower, longer lived,
+    and they do blast damage where they hit instead of a direct hit.
 ]]
 
 local W = Rhylib.Weapons
@@ -51,7 +54,28 @@ local function trace(from, to, filter)
     return util.TraceLine(traceData)
 end
 
+-- Rockets: blast damage and an explosion where they hit.
+local function explode(bolt, pos, normal)
+    local owner = bolt.owner
+    local attacker = IsValid(owner) and owner or game.GetWorld()
+    local inflictor = IsValid(bolt.weapon) and bolt.weapon or attacker
+    local ex = bolt.explosive
+    local at = pos + normal * 4  -- just off the surface, so walls don't eat the blast
+    util.BlastDamage(inflictor, attacker, at, ex.radius, ex.damage)
+
+    local ed = EffectData()
+    ed:SetOrigin(at)
+    ed:SetNormal(normal)
+    ed:SetMagnitude(1)
+    ed:SetScale(1)
+    util.Effect("Explosion", ed, true, true)
+end
+
 local function applyHit(bolt, tr)
+    if bolt.explosive then
+        explode(bolt, tr.HitPos, tr.HitNormal)
+        return
+    end
     local ent = tr.Entity
     if not IsValid(ent) then return end
 
@@ -120,7 +144,8 @@ function Bolts.Fire(owner, weapon, origin, dir, damage)
         dir = dir,
         speed = speed,
         damage = damage or weapon.Damage,
-        die = CurTime() + Config.Get("weapons", "boltLife"),
+        die = CurTime() + (weapon.BoltLife or Config.Get("weapons", "boltLife")),
+        explosive = weapon.Explosive,
     }
 
     sendShot(owner, weapon, origin, dir, speed)

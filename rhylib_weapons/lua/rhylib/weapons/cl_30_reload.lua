@@ -1,7 +1,7 @@
 --[[
     Reload input and the radial reload menu (client only).
 
-    Tap R:  magazine reload.
+    Tap R:  reload the best magazine (same type if you have one).
     E + R:  next fire mode.   Shift + E + R: safety on/off.
     Hold R: the radial menu opens and the view stops turning. Move the
             mouse toward an option and let go of R to pick it.
@@ -35,22 +35,42 @@ local function activeRhylibWeapon()
     return nil
 end
 
--- Options for the current weapon, laid out around the ring.
--- Angles are screen space: 180 = left, 0 = right.
+-- Options for the current weapon, laid out around the ring: magazine
+-- types fanned out on the left, the power cell on the right.
+-- Angles are screen space: 180 = left, 0 = right, 90 = down.
+-- req is what gets sent (see W.RELOAD_REQ_* in sh_00_config.lua).
+local optionCache = { class = nil, list = {} }
+
 local function options(wep)
     local ply = LocalPlayer()
-    local list = {
-        { kind = 1, label = "Magazine", count = ply:GetAmmoCount("rhylib_blaster"), angle = 180 },
-    }
-    if wep.UsesCell then
-        list[#list + 1] = { kind = 2, label = "Power cell", count = ply:GetAmmoCount("rhylib_cell"), angle = 0 }
+    if optionCache.class ~= wep:GetClass() then
+        local list = {}
+        local n = #wep.Mags
+        for i, id in ipairs(wep.Mags) do
+            local m = W.MagTypes[id]
+            if m then
+                local spread = n > 1 and (i - 1) / (n - 1) - 0.5 or 0
+                list[#list + 1] = { req = m.index, mag = m, label = m.name, angle = 180 - spread * 70 }
+            end
+        end
+        if wep.UsesCell then
+            list[#list + 1] = { req = W.RELOAD_REQ_CELL, label = "Power cell", ammo = "rhylib_cell", angle = 0 }
+        end
+        optionCache.class, optionCache.list = wep:GetClass(), list
+    end
+
+    local list = optionCache.list
+    local loaded = wep.GetMagType and wep:GetMagType() or 0
+    for _, opt in ipairs(list) do
+        opt.count = ply:GetAmmoCount(opt.mag and opt.mag.ammo or opt.ammo)
+        opt.loaded = opt.mag and opt.mag.index == loaded
     end
     return list
 end
 
-local function sendReload(kind)
+local function sendReload(req)
     Rhylib.Net.Start("wep.reload")
-    net.WriteUInt(kind, 2)
+    net.WriteUInt(req, W.RELOAD_REQ_BITS)
     net.SendToServer()
 end
 
@@ -99,7 +119,7 @@ Rhylib.Hook.Add("Think", "weapons.reload", function()
         if R.open then
             if R.selected then sendReload(R.selected) end
         else
-            sendReload(1)  -- a tap is a magazine reload
+            sendReload(0)  -- a tap reloads the best magazine
         end
         reset()
         return
@@ -151,7 +171,7 @@ Rhylib.Hook.Add("HUDPaint", "weapons.reload", function()
     local cx, cy = ScrW() * 0.5, ScrH() * 0.5
     local list = options(wep)
     local pick = pickOption(list, s)
-    R.selected = pick and pick.count > 0 and pick.kind or nil
+    R.selected = pick and pick.count > 0 and pick.req or nil
 
     -- Centre: cancel zone.
     local dz = DEADZONE * s
@@ -174,7 +194,10 @@ Rhylib.Hook.Add("HUDPaint", "weapons.reload", function()
 
         local textCol = empty and UI.Colors.textDim or UI.Colors.text
         draw.SimpleText(opt.label, UI.Font(20), ox, oy - 10 * s, textCol, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
-        draw.SimpleText(empty and "None left" or (opt.count .. " spare"), UI.Font(15), ox, oy + 13 * s, UI.Colors.textDim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        local sub = empty and "None left" or (opt.count .. " spare")
+        if opt.mag and opt.mag.rounds > 1 then sub = opt.mag.rounds .. " rounds · " .. sub end
+        if opt.loaded then sub = sub .. " · loaded" end
+        draw.SimpleText(sub, UI.Font(15), ox, oy + 13 * s, UI.Colors.textDim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
     end
 
     -- Menu cursor.

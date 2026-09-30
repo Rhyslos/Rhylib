@@ -1,10 +1,9 @@
 --[[
     Base for pick-up items. Press E on it to pick it up.
-    Derived items set ENT.Model and ENT:GiveTo(ply), which returns true
-    if the player took it.
-
-    Temporary: these feed the ammo pouch. The inventory module will turn
-    them into real inventory items.
+    Derived items set ENT.Model and ENT.Kind (an ammo kind from
+    W.MagTypes, or "cell"), or override ENT:GiveTo(ply), which returns
+    true if the player took it. With rhylib_inventory they go into the
+    inventory, without it into the ammo pouch.
 ]]
 
 AddCSLuaFile()
@@ -30,7 +29,8 @@ end
 
 if SERVER then
     function ENT:GiveTo(ply)
-        return false
+        if not self.Kind then return false end
+        return Rhylib.Weapons.Pouch.Add(ply, self.Kind, 1)
     end
 
     function ENT:Use(activator)
@@ -39,7 +39,7 @@ if SERVER then
             activator:EmitSound(self.PickupSound, 60)
             self:Remove()
         else
-            activator:PrintMessage(HUD_PRINTCENTER, "You can't carry any more of these")
+            activator:PrintMessage(HUD_PRINTCENTER, "No room for this")
         end
     end
 end

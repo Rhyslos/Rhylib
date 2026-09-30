@@ -30,10 +30,10 @@ SWEP.PropWMAng = Angle(-10, 0, 180)
 SWEP.PropMuzzle = Vector(20, 0, 2)     -- muzzle in the prop's own coordinates
 
 SWEP.Primary = {
-    ClipSize = 50,
-    DefaultClip = 50,
+    ClipSize = 60,
+    DefaultClip = 60,
     Automatic = true,
-    Ammo = "rhylib_blaster",
+    Ammo = "rhylib_mag_medium",
 }
 
 SWEP.FireRate = 600
@@ -43,16 +43,20 @@ SWEP.BoltColor = 1
 SWEP.FireSound = "weapons/airboat/airboat_gun_energy1.wav"
 
 -- Semi first (default), switch with E + R.
+-- Magazines it takes, preferred first.
+SWEP.Mags = { "mag_medium", "mag_small" }
+
 SWEP.FireModes = { "semi", "auto" }
 
 SWEP.UsesCell = false
-SWEP.StartMags = 4
+SWEP.StartMags = 8
 SWEP.StartCells = 0
 
 -- Inventory size in cells
 SWEP.InvW = 3
 SWEP.InvH = 1
 SWEP.InvLarge = false
+SWEP.InvWeight = 3.0         -- kg
 
 SWEP.Spread = {
     hip = 1.4,

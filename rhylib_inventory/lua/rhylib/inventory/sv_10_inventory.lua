@@ -126,7 +126,16 @@ Rhylib.Hook.Add("Tick", "inventory.changed", function()
     local list = Inv.pending
     Inv.pending = {}
     for ply in pairs(list) do
-        if IsValid(ply) then hook.Run("Rhylib.InventoryChanged", ply) end
+        if IsValid(ply) then
+            -- Weight and carry cap for stamina, in two engine-networked vars.
+            local st = Inv.states[ply]
+            if st then
+                local weight, cap = Items.Weight(st)
+                ply:SetNW2Float("rhylib_weight", math.Round(weight, 2))
+                ply:SetNW2Float("rhylib_carry", cap)
+            end
+            hook.Run("Rhylib.InventoryChanged", ply)
+        end
     end
 end, 900)
 

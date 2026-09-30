@@ -6,11 +6,18 @@
     (Aiming will be gated behind a skill once the skill module exists.)
 
     Ammo:
-      - Magazine: Clip1 holds the shots. Tap R to swap magazines.
+      - Magazine: Clip1 holds the shots. SWEP.Mags lists the magazine
+        types the gun takes (see W.MagTypes); the loaded type decides how
+        many shots it holds. Tap R to reload the best magazine (the same
+        type if you have one, else the first in SWEP.Mags).
       - Power cell (weapons with UsesCell): the "Cell" value drains per shot.
-        Hold R and pick "Power cell" in the radial menu to swap cells.
-      Magazines and cells come from the player's pouch (sv_20_pouch.lua)
-      until the inventory module replaces it.
+      Hold R for the radial menu to pick a magazine type or a power cell.
+      Magazines and cells come from the inventory (or the pouch without it),
+      see sv_20_pouch.lua.
+
+    Sprinting lowers the gun the same way safety does (passive hold, no
+    firing or aiming) without changing the fire mode. It comes back up
+    SprintRaiseTime after you stop.
 
     Fire modes and safety:
       - E + R cycles through the weapon's FireModes ("semi", "auto", "burst").
@@ -44,10 +51,10 @@ SWEP.DrawAmmo = true
 SWEP.DrawCrosshair = true  -- must stay true so DoDrawCrosshair is called
 
 SWEP.Primary = {
-    ClipSize = 50,
-    DefaultClip = 50,       -- keep equal to ClipSize: spare magazines come from the pouch
+    ClipSize = 30,          -- rounds of the preferred magazine, SWEP.Mags[1]
+    DefaultClip = 30,       -- keep equal to ClipSize: spawned guns come loaded, spares come from the inventory
     Automatic = true,
-    Ammo = "rhylib_blaster",
+    Ammo = "rhylib_mag_small",
 }
 SWEP.Secondary = {
     ClipSize = -1,
@@ -65,15 +72,31 @@ SWEP.FireSound = "weapons/airboat/airboat_gun_energy1.wav"
 
 -- Fire modes this weapon can switch between (E + R), first one is the default.
 SWEP.FireModes = { "semi" }
+SWEP.SprintRaiseTime = 0.25         -- seconds after sprinting before the gun can fire
 SWEP.BurstCount = 3
 SWEP.BurstDelay = 0.25              -- extra pause after a burst
+
+-- Magazine types this gun takes, preferred first (ids from W.MagTypes).
+SWEP.Mags = { "mag_small" }
+SWEP.ReloadTime = nil               -- seconds; nil = the viewmodel's reload animation length
+SWEP.AutoReload = false             -- reload by itself when the magazine runs empty (launchers)
+
+-- Spin-up (rotary guns): hold fire this long before the first shot.
+-- While spinning or firing, walk speed is multiplied by SpinMoveMult.
+SWEP.SpinUp = nil                   -- seconds, nil = fires at once
+SWEP.SpinMoveMult = 0.6
+
+-- Explosive bolts (rockets): { radius = units, damage = at the centre }.
+-- The bolt then does blast damage where it hits instead of a direct hit.
+SWEP.Explosive = nil
+SWEP.BoltLife = nil                 -- seconds before a bolt that hit nothing is gone; nil = config
 
 SWEP.UsesCell = false
 SWEP.CellShots = 500                -- shots from one full power cell
 SWEP.CellReloadMult = 1.6           -- cell swap takes this much longer than a magazine swap
 
--- Spare ammo given when the weapon is picked up. Testing only, until
--- armouries and the inventory exist.
+-- Spare ammo given when the weapon is picked up (of the preferred
+-- magazine type). Testing only, until armouries exist.
 SWEP.StartMags = 4
 SWEP.StartCells = 0
 
@@ -81,6 +104,7 @@ SWEP.StartCells = 0
 SWEP.InvW = 3
 SWEP.InvH = 1
 SWEP.InvLarge = false
+SWEP.InvWeight = 3                  -- kg
 
 -- Cone angles in degrees. See rhylib/weapons/sh_10_spread.lua.
 SWEP.Spread = {
@@ -121,32 +145,69 @@ function SWEP:SetupDataTables()
     self:NetworkVar("Float", 4, "KickTime")
     self:NetworkVar("Float", 5, "ReloadEnd")
     self:NetworkVar("Float", 6, "Cell")
+    self:NetworkVar("Float", 7, "SpinStart")   -- when the barrels started spinning, 0 = not spinning
     self:NetworkVar("Int", 0, "Streak")
     self:NetworkVar("Int", 1, "LastArc")
     self:NetworkVar("Int", 2, "ReloadKind")
     self:NetworkVar("Int", 3, "FireMode")
     self:NetworkVar("Int", 4, "BurstLeft")
+    self:NetworkVar("Int", 5, "MagType")       -- index of the loaded magazine type, 0 = none
+    self:NetworkVar("Int", 6, "ReloadMag")     -- magazine type being loaded
     self:NetworkVar("Bool", 0, "Aiming")
     self:NetworkVar("Bool", 1, "Safety")
     self:NetworkVar("Bool", 2, "TriggerReady")
+    self:NetworkVar("Bool", 3, "Lowered")      -- lowered while sprinting
 
-    -- Lowered hold on every client as soon as safety changes.
-    self:NetworkVarNotify("Safety", self.OnSafetyChanged)
+    -- Lowered hold on every client as soon as safety or sprinting changes.
+    self:NetworkVarNotify("Safety", self.OnLoweredChanged)
+    self:NetworkVarNotify("Lowered", self.OnLoweredChanged)
 end
 
-function SWEP:OnSafetyChanged(_, _, on)
-    self:SetHoldType(on and "passive" or self.HoldType)
+-- Safety on, or lowered while sprinting: gun down, can't fire or aim.
+function SWEP:IsLowered()
+    return self:GetSafety() or self:GetLowered()
+end
+
+-- Notify callbacks run before the new value is stored, so take it from the args.
+function SWEP:OnLoweredChanged(name, _, on)
+    local safety = name == "Safety" and on or (name ~= "Safety" and self:GetSafety())
+    local lowered = name == "Lowered" and on or (name ~= "Lowered" and self:GetLowered())
+    self:SetHoldType((safety or lowered) and "passive" or self.HoldType)
 end
 
 function SWEP:Initialize()
-    self:SetHoldType(self:GetSafety() and "passive" or self.HoldType)
+    self:SetHoldType(self:IsLowered() and "passive" or self.HoldType)
     if self.UsesCell then self:SetCell(1) end
     if self:GetFireMode() == 0 then self:SetFireMode(1) end
+    if self:GetMagType() == 0 then
+        local m = Rhylib.Weapons.MagTypes[self.Mags[1]]
+        if m then self:SetMagType(m.index) end
+    end
     self:SetTriggerReady(true)
 end
 
 function SWEP:GetFireModeName()
     return self.FireModes[self:GetFireMode()] or self.FireModes[1] or "semi"
+end
+
+-- Magazine helpers --------------------------------------------------------
+
+function SWEP:TakesMag(id)
+    for i = 1, #self.Mags do
+        if self.Mags[i] == id then return true end
+    end
+    return false
+end
+
+-- The loaded magazine type (table from W.MagTypes) or nil.
+function SWEP:GetMag()
+    return Rhylib.Weapons.MagByIndex[self:GetMagType()]
+end
+
+-- Shots the loaded magazine holds when full.
+function SWEP:GetMagSize()
+    local m = self:GetMag()
+    return m and m.rounds or self.Primary.ClipSize
 end
 
 function SWEP:Deploy()
@@ -157,6 +218,8 @@ end
 function SWEP:Holster()
     self:SetAiming(false)
     self:SetBurstLeft(0)
+    self:SetSpinStart(0)
+    self:SetLowered(false)
     self:CancelReload()
     return true
 end
@@ -204,7 +267,7 @@ function SWEP:TooHeavyToFire()
 end
 
 function SWEP:CanPrimaryAttack()
-    if self:GetSafety() then return false end
+    if self:IsLowered() then return false end
     if self:GetReloadKind() ~= RELOAD_NONE then return false end
     if self:TooHeavyToFire() then return false end
 
@@ -228,6 +291,7 @@ end
 -- is always true). The fire mode decides whether that fires.
 function SWEP:PrimaryAttack()
     if self:GetBurstLeft() > 0 then return end  -- a burst is running (Think fires it)
+    if self:GetLowered() then return end        -- sprinting: gun is down
 
     local mode = self:GetFireModeName()
     if mode ~= "auto" or self:GetSafety() then
@@ -239,6 +303,9 @@ function SWEP:PrimaryAttack()
         self:EmitSound("Weapon_Pistol.Empty", 60)
         return
     end
+    -- Rotary guns wait for spin-up (an empty gun skips it, so the click
+    -- and the automatic reload below still happen).
+    if self:Clip1() > 0 and not self:SpunUp() then return end
     if not self:CanPrimaryAttack() then return end
 
     if mode == "burst" then self:SetBurstLeft(self.BurstCount - 1) end
@@ -283,6 +350,38 @@ function SWEP:SecondaryAttack()
     -- Right mouse is aim, handled in Think.
 end
 
+-- Spin-up ---------------------------------------------------------------
+
+function SWEP:IsSpinning()
+    return self.SpinUp ~= nil and self:GetSpinStart() > 0
+end
+
+function SWEP:SpunUp()
+    if not self.SpinUp then return true end
+    local start = self:GetSpinStart()
+    return start > 0 and CurTime() - start >= self.SpinUp
+end
+
+-- Walk speed multiplier for this weapon right now (see sh_20_move.lua).
+function SWEP:GetMoveMult()
+    if self:IsSpinning() then return self.SpinMoveMult end
+    return 1
+end
+
+-- Runs in Think: spin while the trigger is held and the gun could fire.
+function SWEP:UpdateSpin(owner)
+    if not self.SpinUp then return end
+    local want = owner:KeyDown(IN_ATTACK) and not self:IsLowered() and not self:IsReloading()
+        and not self:TooHeavyToFire() and self:Clip1() > 0
+    local spinning = self:GetSpinStart() > 0
+    if want and not spinning then
+        self:SetSpinStart(CurTime())
+        if IsFirstTimePredicted() and self.SpinSound then self:EmitSound(self.SpinSound, 70) end
+    elseif not want and spinning then
+        self:SetSpinStart(0)
+    end
+end
+
 --------------------------------------------------------------------------
 -- Reloading
 --------------------------------------------------------------------------
@@ -311,28 +410,53 @@ if SERVER then
         [RELOAD_CELL] = "items/battery_pickup.wav",
     }
 
-    -- kind: 1 = magazine, 2 = power cell
-    function SWEP:StartReload(kind)
+    -- Which magazine type a reload should load. magId: the type asked
+    -- for, or nil for the best one. Returns a W.MagTypes entry or nil.
+    function SWEP:ChooseMag(owner, magId)
+        local W = Rhylib.Weapons
+        local Pouch = W.Pouch
+        local cur = self:GetMag()
+        local full = self:Clip1() >= self:GetMagSize()
+
+        local function usable(id)
+            if not self:TakesMag(id) or Pouch.Count(owner, id) == 0 then return false end
+            return not (full and cur and cur.id == id)  -- same type into a full gun does nothing
+        end
+
+        if magId then return usable(magId) and W.MagTypes[magId] or nil end
+        if cur and usable(cur.id) then return cur end
+        for i = 1, #self.Mags do
+            if usable(self.Mags[i]) then return W.MagTypes[self.Mags[i]] end
+        end
+    end
+
+    -- kind: 1 = magazine, 2 = power cell. magId: magazine type (nil = best).
+    function SWEP:StartReload(kind, magId)
         if self:IsReloading() then return end
         local owner = self:GetOwner()
         if not IsValid(owner) or not owner:IsPlayer() then return end
-        local Pouch = Rhylib.Weapons.Pouch
+        local W = Rhylib.Weapons
 
         if kind == RELOAD_MAG then
-            if Pouch.Count(owner, "mags") == 0 or self:Clip1() >= self.Primary.ClipSize then return end
+            local m = self:ChooseMag(owner, magId)
+            if not m then return end
+            self:SetReloadMag(m.index)
         elseif kind == RELOAD_CELL then
-            if not self.UsesCell or Pouch.Count(owner, "cells") == 0 then return end
+            if not self.UsesCell or W.Pouch.Count(owner, W.CELL) == 0 then return end
         else
             return
         end
 
         self:SendWeaponAnim(ACT_VM_RELOAD)
         local vm = owner:GetViewModel()
-        local duration = IsValid(vm) and vm:SequenceDuration() or 2
+        local animTime = IsValid(vm) and vm:SequenceDuration() or 2
+        local duration = self.ReloadTime or animTime
+        local rate = animTime / duration
         if kind == RELOAD_CELL then
             duration = duration * self.CellReloadMult
-            if IsValid(vm) then vm:SetPlaybackRate(1 / self.CellReloadMult) end
+            rate = rate / self.CellReloadMult
         end
+        if IsValid(vm) and rate ~= 1 then vm:SetPlaybackRate(rate) end
 
         local finish = CurTime() + duration
         self:SetReloadKind(kind)
@@ -348,22 +472,28 @@ if SERVER then
         self:SetReloadKind(RELOAD_NONE)
         local owner = self:GetOwner()
         if not IsValid(owner) then return end
-        local Pouch = Rhylib.Weapons.Pouch
+        local W = Rhylib.Weapons
+        local Pouch = W.Pouch
 
         local vm = owner:GetViewModel()
         if IsValid(vm) then vm:SetPlaybackRate(1) end
 
         if kind == RELOAD_MAG then
-            local best = Pouch.TakeBest(owner, "mags")
+            local m = W.MagByIndex[self:GetReloadMag()]
+            local best = m and Pouch.TakeBest(owner, m.id)
             if not best then return end
-            local old = self:Clip1() / self.Primary.ClipSize
-            if old > 0 then Pouch.Add(owner, "mags", old, true) end
-            self:SetClip1(math.floor(best * self.Primary.ClipSize + 0.5))
+            -- The old magazine goes back into the inventory with what's left in it.
+            local old = self:GetMag()
+            if old and self:Clip1() > 0 then
+                Pouch.Add(owner, old.id, self:Clip1() / old.rounds, true)
+            end
+            self:SetMagType(m.index)
+            self:SetClip1(math.floor(best * m.rounds + 0.5))
         elseif kind == RELOAD_CELL then
-            local best = Pouch.TakeBest(owner, "cells")
+            local best = Pouch.TakeBest(owner, W.CELL)
             if not best then return end
             local old = self:GetCell()
-            if old > 0.001 then Pouch.Add(owner, "cells", old, true) end
+            if old > 0.001 then Pouch.Add(owner, W.CELL, old, true) end
             self:SetCell(best)
         end
     end
@@ -373,17 +503,16 @@ if SERVER then
     function SWEP:Equip(owner)
         if Rhylib.Inventory and Rhylib.Inventory.AddItem then return end
         if not IsValid(owner) or not owner:IsPlayer() then return end
-        local Pouch = Rhylib.Weapons.Pouch
-        for _ = 1, self.StartMags do Pouch.Add(owner, "mags", 1) end
-        for _ = 1, self.StartCells do Pouch.Add(owner, "cells", 1) end
-        Pouch.Sync(owner)
+        Rhylib.Weapons.Pouch.GiveStartAmmo(owner, self, false)
     end
 end
 
--- Clip and cell are kept in the inventory item while the weapon is stored.
+-- Clip, magazine type and cell are kept in the inventory item while the
+-- weapon is stored.
 function SWEP:GetInventoryData()
     return {
         clip = self:Clip1(),
+        mag = self:GetMagType(),
         cell = self.UsesCell and self:GetCell() or nil,
         mode = self:GetFireMode(),
         safe = self:GetSafety() or nil,
@@ -392,10 +521,36 @@ end
 
 function SWEP:SetInventoryData(data)
     data = data or {}
-    self:SetClip1(data.clip or self.Primary.ClipSize)
+    local W = Rhylib.Weapons
+    local m = W.MagByIndex[data.mag or 0]
+    if not (m and self:TakesMag(m.id)) then m = W.MagTypes[self.Mags[1]] end
+    if m then self:SetMagType(m.index) end
+    self:SetClip1(math.min(data.clip or self:GetMagSize(), self:GetMagSize()))
     if self.UsesCell then self:SetCell(data.cell or 1) end
     if data.mode and self.FireModes[data.mode] then self:SetFireMode(data.mode) end
     if data.safe then self:SetSafety(true) end
+end
+
+-- Actually sprinting: sprint held, on the ground and moving faster than
+-- a walk. Going by speed means a player too tired to sprint (held to walking
+-- speed by rhylib_stamina) keeps the gun up.
+function SWEP:OwnerSprinting(owner)
+    if not owner:KeyDown(IN_SPEED) or not owner:OnGround() then return false end
+    local walk = owner:GetWalkSpeed() * 1.1
+    return owner:GetVelocity():Length2DSqr() > walk * walk
+end
+
+function SWEP:UpdateLowered(owner)
+    local sprint = self:OwnerSprinting(owner)
+    if sprint == self:GetLowered() then return end
+    self:SetLowered(sprint)
+    if sprint then
+        self:SetBurstLeft(0)
+        self:SetAiming(false)
+    else
+        -- A short moment to bring the gun back up.
+        self:SetNextPrimaryFire(math.max(self:GetNextPrimaryFire(), CurTime() + self.SprintRaiseTime))
+    end
 end
 
 function SWEP:Think()
@@ -405,6 +560,17 @@ function SWEP:Think()
     if SERVER and self:IsReloading() and CurTime() >= self:GetReloadEnd() then
         self:FinishReload()
     end
+
+    -- Launchers load the next round by themselves once the shot is away.
+    if SERVER and self.AutoReload and self:Clip1() <= 0 and not self:IsReloading()
+        and CurTime() >= self:GetNextPrimaryFire() and not self:GetSafety()
+        and CurTime() >= (self.autoReloadTry or 0) then
+        self.autoReloadTry = CurTime() + 0.5  -- with no rounds left, don't recount every tick
+        self:StartReload(RELOAD_MAG)
+    end
+
+    self:UpdateLowered(owner)
+    self:UpdateSpin(owner)
 
     -- Trigger released: the next semi shot or burst may fire.
     if not self:GetTriggerReady() and not owner:KeyDown(IN_ATTACK) then
@@ -424,7 +590,7 @@ function SWEP:Think()
         end
     end
 
-    local want = owner:KeyDown(IN_ATTACK2) and not owner:IsSprinting() and not self:IsReloading() and not self:GetSafety()
+    local want = owner:KeyDown(IN_ATTACK2) and not self:IsReloading() and not self:IsLowered()
     if want ~= self:GetAiming() then
         self:SetAiming(want)
     end
@@ -445,7 +611,7 @@ if CLIENT then
     function SWEP:GetViewModelPosition(pos, ang)
         local ft = FrameTime()
         self.aimFrac = math.Approach(self.aimFrac or 0, self:GetAiming() and 1 or 0, ft * 6)
-        self.safeFrac = math.Approach(self.safeFrac or 0, self:GetSafety() and 1 or 0, ft * 4)
+        self.safeFrac = math.Approach(self.safeFrac or 0, self:IsLowered() and 1 or 0, ft * 5)
 
         local f = ease(self.aimFrac)
         if f > 0 then
@@ -475,7 +641,7 @@ if CLIENT then
     end
 
     function SWEP:DoDrawCrosshair(x, y)
-        if self:GetSafety() then return true end  -- no crosshair on safety
+        if self:IsLowered() then return true end  -- no crosshair on safety or while sprinting
         -- In Rhylib third person, rhylib_thirdperson draws it instead.
         local tp = Rhylib.ThirdPerson
         if not (tp and tp.Active and tp.Active()) then

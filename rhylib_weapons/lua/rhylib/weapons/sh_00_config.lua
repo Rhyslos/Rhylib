@@ -10,52 +10,83 @@ Config.Register("weapons", "limbMult", 0.75, "Damage multiplier for arm and leg 
 Config.Register("weapons", "lowCellThreshold", 0.1, "Below this power cell charge (0-1), damage starts to drop")
 Config.Register("weapons", "lowCellMinDamage", 0.5, "Damage multiplier when the power cell is completely drained")
 Config.Register("weapons", "reloadHoldTime", 0.2, "Seconds R must be held to open the reload menu")
-Config.Register("weapons", "maxMags", 12, "Spare magazines a player can carry (until the inventory exists)")
-Config.Register("weapons", "maxCells", 4, "Spare power cells a player can carry (until the inventory exists)")
+Config.Register("weapons", "maxMags", 12, "Without rhylib_inventory: spare magazines of each type a player can carry")
+Config.Register("weapons", "maxCells", 4, "Without rhylib_inventory: spare power cells a player can carry")
 
--- Ammo types. Their counts mirror the pouch so the default HUD shows
--- spare magazines and cells. The pouch is the real store.
-game.AddAmmoType({
-    name = "rhylib_blaster",
-    dmgtype = DMG_BULLET,
-    tracer = TRACER_NONE,
-    plydmg = 0,
-    npcdmg = 0,
-    force = 0,
-    maxcarry = 9999,
-})
+--[[
+    Magazine types. A weapon lists the types it takes in SWEP.Mags (first
+    = preferred). The loaded magazine decides how many shots the gun holds,
+    so a DC-15A with a small magazine holds 30, with a medium one 60.
+    Partly used magazines keep their exact fill (0-1) and don't stack.
+    Weight is a shell plus about 5 g per round. Small and medium hold the
+    same rounds per inventory cell (60), large packs more for the Z-6.
+    A rocket is a one-shot "magazine" for the RPS-6.
 
-game.AddAmmoType({
-    name = "rhylib_cell",
-    dmgtype = DMG_BULLET,
-    tracer = TRACER_NONE,
-    plydmg = 0,
-    npcdmg = 0,
-    force = 0,
-    maxcarry = 9999,
-})
+    index: sent on the network and stored in the weapon (keep them stable).
+]]
+local W = Rhylib.Weapons
+W.MagTypes = {
+    mag_small  = { index = 1, name = "Small magazine",  short = "Small",  rounds = 30,  w = 1, h = 1, stack = 2, weight = 0.30, model = "models/items/boxsrounds.mdl" },
+    mag_medium = { index = 2, name = "Medium magazine", short = "Medium", rounds = 60,  w = 1, h = 2, stack = 2, weight = 0.55, model = "models/items/boxmrounds.mdl" },
+    mag_large  = { index = 3, name = "Large magazine",  short = "Large",  rounds = 250, w = 1, h = 3, stack = 1, weight = 2.0,  model = "models/items/boxbuckshot.mdl" },
+    rocket     = { index = 4, name = "Rocket",          short = "Rocket", rounds = 1,   w = 1, h = 2, stack = 1, weight = 2.5,  model = "models/weapons/w_missile_closed.mdl" },
+}
+W.MagByIndex = {}
+for id, m in pairs(W.MagTypes) do
+    m.id = id
+    m.ammo = "rhylib_" .. id  -- ammo type that mirrors the count for the HUD
+    W.MagByIndex[m.index] = m
+end
+W.CELL = "cell"
+W.CELL_WEIGHT = 1.2
+
+-- Reload request sent by the client: 0 = best magazine, 1-14 = that
+-- magazine type (index), 15 = power cell.
+W.RELOAD_REQ_BITS = 4
+W.RELOAD_REQ_CELL = 15
+
+-- Ammo types. Their counts mirror the inventory (or pouch) so the HUD can
+-- read spare counts on the client. The inventory is the real store.
+local function addAmmo(name)
+    game.AddAmmoType({
+        name = name,
+        dmgtype = DMG_BULLET,
+        tracer = TRACER_NONE,
+        plydmg = 0,
+        npcdmg = 0,
+        force = 0,
+        maxcarry = 9999,
+    })
+end
+for _, m in pairs(W.MagTypes) do addAmmo(m.ammo) end
+addAmmo("rhylib_cell")
 
 -- Inventory items, if rhylib_inventory is installed (it loads before this addon).
 if Rhylib.Items then
-    Rhylib.Items.Register("mag", {
-        name = "Blaster magazine",
-        w = 1, h = 1,
-        stack = 5,
-        fill = true,
-        category = "ammo",
-        model = "models/items/boxmrounds.mdl",
-    })
+    for id, m in pairs(W.MagTypes) do
+        Rhylib.Items.Register(id, {
+            name = m.name,
+            w = m.w, h = m.h,
+            stack = m.stack,
+            fill = true,
+            rounds = m.rounds,
+            weight = m.weight,
+            category = "ammo",
+            model = m.model,
+        })
+    end
     Rhylib.Items.Register("cell", {
         name = "Power cell",
         w = 1, h = 2,
         stack = 1,
         fill = true,
+        weight = W.CELL_WEIGHT,
         category = "ammo",
         model = "models/items/battery.mdl",
     })
 end
 
 if CLIENT then
-    language.Add("rhylib_blaster_ammo", "Magazines")
+    for _, m in pairs(W.MagTypes) do language.Add(m.ammo .. "_ammo", m.name .. "s") end
     language.Add("rhylib_cell_ammo", "Power cells")
 end

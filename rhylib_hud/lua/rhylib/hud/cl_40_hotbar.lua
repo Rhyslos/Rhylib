@@ -14,6 +14,8 @@ local UI = Rhylib.UI
 
 local fadeVar = CreateClientConVar("rhylib_hud_hotbar_fade", "1", true, false, "Fade the hotbar when you're not switching weapons (0/1)")
 
+HUD.HotbarRect = HUD.HotbarRect or { x = 0, y = 0, w = 0, h = 0, frame = 0 }
+
 local list = {}
 local nextBuild = 0
 local lastSwitch = 0
@@ -121,7 +123,6 @@ Rhylib.Hook.Add("HUDPaint", "hud.hotbar", function()
     if fadeVar:GetBool() or visor then
         alpha = since < 2.5 and 255 or math.max(minAlpha, 255 - (since - 2.5) * 400)
     end
-    if alpha <= 0 then return end
 
     -- Square-ish boxes between the corner plates. With many weapons they
     -- shrink to fit the space (down to a minimum width).
@@ -133,6 +134,12 @@ Rhylib.Hook.Add("HUDPaint", "hud.hotbar", function()
     local x = math.floor((ScrW() - total) * 0.5)
     local _, my = HUD.Margins("hotbar")
     local y = ScrH() - bh - my
+
+    -- Shared with the stamina bar, which sits on top (even while this fades out).
+    local r = HUD.HotbarRect
+    r.x, r.y, r.w, r.h, r.frame = x, y, total, bh, FrameNumber()
+
+    if alpha <= 0 then return end
     local font = UI.Font(14)
     local barH = math.max(2, math.floor(3 * s))
 

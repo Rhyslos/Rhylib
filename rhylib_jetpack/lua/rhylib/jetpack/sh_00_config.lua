@@ -38,6 +38,7 @@ Config.Register("jetpack", "brakeAccel", 640, "Cap on the braking force while fa
 Config.Register("jetpack", "airAccel", 470, "Sideways steering while thrusting (units/s^2)")
 Config.Register("jetpack", "maxAirSpeed", 267, "Top sideways speed from steering (units/s)")
 Config.Register("jetpack", "airStopTau", 0.3, "How quickly sideways movement stops with no keys held (seconds); lower = stops faster")
+Config.Register("jetpack", "loadFuelMult", 0.3, "At a full load the jetpack burns this much more fuel (0.3 = 30% faster)")
 
 function J.Has(ply)
     return ply:GetDTBool(J.DT_HAS)
@@ -54,6 +55,7 @@ if Rhylib.Items then
         w = 2, h = 2,
         category = "gear",
         slot = "back",
+        weight = 8,
         model = "models/thrusters/jetpack.mdl",  -- placeholder (GMod thruster model)
     })
 end

@@ -1,17 +1,19 @@
 --[[
     Ammo store for reloads (server only).
 
+    kind is an item id: "mag_small", "mag_medium", "mag_large", "rocket"
+    or "cell" (see W.MagTypes in sh_00_config.lua).
+
     With rhylib_inventory installed, magazines and power cells are real
-    inventory items ("mag", "cell") with a fill level from 0 to 1.
-    Without it, a simple per-player pouch is used instead, so the weapons
-    addon still works on its own.
+    inventory items with a fill level from 0 to 1. Without it, a simple
+    per-player pouch is used instead, so the weapons addon still works on
+    its own.
 
-    Magazines and cells are universal: a fill level becomes shots when
-    loaded (0.46 of a 50-shot DC-15S magazine = 23 shots). Reloading
-    always loads the fullest one and puts the old one back if it isn't
-    empty, so no shots are lost.
+    Reloading always loads the fullest one of the chosen type and puts the
+    old one back if it isn't empty, so no shots are lost.
 
-    Counts are mirrored into GMod ammo types so the default HUD shows them.
+    Counts are mirrored into GMod ammo types so the client HUD and reload
+    menu can read them.
 ]]
 
 local W = Rhylib.Weapons
@@ -19,9 +21,10 @@ W.Pouch = W.Pouch or {}
 local Pouch = W.Pouch
 local Config = Rhylib.Config
 
-local ITEM = { mags = "mag", cells = "cell" }
-local LIMIT = { mags = "maxMags", cells = "maxCells" }
-local AMMO = { mags = "rhylib_blaster", cells = "rhylib_cell" }
+-- Every kind the store knows, with its mirror ammo type.
+local KINDS = {}
+for id, m in pairs(W.MagTypes) do KINDS[id] = m.ammo end
+KINDS[W.CELL] = "rhylib_cell"
 
 local function inventory()
     local Inv = Rhylib.Inventory
@@ -30,43 +33,55 @@ end
 
 -- Fallback pouch -------------------------------------------------------
 
-local function get(ply)
+local function get(ply, kind)
     local p = ply.RhylibPouch
     if not p then
-        p = { mags = {}, cells = {} }
+        p = {}
         ply.RhylibPouch = p
     end
-    return p
+    local list = p[kind]
+    if not list then
+        list = {}
+        p[kind] = list
+    end
+    return list
+end
+
+local function limit(kind)
+    return Config.Get("weapons", kind == W.CELL and "maxCells" or "maxMags")
 end
 
 -- Shared API -----------------------------------------------------------
 
 function Pouch.Count(ply, kind)
+    if not KINDS[kind] then return 0 end
     local Inv = inventory()
-    if Inv then return Inv.Count(ply, ITEM[kind]) end
-    return #get(ply)[kind]
+    if Inv then return Inv.Count(ply, kind) end
+    return #get(ply, kind)
 end
 
 function Pouch.Sync(ply)
-    ply:SetAmmo(Pouch.Count(ply, "mags"), AMMO.mags)
-    ply:SetAmmo(Pouch.Count(ply, "cells"), AMMO.cells)
+    for kind, ammo in pairs(KINDS) do
+        ply:SetAmmo(Pouch.Count(ply, kind), ammo)
+    end
 end
 
 -- Returns false if there's no room. force: never lose it (drops it on
 -- the ground with the inventory, ignores the limit without).
 function Pouch.Add(ply, kind, fill, force)
+    if not KINDS[kind] then return false end
     fill = math.Clamp(fill, 0, 1)
     local Inv = inventory()
     if Inv then
         if force then
-            Inv.AddOrDrop(ply, ITEM[kind], 1, { fill = fill })
+            Inv.AddOrDrop(ply, kind, 1, { fill = fill })
             return true
         end
-        return Inv.AddItem(ply, ITEM[kind], 1, { fill = fill }) == 0
+        return Inv.AddItem(ply, kind, 1, { fill = fill }) == 0
     end
 
-    local list = get(ply)[kind]
-    if not force and #list >= Config.Get("weapons", LIMIT[kind]) then return false end
+    local list = get(ply, kind)
+    if not force and #list >= limit(kind) then return false end
     list[#list + 1] = fill
     Pouch.Sync(ply)
     return true
@@ -74,10 +89,11 @@ end
 
 -- Removes and returns the fullest one, or nil if there are none.
 function Pouch.TakeBest(ply, kind)
+    if not KINDS[kind] then return nil end
     local Inv = inventory()
-    if Inv then return Inv.TakeBest(ply, ITEM[kind]) end
+    if Inv then return Inv.TakeBest(ply, kind) end
 
-    local list = get(ply)[kind]
+    local list = get(ply, kind)
     local best, bestIndex = -1, nil
     for i, fill in ipairs(list) do
         if fill > best then
@@ -91,8 +107,17 @@ function Pouch.TakeBest(ply, kind)
 end
 
 function Pouch.Reset(ply)
-    ply.RhylibPouch = { mags = {}, cells = {} }
+    ply.RhylibPouch = {}
     Pouch.Sync(ply)
+end
+
+-- Gives a weapon's start ammo (testing only, until armouries exist).
+function Pouch.GiveStartAmmo(ply, swep, force)
+    local kind = swep.Mags and swep.Mags[1]
+    if kind then
+        for _ = 1, swep.StartMags or 0 do Pouch.Add(ply, kind, 1, force) end
+    end
+    for _ = 1, swep.StartCells or 0 do Pouch.Add(ply, W.CELL, 1, force) end
 end
 
 -- Hooks ----------------------------------------------------------------
@@ -106,7 +131,7 @@ Rhylib.Hook.Add("PlayerSpawn", "weapons.pouch", function(ply)
     Pouch.Reset(ply)
 end)
 
--- Keep the HUD's spare magazine and cell counts in step with the inventory.
+-- Keep the mirrored counts in step with the inventory.
 Rhylib.Hook.Add("Rhylib.InventoryChanged", "weapons.pouch", function(ply)
     Pouch.Sync(ply)
 end)
@@ -115,8 +140,7 @@ end)
 Rhylib.Hook.Add("Rhylib.InventoryWeaponPickup", "weapons.startammo", function(ply, class)
     local swep = weapons.Get(class)
     if not swep or not swep.IsRhylib then return end
-    for _ = 1, swep.StartMags or 0 do Pouch.Add(ply, "mags", 1, true) end
-    for _ = 1, swep.StartCells or 0 do Pouch.Add(ply, "cells", 1, true) end
+    Pouch.GiveStartAmmo(ply, swep, true)
 end)
 
 -- E + R (fire mode) and Shift + E + R (safety).
@@ -127,11 +151,16 @@ Rhylib.Net.Receive("wep.mode", function(ply)
     if safety then wep:ToggleSafety() else wep:CycleFireMode() end
 end, { rate = 4, burst = 3 })
 
--- Reload requests from the radial menu: 1 = magazine, 2 = power cell.
+-- Reload requests from the R key and the radial menu.
+-- See W.RELOAD_REQ_* in sh_00_config.lua.
 Rhylib.Net.Receive("wep.reload", function(ply)
-    local kind = net.ReadUInt(2)
+    local req = net.ReadUInt(W.RELOAD_REQ_BITS)
     local wep = ply:GetActiveWeapon()
-    if IsValid(wep) and wep.IsRhylib and wep.StartReload then
-        wep:StartReload(kind)
+    if not (IsValid(wep) and wep.IsRhylib and wep.StartReload) then return end
+    if req == W.RELOAD_REQ_CELL then
+        wep:StartReload(2)
+    else
+        local m = W.MagByIndex[req]
+        wep:StartReload(1, m and m.id or nil)
     end
 end, { rate = 4, burst = 3 })

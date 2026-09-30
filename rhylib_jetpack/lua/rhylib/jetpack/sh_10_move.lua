@@ -54,7 +54,10 @@ Rhylib.Hook.Add("SetupMove", "jetpack.move", function(ply, mv)
         and ply:WaterLevel() < 2
 
     if thrusting then
-        fuel = fuel - dt / cfg("fuelTime")
+        -- Heavier loads burn fuel faster (weight and cap come from rhylib_inventory).
+        local cap = ply:GetNW2Float("rhylib_carry", 0)
+        local load = cap > 0 and math.min(ply:GetNW2Float("rhylib_weight", 0) / cap, 1) or 0
+        fuel = fuel - dt / cfg("fuelTime") * (1 + cfg("loadFuelMult") * load)
         if fuel <= 0 then
             fuel = 0
             locked = true

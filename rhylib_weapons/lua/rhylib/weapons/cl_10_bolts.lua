@@ -13,14 +13,15 @@ W.Bolts = W.Bolts or {}
 local Bolts = W.Bolts
 Bolts.visual = Bolts.visual or {}
 
-local COLORS = {
-    [1] = Color(90, 150, 255),   -- Republic blue
-    [2] = Color(255, 70, 60),    -- CIS red
-    [3] = Color(80, 255, 120),   -- green
+-- Looks, by the weapon's BoltColor: colour, trail length, beam width,
+-- glow size and how long the visual can live.
+local STYLES = {
+    [1] = { color = Color(90, 150, 255), length = 70, width = 5, glow = 14, life = 1.2 },   -- Republic blue
+    [2] = { color = Color(255, 70, 60), length = 70, width = 5, glow = 14, life = 1.2 },    -- CIS red
+    [3] = { color = Color(80, 255, 120), length = 70, width = 5, glow = 14, life = 1.2 },   -- green
+    [4] = { color = Color(255, 170, 80), length = 140, width = 9, glow = 40, life = 6, rocket = true },  -- rocket
 }
 
-local LIFE = 1.2
-local LENGTH = 70
 local BLEND_TIME = 0.08
 
 local matBeam = Material("trails/laser")
@@ -58,7 +59,7 @@ function Bolts.Spawn(shooter, origin, dir, speed, colorIndex)
         pos = origin,
         dir = dir,
         speed = speed,
-        color = COLORS[colorIndex] or COLORS[1],
+        style = STYLES[colorIndex] or STYLES[1],
         offset = muzzle - origin,
         born = CurTime(),
         travelled = 0,
@@ -88,7 +89,8 @@ end)
 local traceResult = {}
 local traceData = { mask = MASK_SHOT, output = traceResult }
 
-local function impact(tr)
+local function impact(tr, style)
+    if style.rocket then return end  -- the server sends the explosion
     local ed = EffectData()
     ed:SetOrigin(tr.HitPos)
     ed:SetNormal(tr.HitNormal)
@@ -109,7 +111,7 @@ Rhylib.Hook.Add("Think", "weapons.bolts", function()
     local i = 1
     while i <= #list do
         local b = list[i]
-        local remove = now - b.born > LIFE
+        local remove = not b.style or now - b.born > b.style.life  -- (no style: from before an autorefresh)
 
         if not remove then
             local step = b.speed * dt
@@ -118,7 +120,7 @@ Rhylib.Hook.Add("Think", "weapons.bolts", function()
             traceData.filter = IsValid(b.shooter) and b.shooter or nil
             local tr = util.TraceLine(traceData)
             if tr.Hit then
-                impact(tr)
+                impact(tr, b.style)
                 remove = true
             else
                 b.pos = traceData.endpos
@@ -143,13 +145,16 @@ Rhylib.Hook.Add("PostDrawTranslucentRenderables", "weapons.bolts", function(dept
     local now = CurTime()
     for i = 1, #list do
         local b = list[i]
-        local blend = math.max(0, 1 - (now - b.born) / BLEND_TIME)
-        local head = b.pos + b.offset * blend
-        local tail = head - b.dir * math.min(LENGTH, b.travelled + 1)
+        local st = b.style
+        if st then
+            local blend = math.max(0, 1 - (now - b.born) / BLEND_TIME)
+            local head = b.pos + b.offset * blend
+            local tail = head - b.dir * math.min(st.length, b.travelled + 1)
 
-        render.SetMaterial(matBeam)
-        render.DrawBeam(tail, head, 5, 0, 1, b.color)
-        render.SetMaterial(matGlow)
-        render.DrawSprite(head, 14, 14, b.color)
+            render.SetMaterial(matBeam)
+            render.DrawBeam(tail, head, st.width, 0, 1, st.color)
+            render.SetMaterial(matGlow)
+            render.DrawSprite(head, st.glow, st.glow, st.color)
+        end
     end
 end)

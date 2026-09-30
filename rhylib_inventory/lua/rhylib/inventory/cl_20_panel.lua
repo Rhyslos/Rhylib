@@ -244,7 +244,9 @@ function PANEL:DrawItemBox(inst, x, y, pw, ph, alpha)
     local corner
     if inst.count > 1 then
         corner = "x" .. inst.count
-    elseif def.fill then
+    elseif def.rounds and def.rounds > 1 then
+        corner = math.floor((inst.data.fill or 1) * def.rounds + 0.5) .. "/" .. def.rounds
+    elseif def.fill and def.rounds == nil then
         corner = math.ceil((inst.data.fill or 1) * 100) .. "%"
     end
     if corner then
@@ -296,6 +298,7 @@ function PANEL:Paint(pw, ph)
 
     draw.RoundedBox(math.floor(8 * s), 0, 0, pw, ph, UI.Colors.bg)
     draw.SimpleText("Inventory", self:Font(20), self.pad, self.header * 0.5, UI.Colors.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+    self:PaintWeight(pw)
     draw.SimpleText("Drag to move · R rotates · Right-click for options · Drag out to drop",
         self:Font(13), self.pad, ph - self.footer * 0.5 - self.pad * 0.25, UI.Colors.textDim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
 
@@ -310,6 +313,33 @@ function PANEL:Paint(pw, ph)
     else
         self:PaintTooltip()
     end
+end
+
+-- Carried weight in the header: "12.4 / 20 kg" over a thin bar.
+-- Worked out from the local copy, so it updates the moment items move.
+local COL_TRACK = Color(255, 255, 255, 28)
+function PANEL:PaintWeight(pw)
+    local s = self.s
+    local weight, cap = Items.Weight(Inv)
+    local over = weight > cap
+    local frac = math.min(weight / cap, 1)
+    local col = over and UI.Colors.bad or (frac > 0.8 and UI.Colors.warn or UI.Colors.text)
+
+    local barW = math.floor(160 * s)
+    local barH = math.max(2, math.floor(4 * s))
+    local right = pw - self.pad
+    local x = right - barW
+    local midY = self.header * 0.5
+
+    draw.SimpleText(string.format("%.1f / %d kg", weight, cap), self:Font(15), right, midY - barH,
+        col, TEXT_ALIGN_RIGHT, TEXT_ALIGN_BOTTOM)
+    if over then
+        draw.SimpleText("Overloaded", self:Font(13), x - math.floor(8 * s), midY - barH, UI.Colors.bad, TEXT_ALIGN_RIGHT, TEXT_ALIGN_BOTTOM)
+    end
+    surface.SetDrawColor(COL_TRACK)
+    surface.DrawRect(x, midY + barH, barW, barH)
+    surface.SetDrawColor(over and UI.Colors.bad or UI.Colors.accent)
+    surface.DrawRect(x, midY + barH, math.floor(barW * frac), barH)
 end
 
 -- Where the dragged item would land: region, x, y (or nil).
@@ -362,8 +392,20 @@ function PANEL:PaintTooltip()
     local s = self.s
 
     local lines = { def.name }
-    if def.fill then lines[#lines + 1] = "Charge " .. math.ceil((inst.data.fill or 1) * 100) .. "%" end
+    if def.rounds then
+        if def.rounds > 1 then
+            lines[#lines + 1] = math.floor((inst.data.fill or 1) * def.rounds + 0.5) .. " / " .. def.rounds .. " rounds"
+        end
+    elseif def.fill then
+        lines[#lines + 1] = "Charge " .. math.ceil((inst.data.fill or 1) * 100) .. "%"
+    end
     if def.stack > 1 then lines[#lines + 1] = inst.count .. " / " .. def.stack end
+    if def.weight then
+        local w = def.weight * inst.count
+        local note = inst.c == BACK and string.format(" (counts as %.2f in the backpack)", w * Rhylib.Config.Get("inventory", "backpackWeightMult")) or ""
+        lines[#lines + 1] = string.format("%.2f kg", w) .. note
+    end
+    if def.carry then lines[#lines + 1] = "+" .. def.carry .. " kg carry cap when worn" end
     if def.grid then lines[#lines + 1] = "Adds " .. def.grid[1] .. " x " .. def.grid[2] .. " cells when worn" end
     if def.large then lines[#lines + 1] = "Too large for a backpack" end
     if def.weapon then lines[#lines + 1] = "Right-click to equip" end
