@@ -80,7 +80,7 @@ SWEP.BurstDelay = 0.25              -- extra pause after a burst
 -- Magazine types this gun takes, preferred first (ids from W.MagTypes).
 SWEP.Mags = { "mag_small" }
 SWEP.ReloadTime = nil               -- seconds; nil = the viewmodel's reload animation length
-SWEP.AutoReload = false             -- reload by itself when the magazine runs empty (launchers)
+SWEP.AutoReload = false             -- reload by itself when empty (off everywhere: reloading is manual)
 
 -- Spin-up (rotary guns): hold fire this long before the first shot.
 -- While spinning or firing, walk speed is multiplied by SpinMoveMult.
@@ -299,8 +299,7 @@ function SWEP:CanPrimaryAttack()
     if self:Clip1() <= 0 then
         self:EmitSound("Weapon_Pistol.Empty")
         self:SetNextPrimaryFire(CurTime() + 0.3)
-        if SERVER then self:StartReload(RELOAD_MAG) end
-        return false
+        return false  -- empty: just the click, reloading is up to you (R)
     end
 
     if self.UsesCell and self:GetCell() <= 0 then
@@ -332,8 +331,8 @@ function SWEP:PrimaryAttack()
         self:FireGrapple()
         return
     end
-    -- Rotary guns wait for spin-up (an empty gun skips it, so the click
-    -- and the automatic reload below still happen).
+    -- Rotary guns wait for spin-up (an empty gun skips it, so you still
+    -- hear the empty click).
     if self:Clip1() > 0 and not self:SpunUp() then return end
     if not self:CanPrimaryAttack() then return end
 

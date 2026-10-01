@@ -1,7 +1,7 @@
 --[[
     RPS-6 rocket launcher. One rocket at a time, unguided.
     The rocket is a slow explosive bolt: blast damage where it hits.
-    Reloads by itself after each shot if you carry rockets.
+    Reload with R after each shot.
     Too heavy to fire while flying.
 
     Uses a prop model (models/jajoff/sps/cgiweapons/tc13j/rps.mdl), so it
@@ -52,7 +52,7 @@ SWEP.Explosive = { radius = 200, damage = 250 }
 SWEP.Mags = { "rocket" }
 SWEP.FireModes = { "semi" }
 SWEP.ReloadTime = 3
-SWEP.AutoReload = true
+SWEP.AutoReload = false     -- reload with R like every other gun
 
 SWEP.UsesCell = false
 SWEP.StartMags = 3
