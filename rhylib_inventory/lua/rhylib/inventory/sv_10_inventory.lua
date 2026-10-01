@@ -104,6 +104,13 @@ end
 local function stripWeapon(ply, inst)
     local def = Items.defs[inst.id]
     if not def or not def.weapon then return end
+    -- Another stack of the same kit is still carried: keep the weapon.
+    local st = Inv.states[ply]
+    if st then
+        for uid, o in pairs(st.byUid) do
+            if uid ~= inst.uid and o.id == inst.id then return end
+        end
+    end
     captureWeapon(ply, inst)
     if ply:HasWeapon(def.weapon) then
         local active = ply:GetActiveWeapon()
@@ -325,7 +332,7 @@ function Inv.CanAdd(ply, id)
     local st = Inv.Get(ply)
     local def = Items.defs[id]
     if not def then return false end
-    if def.weapon and Inv.Has(ply, id) then return false end
+    if Items.Unique(def) and Inv.Has(ply, id) then return false end
     if def.stack > 1 then
         for _, o in pairs(st.byUid) do
             if o.id == id and o.c ~= SLOT_BACK and o.count < def.stack and Items.IsFull(o) then return true end
@@ -341,7 +348,7 @@ function Inv.AddItem(ply, id, count, data)
     count = count or 1
     if not def then return count end
     data = data or {}
-    if def.weapon and Inv.Has(ply, id) then return count end
+    if Items.Unique(def) and Inv.Has(ply, id) then return count end
 
     local stackable = def.stack > 1 and (not def.fill or (data.fill or 1) >= 1)
     if stackable then
@@ -558,6 +565,7 @@ function Inv.AutoHotbar(st, inst)
     local used = {}
     for _, o in pairs(st.byUid) do
         if o.hb then used[o.hb] = true end
+        if o.id == inst.id and o.hb then return end  -- one slot per kit type
     end
     for n = 1, Items.HotbarSize(st) do
         if not used[n] then inst.hb = n return end
@@ -819,6 +827,15 @@ Rhylib.Hook.Add("PlayerCanPickupWeapon", "inventory.pickup", function(ply, wep)
     -- This hook runs every tick while touching a weapon: remember a "no"
     -- for half a second instead of scanning the grid each time.
     if ply.rhylibPickupNoWep == wep and (ply.rhylibPickupNoUntil or 0) > CurTime() then return false end
+
+    -- Stacking kits from a job loadout only top up to one stack, so
+    -- respawning (the inventory survives death) doesn't pile them up.
+    if not Items.Unique(def) and ply.rhylibSpawnTick and engine.TickCount() - ply.rhylibSpawnTick <= 2
+        and Inv.Count(ply, class) >= def.stack then
+        wep.rhylibClaimed = true
+        timer.Simple(0, function() if IsValid(wep) then wep:Remove() end end)
+        return false
+    end
     if not Inv.CanAdd(ply, class) then
         ply.rhylibPickupNoWep, ply.rhylibPickupNoUntil = wep, CurTime() + 0.5
         if (ply.rhylibFullNotice or 0) < CurTime() then
@@ -828,11 +845,14 @@ Rhylib.Hook.Add("PlayerCanPickupWeapon", "inventory.pickup", function(ply, wep)
         return false
     end
 
+    -- Given by the job loadout at spawn: issued, so it vanishes when
+    -- dropped (no "drop kits, die, respawn" farming).
+    local loadout = ply.rhylibSpawnTick and engine.TickCount() - ply.rhylibSpawnTick <= 2
     wep.rhylibClaimed = true
     timer.Simple(0, function()
         if IsValid(wep) then wep:Remove() end
         if not IsValid(ply) then return end
-        if Inv.AddItem(ply, class, 1, {}) == 0 then
+        if Inv.AddItem(ply, class, 1, loadout and { issued = true } or {}) == 0 then
             hook.Run("Rhylib.InventoryWeaponPickup", ply, class)
         end
     end)
@@ -844,10 +864,43 @@ Rhylib.Hook.Add("PlayerInitialSpawn", "inventory.load", function(ply)
 end)
 
 Rhylib.Hook.Add("PlayerSpawn", "inventory.weapons", function(ply)
+    ply.rhylibSpawnTick = engine.TickCount()
     timer.Simple(0, function()
         if not (IsValid(ply) and ply:Alive()) then return end
         Inv.GiveAllWeapons(ply)
         Inv.Stow(ply)  -- everyone spawns with their guns stowed
+    end)
+end)
+
+-- Inventory weapons can't be dropped as plain weapons (DarkRP /drop, drop
+-- on death): the item stays in the inventory, so that would duplicate it.
+-- Drop from the inventory window instead.
+Rhylib.Hook.Add("canDropWeapon", "inventory.nodrop", function(ply, wep)
+    if IsValid(wep) and Items.defs[wep:GetClass()] then return false end
+end)
+
+Rhylib.Hook.Add("PlayerDroppedWeapon", "inventory.nodrop", function(ply, wep)
+    if not IsValid(wep) or not Items.defs[wep:GetClass()] then return end
+    local class = wep:GetClass()
+    -- Keep the dropped weapon's clip and cell in the item before it's
+    -- given back, or the ammo would roll back to the old values.
+    if wep.GetInventoryData then
+        for _, inst in pairs(Inv.Get(ply).byUid) do
+            if inst.id == class then
+                local issued = inst.data and inst.data.issued
+                inst.data = wep:GetInventoryData() or inst.data
+                inst.data.issued = issued
+                break
+            end
+        end
+    end
+    wep.rhylibClaimed = true
+    timer.Simple(0, function()
+        if IsValid(wep) then wep:Remove() end
+        if not (IsValid(ply) and ply:Alive()) then return end
+        for _, inst in pairs(Inv.Get(ply).byUid) do
+            if inst.id == class then giveWeapon(ply, inst) break end
+        end
     end)
 end)
 

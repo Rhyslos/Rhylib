@@ -62,7 +62,7 @@ if SERVER then
             ply:EmitSound("items/ammo_pickup.wav", 60)
         else
             local def = Rhylib.Items.Get(self.itemId)
-            local dupe = def and def.weapon and Rhylib.Inventory.Has(ply, self.itemId)
+            local dupe = Rhylib.Items.Unique(def) and Rhylib.Inventory.Has(ply, self.itemId)
             ply:PrintMessage(HUD_PRINTCENTER, dupe and "You already carry one" or "No room in your inventory")
         end
     end

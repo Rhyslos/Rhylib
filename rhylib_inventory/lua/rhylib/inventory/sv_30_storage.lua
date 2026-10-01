@@ -82,7 +82,7 @@ local function layoutDepot(storage)
             if x then
                 local h = rot and def.w or def.h
                 local inst = { uid = i, id = id, x = x, y = y, rot = rot, c = EXT,
-                    count = def.weapon and 1 or def.stack, data = def.fill and { fill = 1 } or {} }
+                    count = Items.Unique(def) and 1 or def.stack, data = def.fill and { fill = 1 } or {} }
                 c.items[i] = inst
                 used = math.max(used, y + h)
             end
@@ -336,7 +336,7 @@ function Inv.Take(ply, suid, cid, x, y, rot, single)
     if not so then return end
     local def = Items.defs[so.id]
     if not def then return end
-    if def.weapon and Inv.Has(ply, so.id) then
+    if Items.Unique(def) and Inv.Has(ply, so.id) then
         Inv.Note(ply, "You already carry one")
         return
     end

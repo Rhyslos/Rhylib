@@ -16,6 +16,8 @@
     carry cap by this many kg), rounds = 60 (magazines: shots when full).
 
     Weapons become items automatically if their SWEP table sets InvW/InvH.
+    Optional SWEP fields: InvStack (stack size, e.g. medical kits),
+    InvUses (uses when full; stored as fill), InvCategory, InvWeight.
 
     An item instance:
         { uid, c, id, x, y, rot, count, data }     -- c = container id (see below)
@@ -51,6 +53,12 @@ end
 
 function Items.Get(id)
     return Items.defs[id]
+end
+
+-- A weapon item you can only carry one of (guns). Stacking weapon items
+-- (medical kits) can be carried in several stacks.
+function Items.Unique(def)
+    return def and def.weapon and def.stack <= 1 or false
 end
 
 function Items.Finalize()
@@ -97,10 +105,14 @@ function Items.RegisterWeapons()
                     w = full.InvW,
                     h = full.InvH or 1,
                     model = full.WorldModel,
-                    category = "weapon",
+                    category = full.InvCategory or "weapon",
                     weapon = class,
                     large = full.InvLarge,
                     weight = full.InvWeight,
+                    stack = full.InvStack,
+                    fill = full.InvUses and true or nil,
+                    rounds = full.InvUses,
+                    unit = full.InvUses and "uses" or nil,
                 })
             end
         end

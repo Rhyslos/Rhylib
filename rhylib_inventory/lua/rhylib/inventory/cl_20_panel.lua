@@ -630,7 +630,7 @@ function PANEL:PaintTooltip()
     local lines = { def.name }
     if def.rounds then
         if def.rounds > 1 then
-            lines[#lines + 1] = math.floor((inst.data.fill or 1) * def.rounds + 0.5) .. " / " .. def.rounds .. " rounds"
+            lines[#lines + 1] = math.floor((inst.data.fill or 1) * def.rounds + 0.5) .. " / " .. def.rounds .. " " .. (def.unit or "rounds")
         end
     elseif def.fill then
         lines[#lines + 1] = "Charge " .. math.ceil((inst.data.fill or 1) * 100) .. "%"

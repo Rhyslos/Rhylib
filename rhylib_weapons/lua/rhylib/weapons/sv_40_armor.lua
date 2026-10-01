@@ -59,6 +59,7 @@ end
 
 Rhylib.Hook.Add("EntityTakeDamage", "armor.mitigate", function(ent, dmg)
     if not ent:IsPlayer() then return end
+    if ent.rhylibDown and not pending[ent] then return end  -- downed (rhylib_medical): no armour
 
     local p = pending[ent]
     local armor = p and p.after or ent:Armor()
