@@ -54,7 +54,7 @@ Config.Register("medical", "armSpread", 0.8, "Extra spread at a fully hurt (or b
 Config.Register("medical", "burnSpread", 0.25, "Extra spread at full burns (pain), as a share of the resting cone")
 Config.Register("medical", "torsoStaminaHit", 0.8, "Stamina lost per point of torso damage taken")
 Config.Register("medical", "torsoStaminaCap", 0.5, "Share of max stamina lost at a fully hurt torso")
-Config.Register("medical", "firstAidLimbHealth", 10, "Health a first aid kit gives when treating a body part")
+Config.Register("medical", "firstAidLimbHealth", 25, "Health a first aid kit gives when treating a body part")
 Config.Register("medical", "medkitLimbRepair", 40, "Damage and burns a medkit use removes from a body part")
 Config.Register("medical", "treatCooldown", 1.2, "Seconds between treatments from the H menu")
 Config.Register("medical", "viewRange", 120, "How close you must be to open someone's injury menu (units)")

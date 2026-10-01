@@ -97,3 +97,20 @@ end, -1000)
 Rhylib.Hook.Add("PlayerDisconnected", "armor.cleanup", function(ply)
     pending[ply] = nil
 end)
+
+-- Spawn armour: the job's armor field, else the config value. Set a tick
+-- late so the gamemode's own spawn code can't reset it.
+function A.SpawnArmor(ply)
+    local job = RPExtraTeams and RPExtraTeams[ply:Team()]
+    local n = job and tonumber(job.armor) or cfgNum("spawnArmor", 100)
+    return math.max(0, math.floor(n))
+end
+
+Rhylib.Hook.Add("PlayerSpawn", "armor.spawn", function(ply)
+    timer.Simple(0, function()
+        if not (IsValid(ply) and ply:Alive()) then return end
+        local n = A.SpawnArmor(ply)
+        if ply.SetMaxArmor then ply:SetMaxArmor(math.max(100, n)) end
+        ply:SetArmor(n)
+    end)
+end)

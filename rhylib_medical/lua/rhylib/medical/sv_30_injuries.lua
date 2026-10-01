@@ -277,11 +277,16 @@ Rhylib.Net.Receive("med.treat", function(ply)
     local t = inj[patient]
     local p = t and t[limb]
     local name = Med.LIMB_NAMES[limb]
-    if not p or (p.dmg <= 0 and p.bleed == 0 and not p.frac and p.burn <= 0) then
+    local medic = Med.IsMedic(ply)
+    -- Missing health can be treated on any part (limbs heal on their own, health doesn't).
+    local hurtHP = medic and patient:Health() < patient:GetMaxHealth()
+    if not hurtHP and (not p or (p.dmg <= 0 and p.bleed == 0 and not p.frac and p.burn <= 0)) then
         Med.Note(ply, name .. ": nothing to treat")
         return
     end
-    local medic = Med.IsMedic(ply)
+    if not p then
+        p = { dmg = 0, bleed = 0, frac = false, burn = 0 }
+    end
 
     if kind == Med.TREAT_FIRSTAID then
         if not medic then
@@ -298,7 +303,7 @@ Rhylib.Net.Receive("med.treat", function(ply)
     else
         -- Troopers can only stop bleeding; medics also heal damage and burns.
         local canBleed = p.bleed > 0
-        local canHeal = medic and (p.dmg > 0 or p.burn > 0)
+        local canHeal = medic and (p.dmg > 0 or p.burn > 0 or hurtHP)
         if not canBleed and not canHeal then
             Med.Note(ply, medic and "A medkit can't set bones; use a first aid kit" or "Only medics can treat that (medkits stop bleeding)")
             return

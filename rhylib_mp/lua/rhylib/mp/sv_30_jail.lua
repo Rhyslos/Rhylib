@@ -42,19 +42,23 @@ local function cells()
     return ents.FindByClass("rhylib_jail_cell")
 end
 
--- The cell with the fewest prisoners in it.
+-- A random cell, out of those with the fewest prisoners in them.
 local function freeCell()
     local list = cells()
     if #list == 0 then return nil end
-    local best, bestN
+    local pick, bestN = {}, nil
     for _, c in ipairs(list) do
         local n = 0
         for _, rec in pairs(jailed) do
             if rec.cell == c then n = n + 1 end
         end
-        if not best or n < bestN then best, bestN = c, n end
+        if not bestN or n < bestN then
+            pick, bestN = { c }, n
+        elseif n == bestN then
+            pick[#pick + 1] = c
+        end
     end
-    return best
+    return pick[math.random(#pick)]
 end
 
 local function stripToStowed(ply)

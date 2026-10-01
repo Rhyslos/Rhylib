@@ -240,6 +240,21 @@ Rhylib.Hook.Add("ScoreboardHide", "menus.scoreboard", function()
     return true
 end)
 
+-- Other scoreboards (FAdmin's, addons) also claim Tab and can win the
+-- race; ours is the only one.
+local function takeOver()
+    for _, ev in ipairs({ "ScoreboardShow", "ScoreboardHide" }) do
+        local t = hook.GetTable()[ev]
+        if t then
+            for id in pairs(t) do
+                if id ~= "Rhylib.Bus" then hook.Remove(ev, id) end
+            end
+        end
+    end
+end
+Rhylib.Hook.Add("InitPostEntity", "menus.scoreboard", takeOver)
+timer.Simple(5, takeOver)  -- in case of a Lua refresh
+
 -- Right-click while the scoreboard is up: free the mouse.
 Rhylib.Hook.Add("PlayerBindPress", "menus.scoreboard", function(_, bind, pressed)
     if pressed and IsValid(Menus.scoreboard) and Menus.scoreboard:IsVisible() and string.find(bind, "+attack2", 1, true) then
