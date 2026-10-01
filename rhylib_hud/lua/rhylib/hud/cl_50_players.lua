@@ -127,7 +127,7 @@ Rhylib.Hook.Add("PostDrawTranslucentRenderables", "hud.icons", function(depth, s
 
     for _, ply in ipairs(player.GetAll()) do
         if ply:Alive() and not ply:IsDormant() and (ply ~= me or me:ShouldDrawLocalPlayer()) then
-            local speaking, typing = ply:IsSpeaking(), ply:IsTyping()
+            local speaking, typing = ply:IsSpeaking(), ply:IsTyping() or ply:GetNW2Bool("rhylib_typing")  -- (the second: rhylib_chat)
             if (speaking or typing) and ply:GetPos():DistToSqr(eye) < rangeSqr then
                 local pos = headPos(ply) + UP28
                 cam.Start3D2D(pos, ang, 0.12)

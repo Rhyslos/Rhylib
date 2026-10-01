@@ -11,8 +11,10 @@
 
     Without rhylib_inventory: one box per weapon you hold, by weapon slot.
 
-    Number keys pick a slot, the scroll wheel steps through every weapon
-    on the bar, "lastinv" (Q by default) swaps to the previous one. The bar
+    Number keys pick a slot. An empty slot, or the slot you're already
+    holding, puts your gun away (the empty "Stowed" weapon). The scroll
+    wheel steps through every weapon on the bar, "lastinv" (Q by default)
+    swaps to the previous one. The bar
     is bright right after switching and fades back after a moment.
 
     The bar is rebuilt five times a second (or at once if a weapon on it
@@ -32,6 +34,8 @@ local nextBuild = 0
 local lastSwitch = 0
 local previous = nil
 
+local STOWED = "rhylib_stowed"
+
 local function inventory()
     local Inv = Rhylib.Inventory
     return Inv and Inv.HotbarItem and Rhylib.Items and Inv or nil
@@ -44,6 +48,12 @@ local function selectWeapon(wep)
     previous = active
     input.SelectWeapon(wep)
     lastSwitch = RealTime()
+end
+
+-- Put the gun away (hold the empty Stowed weapon), if the player has it.
+local function stow(ply)
+    local w = ply:GetWeapon(STOWED)
+    if IsValid(w) then selectWeapon(w) end
 end
 
 local function itemSub(inst, def)
@@ -92,7 +102,7 @@ local function rebuild(ply)
     for _, inst in pairs(Inv.byUid) do inInv[inst.id] = true end
     local over = {}
     for _, w in ipairs(weps) do
-        if IsValid(w) and not inInv[w:GetClass()] then over[#over + 1] = w end
+        if IsValid(w) and not inInv[w:GetClass()] and w:GetClass() ~= STOWED then over[#over + 1] = w end
     end
     if #over > 0 then
         local active = ply:GetActiveWeapon()
@@ -153,8 +163,12 @@ Rhylib.Hook.Add("PlayerBindPress", "hud.hotbar", function(ply, bind, pressed)
                 if w == active then pick = e.overflow[i % #e.overflow + 1] end
             end
             selectWeapon(pick)
-        elseif e.wep then
+        elseif e.wep and e.wep ~= active then
             selectWeapon(e.wep)
+        elseif inventory() and (e.empty or e.wep == active) then
+            -- Empty slot, or the gun you're already holding: put it away.
+            -- (Non-weapon items do nothing yet.)
+            stow(ply)
         end
     elseif isLast then
         if IsValid(previous) and previous:GetOwner() == ply then selectWeapon(previous) end
