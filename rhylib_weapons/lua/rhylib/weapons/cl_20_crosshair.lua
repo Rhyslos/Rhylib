@@ -12,7 +12,16 @@ W.Crosshair = W.Crosshair or {}
 local X = W.Crosshair
 
 X.hitTime = X.hitTime or 0
-X.hitHead = false
+X.hitKind = 0   -- 0 body, 1 head, 2 down/kill
+
+local HIT_SHOW = 0.25             -- seconds a hit marker shows (fading)
+local KILL_SHOW = 0.6
+local hitSound = CreateClientConVar("rhylib_hitsound", "1", true, false, "Play a sound when your bolt hits someone", 0, 1)
+local SOUNDS = {
+    [0] = { "buttons/lightswitch2.wav", 150, 0.45 },     -- body
+    [1] = { "buttons/lightswitch2.wav", 210, 0.6 },      -- head
+    [2] = { "buttons/blip1.wav", 120, 0.6 },             -- down / kill
+}
 
 local GAP = math.rad(14)          -- slit width
 local SIXTY = math.rad(60)
@@ -23,6 +32,7 @@ local LINE, OUTLINE = 2, 4        -- px at 1080p
 local colLine = Color(244, 244, 240)
 local colOutline = Color(0, 0, 0, 128)
 local colHead = Color(255, 90, 80)
+local colMark = Color(0, 0, 0)
 
 local verts = { { x = 0, y = 0 }, { x = 0, y = 0 }, { x = 0, y = 0 }, { x = 0, y = 0 } }
 
@@ -98,21 +108,47 @@ function X.Draw(wep, x, y)
     surface.SetDrawColor(colLine)
     drawShape(x, y, r, offsets, s, LINE * s)
 
-    -- Hit marker: four short ticks outside the ring for a moment.
-    if t - X.hitTime < 0.15 then
-        surface.SetDrawColor(X.hitHead and colHead or colLine)
-        local r0, r1 = r + 6 * s, r + 13 * s
+    -- Hit marker: four diagonal ticks around the ring, fading out. Head
+    -- hits are red; dropping someone shows a larger, longer red X.
+    local kill = X.hitKind == 2
+    local show = kill and KILL_SHOW or HIT_SHOW
+    local age = t - X.hitTime
+    if age < show then
+        local f = 1 - age / show
+        local base = X.hitKind == 0 and colLine or colHead
+        colMark.r, colMark.g, colMark.b, colMark.a = base.r, base.g, base.b, 255 * f
+        local grow = kill and (1 + 0.4 * (1 - f)) or 1
+        local r0 = (r + 5 * s) * grow
+        local r1 = r0 + (kill and 16 or 10) * s
+        local w = (kill and 3 or LINE) * s
         for k = 0, 3 do
             local a = math.rad(45 + 90 * k)
             local c, sn = math.cos(a), math.sin(a)
-            line(x + c * r0, y + sn * r0, x + c * r1, y + sn * r1, LINE * s)
+            surface.SetDrawColor(0, 0, 0, 128 * f)
+            line(x + c * r0, y + sn * r0, x + c * r1, y + sn * r1, w + 2 * s)
+            surface.SetDrawColor(colMark)
+            line(x + c * r0, y + sn * r0, x + c * r1, y + sn * r1, w)
         end
     end
 end
 
 Rhylib.Net.ReceiveBatch("wep.hit", function()
-    return net.ReadBool()
-end, function(head)
+    return net.ReadUInt(2)
+end, function(kind)
+    -- A kill marker isn't cut short by the next body hit.
+    if X.hitKind == 2 and CurTime() - X.hitTime < KILL_SHOW * 0.5 and kind < 2 then return end
     X.hitTime = CurTime()
-    X.hitHead = head
+    X.hitKind = kind
+    local snd = hitSound:GetBool() and SOUNDS[kind]
+    local me = LocalPlayer()
+    if snd and IsValid(me) then me:EmitSound(snd[1], 0, snd[2], snd[3], CHAN_STATIC) end  -- level 0: not positional
+end)
+
+-- In the settings menu (rhylib_menus).
+Rhylib.Hook.Add("InitPostEntity", "weapons.hitsound.setting", function()
+    local Menus = Rhylib.Menus
+    if Menus and Menus.AddSetting then
+        Menus.AddSetting("Weapons", { id = "wep.hitsound", order = 10, title = "Hit sounds",
+            desc = "A click when your bolt hits someone", kind = "toggle", convar = "rhylib_hitsound" })
+    end
 end)

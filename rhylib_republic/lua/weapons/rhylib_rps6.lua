@@ -41,6 +41,7 @@ SWEP.Primary = {
 }
 
 SWEP.FireRate = 60
+SWEP.Recoil = { up = 4.5, side = 0.8, bias = 0, recover = 0.85, aimMult = 0.8 }  -- view kick per shot
 SWEP.Damage = 0               -- all damage comes from the blast
 SWEP.BoltSpeed = 2200
 SWEP.BoltColor = 4            -- rocket look

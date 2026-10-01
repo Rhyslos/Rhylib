@@ -1,7 +1,10 @@
 Rhylib.Weapons = Rhylib.Weapons or {}
 
 local Config = Rhylib.Config
-Config.Register("weapons", "lagCompMax", 0.2, "Max seconds of ping covered by lag compensation on a bolt's first leg")
+Config.Register("weapons", "lagCompMax", 0.35, "Max seconds (ping + interpolation) covered by lag compensation on a bolt's first leg")
+Config.Register("weapons", "boltSpeedMult", 1.3, "Multiplies every gun's bolt speed (faster = less leading)")
+Config.Register("weapons", "recoilMult", 1, "Multiplies every gun's view recoil (SWEP.Recoil)")
+Config.Register("weapons", "firstShotMult", 0.35, "Spread of a first shot from rest, as a share of the normal cone")
 Config.Register("weapons", "shotRange", 6000, "Players further than this from a shot don't receive it")
 Config.Register("weapons", "boltLife", 1.2, "Seconds before a bolt that hit nothing disappears")
 Config.Register("weapons", "headMult", 2, "Damage multiplier for head hits")

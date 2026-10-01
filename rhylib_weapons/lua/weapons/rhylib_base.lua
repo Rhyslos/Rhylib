@@ -108,6 +108,10 @@ SWEP.InvLarge = false
 SWEP.InvWeight = 3                  -- kg
 
 -- Cone angles in degrees. See rhylib/weapons/sh_10_spread.lua.
+-- View recoil per shot (cl_50_recoil.lua): degrees up, random sideways,
+-- sideways lean (-1 left .. 1 right), share that settles back, aiming mult.
+SWEP.Recoil = { up = 0.6, side = 0.25, bias = 0, recover = 0.6, aimMult = 0.65 }
+
 SWEP.Spread = {
     hip = 1.4,              -- resting cone, hip-fire
     aim = 0.7,              -- resting cone, aiming
@@ -363,8 +367,12 @@ function SWEP:FireShot()
     -- off, for guns whose hold type's gesture looks wrong).
     if self.PlayerFireAnim ~= false then owner:SetAnimation(PLAYER_ATTACK1) end
 
-    if owner:IsPlayer() then
-        owner:ViewPunch(Angle(-0.3, util.SharedRandom("rhylib.punch", -0.15, 0.15), 0))
+    -- Recoil turns the real aim (not ViewPunch, which moved the screen
+    -- centre off the aim). Singleplayer has no client prediction.
+    if CLIENT and IsFirstTimePredicted() then
+        Rhylib.Weapons.Recoil.Kick(self)
+    elseif SERVER and game.SinglePlayer() then
+        self:CallOnClient("RhylibRecoilKick")
     end
 
     local origin = owner:GetShootPos()
@@ -391,6 +399,10 @@ function SWEP:FireGrapple()
         end
     end
     if SERVER then G.Fire(owner, self) end
+end
+
+function SWEP:RhylibRecoilKick()
+    if CLIENT then Rhylib.Weapons.Recoil.Kick(self) end
 end
 
 function SWEP:SecondaryAttack()

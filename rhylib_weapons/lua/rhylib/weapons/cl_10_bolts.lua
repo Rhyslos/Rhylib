@@ -4,8 +4,9 @@
     Bolts come from two places:
       - your own shots, spawned instantly by the weapon's predicted PrimaryAttack
       - other players' shots, from the batched "wep.shot" message
-    Each bolt starts at the muzzle and blends onto its true path within a
-    few frames, so it looks right and still ends where the server's bolt does.
+    The real bolt flies from the eyes. The visual flies in a straight line
+    from the muzzle to where that eye line ends (the impact, or its far
+    end), so it never bends and lands exactly where the shot lands.
 ]]
 
 local W = Rhylib.Weapons
@@ -25,8 +26,6 @@ local STYLES = {
 }
 local COL_HOOK = Color(58, 60, 62)
 local HOOK_MINS, HOOK_MAXS = Vector(-6.75, -1.5, -1.5), Vector(2.25, 1.5, 1.5)
-
-local BLEND_TIME = 0.08
 
 local matBeam = Material("trails/laser")
 local matGlow = Material("sprites/light_glow02_add")
@@ -75,18 +74,26 @@ function Bolts.Spawn(shooter, origin, dir, speed, colorIndex)
     traceData.filter = IsValid(shooter) and shooter or nil
     util.TraceLine(traceData)
     local tr = traceResult
+    local finish = Vector(tr.HitPos)
+    -- Straight from the muzzle to the end of the real path.
+    local path = finish - muzzle
+    local len = path:Length()
+    if len < 1 then
+        muzzle, path, len = Vector(origin), Vector(dir), tr.Fraction * range
+    else
+        path:Div(len)
+    end
     Bolts.visual[#Bolts.visual + 1] = {
         shooter = shooter,
-        origin = Vector(origin),
-        pos = Vector(origin),
-        dir = Vector(dir),
+        origin = muzzle,
+        pos = Vector(muzzle),
+        dir = path,
         speed = speed,
         style = style,
-        offset = muzzle - origin,
         born = CurTime(),
         travelled = 0,
-        hitDist = tr.Hit and tr.Fraction * range or nil,
-        hitPos = tr.Hit and Vector(tr.HitPos) or nil,
+        hitDist = tr.Hit and len or nil,
+        hitPos = tr.Hit and finish or nil,
         hitNormal = tr.Hit and Vector(tr.HitNormal) or nil,
         hitEnt = tr.Hit and tr.Entity or nil,
     }
@@ -94,7 +101,9 @@ end
 
 -- Called by the weapon on the shooter's own client (first prediction only).
 function Bolts.FireLocal(owner, weapon, origin, dir)
-    Bolts.Spawn(owner, origin, dir, weapon.BoltSpeed, weapon.BoltColor or 1)
+    local speed = weapon.BoltSpeed or 7000
+    if not weapon.Explosive then speed = speed * (Rhylib.Config.Get("weapons", "boltSpeedMult") or 1) end
+    Bolts.Spawn(owner, origin, dir, speed, weapon.BoltColor or 1)
 end
 
 Rhylib.Net.ReceiveBatch("wep.shot", function()
@@ -187,9 +196,8 @@ Rhylib.Hook.Add("PostDrawTranslucentRenderables", "weapons.bolts", function(dept
             render.DrawBox(b.pos, b.dir:Angle(), HOOK_MINS, HOOK_MAXS, COL_HOOK)
             render.SetMaterial(matBeam)
         elseif st and st.length > 0 then
-            local blend = math.max(0, 1 - (now - b.born) / BLEND_TIME)
-            local p, o, d = b.pos, b.offset, b.dir
-            head:SetUnpacked(p.x + o.x * blend, p.y + o.y * blend, p.z + o.z * blend)
+            local p, d = b.pos, b.dir
+            head:Set(p)
             local len = math.min(st.length, b.travelled + 1)
             tail:SetUnpacked(head.x - d.x * len, head.y - d.y * len, head.z - d.z * len)
             render.DrawBeam(tail, head, st.width, 0, 1, st.color)
@@ -200,10 +208,7 @@ Rhylib.Hook.Add("PostDrawTranslucentRenderables", "weapons.bolts", function(dept
         local b = list[i]
         local st = b.style
         if st and not st.hook and st.glow > 0 then
-            local blend = math.max(0, 1 - (now - b.born) / BLEND_TIME)
-            local p, o = b.pos, b.offset
-            head:SetUnpacked(p.x + o.x * blend, p.y + o.y * blend, p.z + o.z * blend)
-            render.DrawSprite(head, st.glow, st.glow, st.color)
+            render.DrawSprite(b.pos, st.glow, st.glow, st.color)
         end
     end
     -- Stun rings: a circle facing the camera, pulsing a little.
@@ -212,11 +217,8 @@ Rhylib.Hook.Add("PostDrawTranslucentRenderables", "weapons.bolts", function(dept
         local b = list[i]
         local st = b.style
         if st and st.ring then
-            local blend = math.max(0, 1 - (now - b.born) / BLEND_TIME)
-            local p, o = b.pos, b.offset
-            head:SetUnpacked(p.x + o.x * blend, p.y + o.y * blend, p.z + o.z * blend)
             local r = st.ring * (1 + 0.15 * math.sin(now * 30))
-            render.DrawSprite(head, r, r, st.color)
+            render.DrawSprite(b.pos, r, r, st.color)
         end
     end
 end)

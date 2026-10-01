@@ -27,6 +27,7 @@ Spread.KICK_TAU = 0.12       -- per-arc kick decay, seconds
 Spread.BLOOM_TAU = 0.45      -- shared bloom decay, seconds
 Spread.STREAK_WINDOW = 0.6   -- seconds between same-arc shots to keep a streak
 Spread.STREAK_MAX = 4
+Spread.REST_TIME = 0.35      -- seconds without firing before the next shot counts as "from rest"
 
 -- Packing: Recoil = three kicks, 10 bits each (0.01 degree steps, up to
 -- 10.23); RecoilB = bloom 10 bits (0.005 steps, up to 5.115), streak
@@ -121,10 +122,17 @@ end
     Returns the direction and the screen angle the shot went to.
 ]]
 function Spread.ShotDirection(wep, aimAng, index)
-    local cone = Spread.MeanCone(wep, CurTime())
+    local now = CurTime()
+    local cone = Spread.MeanCone(wep, now)
+    -- A first shot from rest goes (almost) where the chevron points.
+    if now - wep:GetKickTime() > Spread.REST_TIME then
+        cone = cone * (Rhylib.Config.Get("weapons", "firstShotMult") or 1)
+    end
     local a = util.SharedRandom("rhylib.spread.a", 0, 2 * math.pi, index or 0)
     local u = util.SharedRandom("rhylib.spread.r", 0, 1, index or 0)
-    local off = math.tan(math.rad(cone) * math.sqrt(u) * 0.95)
+    -- Centre-weighted (radius = u, not sqrt(u)): most shots land near the
+    -- middle, a few reach the edge of the circle.
+    local off = math.tan(math.rad(cone) * u * 0.95)
 
     local dir = aimAng:Forward() + aimAng:Right() * (math.cos(a) * off) - aimAng:Up() * (math.sin(a) * off)
     dir:Normalize()

@@ -17,5 +17,6 @@ SWEP.Damage = 0
 SWEP.BoltSpeed = 2600
 SWEP.BoltColor = 6
 SWEP.FireRate = 90           -- one ring every 2/3 s
+SWEP.Recoil = { up = 0.5, side = 0.15, bias = 0, recover = 0.8, aimMult = 0.7 }  -- view kick per shot
 SWEP.FireModes = { "semi" }
 SWEP.FireSound = "weapons/stunstick/spark1.wav"

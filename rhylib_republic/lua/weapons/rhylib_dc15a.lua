@@ -45,6 +45,7 @@ SWEP.Secondary = {
 }
 
 SWEP.FireRate = 400
+SWEP.Recoil = { up = 0.9, side = 0.2, bias = 0.15, recover = 0.7, aimMult = 0.6 }  -- view kick per shot
 SWEP.Damage = 35
 SWEP.BoltSpeed = 8000
 SWEP.BoltColor = 1

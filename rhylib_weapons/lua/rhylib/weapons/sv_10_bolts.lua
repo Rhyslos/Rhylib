@@ -40,8 +40,10 @@ local function writeShot(s)
     net.WriteUInt(s.color, 4)
 end
 
+-- Hit confirm to the shooter: 0 body, 1 head, 2 down/kill.
+Bolts.HIT_BODY, Bolts.HIT_HEAD, Bolts.HIT_KILL = 0, 1, 2
 local hitBatch = Rhylib.Net.CreateBatch("wep.hit", function(h)
-    net.WriteBool(h.head)
+    net.WriteUInt(h.kind, 2)
 end)
 
 local LIMBS = {
@@ -114,12 +116,19 @@ local function applyHit(bolt, tr)
     dmg:SetDamagePosition(tr.HitPos)
     dmg:SetDamageForce(bolt.dir * bolt.damage * 60)
     -- Which body part was hit (rhylib_medical reads it during the hit).
+    local living = ent:IsPlayer() or ent:IsNPC() or ent:IsNextBot()
+    local wasDown = ent.rhylibDown
     if ent:IsPlayer() then ent.rhylibHitGroup = tr.HitGroup end
     ent:TakeDamageInfo(dmg)
     if ent:IsPlayer() then ent.rhylibHitGroup = nil end
 
-    if IsValid(owner) and owner:IsPlayer() and (ent:IsPlayer() or ent:IsNPC() or ent:IsNextBot()) then
-        hitBatch:Send(owner, { head = tr.HitGroup == HITGROUP_HEAD })
+    if IsValid(owner) and owner:IsPlayer() and living then
+        local kind = tr.HitGroup == HITGROUP_HEAD and Bolts.HIT_HEAD or Bolts.HIT_BODY
+        -- Dropped them: killed, or downed (rhylib_medical).
+        if ent:Health() <= 0 or (ent:IsPlayer() and not ent:Alive()) or (ent.rhylibDown and not wasDown) then
+            kind = Bolts.HIT_KILL
+        end
+        hitBatch:Send(owner, { kind = kind })
     end
 end
 
@@ -197,8 +206,28 @@ Rhylib.Hook.Add("Tick", "weapons.shots.flush", flushShots, 990)
 -- Called from the weapon's PrimaryAttack on the server.
 -- opts (optional): speed, color, life, onHit(bolt, tr), onExpire(bolt)
 -- override the weapon's own bolt settings (used by the grapple hook).
+-- A gun's bolt speed (rockets and special bolts aren't scaled).
+function Bolts.Speed(weapon)
+    local s = weapon.BoltSpeed or 7000
+    if weapon.Explosive then return s end
+    return s * (Config.Get("weapons", "boltSpeedMult") or 1)
+end
+
+-- Seconds the shooter's view lags behind the server: ping plus their
+-- interpolation delay (what LagCompensation rewinds). Cached per player.
+local function viewLag(ply)
+    local now = CurTime()
+    if not ply.rhylibLerpAt or now > ply.rhylibLerpAt then
+        ply.rhylibLerpAt = now + 5
+        local interp = ply:GetInfoNum("cl_interp", 0.1)
+        local ratio, rate = ply:GetInfoNum("cl_interp_ratio", 2), math.max(ply:GetInfoNum("cl_updaterate", 33), 1)
+        ply.rhylibLerp = math.Clamp(math.max(interp, ratio / rate), 0, 0.2)
+    end
+    return ply:Ping() / 1000 + (ply.rhylibLerp or 0.1)
+end
+
 function Bolts.Fire(owner, weapon, origin, dir, damage, opts)
-    local speed = opts and opts.speed or weapon.BoltSpeed
+    local speed = opts and opts.speed or Bolts.Speed(weapon)
     local bolt = {
         owner = owner,
         weapon = weapon,
@@ -216,7 +245,9 @@ function Bolts.Fire(owner, weapon, origin, dir, damage, opts)
     sendShot(owner, opts and opts.color or weapon.BoltColor or 1, origin, dir, speed)
 
     local isPly = owner:IsPlayer()
-    local lag = isPly and math.min(owner:Ping() / 1000, Config.Get("weapons", "lagCompMax")) or 0
+    -- The first leg covers what the shooter saw: the bolt's flight during
+    -- their ping and interpolation, against players where they saw them.
+    local lag = isPly and math.min(viewLag(owner), Config.Get("weapons", "lagCompMax")) or 0
     local firstLeg = speed * math.max(lag, engine.TickInterval())
 
     if isPly then owner:LagCompensation(true) end
