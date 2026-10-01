@@ -220,6 +220,33 @@ function Inv.RequestDrop(inst, single)
     net.SendToServer()
 end
 
+function Inv.RequestGive(inst, single, target)
+    Rhylib.Net.Start("inv.give")
+    net.WriteUInt(inst.uid, Items.UID_BITS)
+    net.WriteBool(single or false)
+    net.WriteEntity(target)
+    net.SendToServer()
+end
+
+-- Hold a hotbar item (def.hand) in your hand.
+function Inv.RequestHold(uid)
+    Rhylib.Net.Start("inv.hold")
+    net.WriteUInt(uid, Items.UID_BITS)
+    net.SendToServer()
+end
+
+-- The player you're looking at, close enough to give to (or nil).
+function Inv.GiveTarget()
+    local ply = LocalPlayer()
+    local r = Rhylib.Config.Get("inventory", "giveRange") or 130
+    local tr = util.TraceHull({
+        start = ply:EyePos(), endpos = ply:EyePos() + ply:GetAimVector() * r,
+        filter = ply, mins = Vector(-6, -6, -6), maxs = Vector(6, 6, 6), mask = MASK_SHOT_HULL,
+    })
+    local e = tr.Entity
+    if IsValid(e) and e:IsPlayer() and e:Alive() then return e end
+end
+
 function Inv.RequestUse(inst)
     Rhylib.Net.Start("inv.use")
     net.WriteUInt(inst.uid, Items.UID_BITS)

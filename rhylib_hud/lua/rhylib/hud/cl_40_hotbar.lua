@@ -92,7 +92,14 @@ local function rebuild(ply)
         local def = inst and Items.Get(inst.id)
         if def then
             local wep = def.weapon and ply:GetWeapon(def.weapon)
-            entries[k] = { key = k, wep = IsValid(wep) and wep or nil, name = def.name, sub = itemSub(inst, def) }
+            local hold
+            if def.hand then
+                -- Held with the hand weapon (rhylib_inventory): active when it holds this item.
+                hold = inst.uid
+                local hw = ply:GetWeapon(Rhylib.Inventory.HAND or "rhylib_hand")
+                wep = (IsValid(hw) and ply:GetNW2Int("rhylib_handUid", 0) == inst.uid) and hw or nil
+            end
+            entries[k] = { key = k, wep = IsValid(wep) and wep or nil, hold = hold, name = def.name, sub = itemSub(inst, def) }
         else
             entries[k] = { key = k, empty = true }
         end
@@ -102,8 +109,9 @@ local function rebuild(ply)
     local inInv = {}
     for _, inst in pairs(Inv.byUid) do inInv[inst.id] = true end
     local over = {}
+    local HAND = Rhylib.Inventory.HAND or "rhylib_hand"
     for _, w in ipairs(weps) do
-        if IsValid(w) and not inInv[w:GetClass()] and w:GetClass() ~= STOWED then over[#over + 1] = w end
+        if IsValid(w) and not inInv[w:GetClass()] and w:GetClass() ~= STOWED and w:GetClass() ~= HAND then over[#over + 1] = w end
     end
     if #over > 0 then
         local active = ply:GetActiveWeapon()
@@ -123,7 +131,9 @@ end
 local function cycleList()
     local list = {}
     for _, e in ipairs(entries) do
-        if e.overflow then
+        if e.hold then
+            -- Held items (magazines) are picked with their slot key only.
+        elseif e.overflow then
             for _, w in ipairs(e.overflow) do list[#list + 1] = w end
         elseif e.wep then
             list[#list + 1] = e.wep
@@ -157,7 +167,11 @@ Rhylib.Hook.Add("PlayerBindPress", "hud.hotbar", function(ply, bind, pressed)
     if slot then
         local e = entries[tonumber(slot)]
         if not e then return true end
-        if e.overflow then
+        if e.hold and e.wep ~= active then
+            -- An item you hold in your hand (magazines, cells).
+            Rhylib.Inventory.RequestHold(e.hold)
+            previous = active
+        elseif e.overflow then
             -- Cycle through the overflow weapons.
             local pick = e.overflow[1]
             for i, w in ipairs(e.overflow) do

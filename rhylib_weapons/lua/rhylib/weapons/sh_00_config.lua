@@ -76,6 +76,7 @@ if Rhylib.Items then
             weight = m.weight,
             category = "ammo",
             model = m.model,
+            hand = true,   -- can be held from the hotbar and handed out (rhylib_hand)
         })
     end
     Rhylib.Items.Register("cell", {
@@ -86,6 +87,7 @@ if Rhylib.Items then
         weight = W.CELL_WEIGHT,
         category = "ammo",
         model = "models/items/battery.mdl",
+        hand = true,
     })
 end
 

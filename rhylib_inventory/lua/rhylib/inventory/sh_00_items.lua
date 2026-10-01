@@ -149,6 +149,7 @@ Items.Register("backpack", {
 
 local Config = Rhylib.Config
 Config.Register("inventory", "baseCarry", 20, "Carry cap in kg without a backpack")
+Config.Register("inventory", "giveRange", 130, "How close you must be to give someone an item")
 Config.Register("inventory", "backpackWeightMult", 0.7, "Items inside a backpack count at this fraction of their weight")
 
 -- state: { cont = { [cid] = { items } } }. Returns weight, cap in kg.
@@ -248,7 +249,9 @@ end
 function Items.SameIssued(a, b)
     local ia = a.data and a.data.issued and true or false
     local ib = b.data and b.data.issued and true or false
-    return ia == ib
+    local la = a.data and a.data.loadout and true or false
+    local lb = b.data and b.data.loadout and true or false
+    return ia == ib and la == lb   -- (job loadout gear keeps to itself too)
 end
 
 --------------------------------------------------------------------------
@@ -346,3 +349,8 @@ function Items.ReadInstance()
     if def and def.fill then data.fill = net.ReadUInt(8) / 255 end
     return { uid = uid, c = c, id = def and def.id, x = x, y = y, rot = rot, count = count, data = data, hb = hb > 0 and hb or nil }
 end
+
+-- The "item in your hand" weapon (lua/weapons/rhylib_hand.lua): hotbar
+-- items with def.hand (magazines, cells) are held with it.
+Rhylib.Inventory = Rhylib.Inventory or {}
+Rhylib.Inventory.HAND = "rhylib_hand"

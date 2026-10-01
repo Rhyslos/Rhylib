@@ -40,6 +40,7 @@ Config.Register("inventory", "width", 5, "Personal inventory width in cells")
 Config.Register("inventory", "height", 3, "Personal inventory height in cells")
 Config.Register("inventory", "saveInterval", 2, "Seconds between saves of changed inventories")
 Config.Register("inventory", "worldItemLife", 600, "Seconds before a dropped item on the ground is removed (0 = never)")
+Config.Register("inventory", "issuedDropLife", 300, "Seconds before dropped issued (armoury) gear is removed")
 Config.Register("inventory", "worldItemMax", 300, "Most dropped items on the ground at once; the oldest goes first")
 Config.Register("inventory", "worldItemPerPlayer", 15, "Most dropped items one player can have on the ground; their oldest goes first")
 Config.Register("inventory", "autoHotbar", true, "New weapons go into the first free hotbar slot")
@@ -76,9 +77,9 @@ local function captureWeapon(ply, inst)
     if not def or not def.weapon then return end
     local wep = ply:GetWeapon(def.weapon)
     if IsValid(wep) and wep.GetInventoryData then
-        local issued = inst.data and inst.data.issued
+        local issued, loadout = inst.data and inst.data.issued, inst.data and inst.data.loadout
         inst.data = wep:GetInventoryData() or inst.data
-        inst.data.issued = issued  -- keep the armoury mark
+        inst.data.issued, inst.data.loadout = issued, loadout  -- keep the armoury / job marks
     end
 end
 
@@ -465,12 +466,13 @@ end
 -- Adds an item, and drops whatever doesn't fit at the player's feet.
 function Inv.AddOrDrop(ply, id, count, data)
     local left = Inv.AddItem(ply, id, count, data)
-    -- Issued gear never lands on the ground: what doesn't fit is handed back.
-    if left > 0 and not (data and data.issued) then Inv.SpawnWorldItem(ply, id, left, data) end
+    -- (Issued gear on the ground despawns sooner: rhylib_world_item.)
+    if left > 0 then Inv.SpawnWorldItem(ply, id, left, data) end
 end
 
 -- single: drop just one off a stack (ctrl + drag out of the window).
 function Inv.Drop(ply, uid, single)
+    if Inv.Locked(ply) then return end
     local st = Inv.Get(ply)
     local inst = st.byUid[uid]
     if not inst then return end
@@ -479,18 +481,26 @@ function Inv.Drop(ply, uid, single)
         return
     end
     local n = (single and inst.count > 1) and 1 or inst.count
-    local issued = inst.data and inst.data.issued
-    if not issued then
-        captureWeapon(ply, inst)
-        if not IsValid(Inv.SpawnWorldItem(ply, inst.id, n, inst.data)) then return end
+    -- Job loadout gear just vanishes (or die/respawn would farm it).
+    if inst.data and inst.data.loadout then
+        if n < inst.count then
+            inst.count = inst.count - n
+            update(ply, st, inst)
+        else
+            removeInst(ply, st, uid)
+        end
+        Inv.Note(ply, "Job gear handed back")
+        return
     end
+    -- Issued gear drops too (someone may need it), but despawns after a while.
+    captureWeapon(ply, inst)
+    if not IsValid(Inv.SpawnWorldItem(ply, inst.id, n, inst.data)) then return end
     if n < inst.count then
         inst.count = inst.count - n
         update(ply, st, inst)
     else
         removeInst(ply, st, uid)
     end
-    if issued then Inv.Note(ply, "Issued gear handed back") end  -- never lands on the ground
 end
 
 -- Moves one item off a stack to x, y (ctrl + drag).
@@ -584,6 +594,7 @@ function Inv.SetHotbar(ply, uid, n)
             -- Taken off the hotbar while in your hands: put it away.
             local def = Items.defs[o.id]
             if def and def.weapon and IsValid(active) and active:GetClass() == def.weapon then Inv.Stow(ply) end
+            if IsValid(active) and active:GetClass() == Inv.HAND and ply:GetNW2Int("rhylib_handUid", 0) == o.uid then Inv.Stow(ply) end
         end
     end
     local inst = st.byUid[uid]
@@ -854,15 +865,20 @@ Rhylib.Hook.Add("PlayerCanPickupWeapon", "inventory.pickup", function(ply, wep)
         return false
     end
 
-    -- Given by the job loadout at spawn: issued, so it vanishes when
-    -- dropped (no "drop kits, die, respawn" farming).
+    -- Given by the job loadout at spawn: marked loadout, so it vanishes
+    -- when dropped and can't be given or stored (no "drop kits, die,
+    -- respawn" farming).
     local loadout = ply.rhylibSpawnTick and engine.TickCount() - ply.rhylibSpawnTick <= 2
     wep.rhylibClaimed = true
     timer.Simple(0, function()
-        if IsValid(wep) then wep:Remove() end
-        if not IsValid(ply) then return end
-        if Inv.AddItem(ply, class, 1, loadout and { issued = true } or {}) == 0 then
+        if not IsValid(ply) or not IsValid(wep) then return end
+        -- Add first; the weapon only leaves the ground if it really went in
+        -- (the inventory may have filled up during this tick).
+        if Inv.AddItem(ply, class, 1, loadout and { issued = true, loadout = true } or {}) == 0 then
+            wep:Remove()
             hook.Run("Rhylib.InventoryWeaponPickup", ply, class)
+        else
+            wep.rhylibClaimed = nil
         end
     end)
     return false
@@ -885,7 +901,7 @@ end)
 -- on death): the item stays in the inventory, so that would duplicate it.
 -- Drop from the inventory window instead.
 Rhylib.Hook.Add("canDropWeapon", "inventory.nodrop", function(ply, wep)
-    if IsValid(wep) and Items.defs[wep:GetClass()] then return false end
+    if IsValid(wep) and (Items.defs[wep:GetClass()] or wep:GetClass() == Inv.HAND or wep:GetClass() == Inv.STOWED) then return false end
 end)
 
 Rhylib.Hook.Add("PlayerDroppedWeapon", "inventory.nodrop", function(ply, wep)
@@ -896,9 +912,9 @@ Rhylib.Hook.Add("PlayerDroppedWeapon", "inventory.nodrop", function(ply, wep)
     if wep.GetInventoryData then
         for _, inst in pairs(Inv.Get(ply).byUid) do
             if inst.id == class then
-                local issued = inst.data and inst.data.issued
+                local issued, loadout = inst.data and inst.data.issued, inst.data and inst.data.loadout
                 inst.data = wep:GetInventoryData() or inst.data
-                inst.data.issued = issued
+                inst.data.issued, inst.data.loadout = issued, loadout
                 break
             end
         end

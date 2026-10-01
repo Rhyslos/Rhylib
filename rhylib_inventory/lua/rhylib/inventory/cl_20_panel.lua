@@ -644,7 +644,7 @@ function PANEL:PaintTooltip()
     if def.carry then lines[#lines + 1] = "+" .. def.carry .. " kg carry cap when worn" end
     if def.grid then lines[#lines + 1] = "Adds " .. def.grid[1] .. " x " .. def.grid[2] .. " cells when worn" end
     if def.large then lines[#lines + 1] = "Too large for a backpack" end
-    if inst.data and inst.data.issued then lines[#lines + 1] = "Issued: handed back if dropped" end
+    if inst.data and inst.data.issued then lines[#lines + 1] = "Issued: if dropped, disappears after 5 minutes" end
     if inst.c == EXT and Inv.ext and Inv.ext.depot then lines[#lines + 1] = "Endless supply, drag to take (Ctrl: just one)" end
     if inst.hb then
         lines[#lines + 1] = "On the hotbar (" .. inst.hb .. ")"
@@ -738,6 +738,16 @@ function PANEL:OnMousePressed(code)
         end
         if def and def.slot == "back" and inst.c ~= SLOT_BACK then
             menu:AddOption("Wear", function() Inv.RequestMove(inst, SLOT_BACK, 0, 0, false) end)
+        end
+        -- Give to the player you're looking at (look at them, then open the inventory).
+        local target = Inv.GiveTarget()
+        if target then
+            if inst.count > 1 then
+                menu:AddOption("Give 1 to " .. target:Nick(), function() Inv.RequestGive(inst, true, target) end)
+                menu:AddOption("Give all to " .. target:Nick(), function() Inv.RequestGive(inst, false, target) end)
+            else
+                menu:AddOption("Give to " .. target:Nick(), function() Inv.RequestGive(inst, false, target) end)
+            end
         end
         menu:AddOption("Drop", function() Inv.RequestDrop(inst) end)
         menu:Open()

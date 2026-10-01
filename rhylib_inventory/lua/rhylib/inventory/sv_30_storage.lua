@@ -333,6 +333,11 @@ function Inv.Deposit(ply, uid, x, y, rot, single)
     end
 
     -- Grid storage: merge onto a matching stack, or place at x, y.
+    if inst.data and inst.data.loadout then
+        Inv.Note(ply, "Job gear can't be stored")
+        I.sendSet(ply, st, inst)
+        return
+    end
     I.captureWeapon(ply, inst)
     -- (uid -1: your item's uid means nothing inside the storage)
     local probe = { uid = -1, id = inst.id, count = n, data = inst.data }

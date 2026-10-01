@@ -42,8 +42,12 @@ if SERVER then
         self:SetItemName(def and def.name or "Unknown item")
         self:SetItemCount(self.itemCount or 1)
 
-        -- Dropped items don't pile up forever.
+        -- Dropped items don't pile up forever; issued (armoury) gear goes sooner.
         local life = Rhylib.Config.Get("inventory", "worldItemLife") or 0
+        if self.itemData and self.itemData.issued then
+            local il = Rhylib.Config.Get("inventory", "issuedDropLife") or 300
+            if il > 0 then life = life > 0 and math.min(life, il) or il end
+        end
         if life > 0 then SafeRemoveEntityDelayed(self, life) end
     end
 
