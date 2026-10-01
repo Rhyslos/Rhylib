@@ -68,7 +68,9 @@ end
 -- sid: the sender's SteamID64, for the avatar (nil for system lines).
 function Chat.Add(segs, sid)
     local lines = Chat.lines
-    lines[#lines + 1] = { time = RealTime(), segs = segs, sid = sid }
+    -- The sender's model now, for their portrait (falls back to the Steam avatar).
+    local p = sid and player.GetBySteamID64(sid)
+    lines[#lines + 1] = { time = RealTime(), segs = segs, sid = sid, model = IsValid(p) and p:GetModel() or nil }
     if #lines > MAX_LINES then table.remove(lines, 1) end
     if Chat.scroll > 0 then Chat.scroll = Chat.scroll + 1 end  -- keep the view still while scrolled up
 end
@@ -392,12 +394,16 @@ local function drawMessages(x, y, w, h, font, lineH, open, widthAt)
                     text(part[2], x + ind + part[3], yy, part[1], alpha)
                 end
                 if k == 1 and msg.sid and alpha > 20 then
-                    local av = avatarFor(msg.sid)
-                    av:SetAlpha(alpha)
-                    av:SetPos(x, yy + 1)
-                    av:SetSize(avSize, avSize)
-                    av:PaintManual()
-                    surface.SetFont(font)  -- (painting the avatar may change it)
+                    if msg.model and UI.DrawPortrait then
+                        UI.DrawPortrait(msg.model, x, yy + 1, avSize, alpha)
+                    else
+                        local av = avatarFor(msg.sid)
+                        av:SetAlpha(alpha)
+                        av:SetPos(x, yy + 1)
+                        av:SetSize(avSize, avSize)
+                        av:PaintManual()
+                    end
+                    surface.SetFont(font)  -- (painting may change it)
                 end
             end
         end
@@ -409,8 +415,8 @@ local function metrics(visor)
     local s = ScrH() / 1080
     return {
         s = s,
-        font = UI.Font(visor and 14 or 15),
-        lineH = math.floor((visor and 17 or 19) * s),
+        font = UI.Font(visor and 17 or 18),
+        lineH = math.floor((visor and 21 or 23) * s),
         header = visor and 0 or math.floor(20 * s),  -- the visor chat has no header bar (its top is the curve)
         inputH = math.floor((visor and 24 or 28) * s),
         pad = math.floor(7 * s),
