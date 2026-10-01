@@ -191,21 +191,24 @@ Rhylib.Hook.Add("CalcView", "thirdperson.camera", function(ply, pos, angles, fov
     local side = Lerp(f, HIP.side, AIM.side) * TP.side
     local up = Lerp(f, HIP.up, AIM.up)
 
-    -- Camera height above the feet. The real eye height drops almost at
-    -- once when you crouch, while the crouch raise used to fade in after
-    -- it, so the camera dipped and came back up. Instead, glide straight
-    -- from the standing height to the crouched height (plus the raise).
-    -- Moving while crouched, the crouch-walk animation lifts the arms into
-    -- view, so the camera sits part of the way back up (crouchmove).
+    -- Camera height above the feet. It follows the engine's own crouch
+    -- (the eye height as it moves between standing and crouched), so the
+    -- camera goes down exactly as fast as you crouch, with no extra lag.
+    -- The crouch raise (so the camera clears the arms) is blended in by
+    -- how far down you are, so there's no dip. Moving while crouched, the
+    -- crouch-walk animation lifts the arms into view, so the camera sits
+    -- part of the way back up (crouchmove).
     local standH = ply:GetViewOffset().z
-    local wantH = standH
-    if ply:Crouching() then
-        wantH = ply:GetViewOffsetDucked().z + crouchVar:GetFloat()
-        if ply:GetVelocity():Length2DSqr() > 400 then
-            wantH = Lerp(crouchMoveVar:GetFloat(), wantH, standH)
-        end
+    local duckH = ply:GetViewOffsetDucked().z
+    local eyeH = ply:GetCurrentViewOffset().z
+    local frac = standH > duckH and math.Clamp((standH - eyeH) / (standH - duckH), 0, 1) or 0
+    local lowH = duckH + crouchVar:GetFloat()
+    if frac > 0 and ply:GetVelocity():Length2DSqr() > 400 then
+        lowH = Lerp(crouchMoveVar:GetFloat(), lowH, standH)
     end
-    TP.camHeight = TP.camHeight and TP.camHeight + (wantH - TP.camHeight) * (1 - math.exp(-ft * 10)) or wantH
+    local wantH = Lerp(frac, standH, lowH)
+    -- Only a light smoothing, to take the edge off the crouch-walk switch.
+    TP.camHeight = TP.camHeight and TP.camHeight + (wantH - TP.camHeight) * (1 - math.exp(-ft * 25)) or wantH
 
     local ang = TP.camAng
     local eye = ply:GetPos() + Vector(0, 0, TP.camHeight)
