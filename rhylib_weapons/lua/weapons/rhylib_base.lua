@@ -139,16 +139,15 @@ SWEP.PropMuzzle = Vector(0, 0, 0)   -- muzzle point in the prop's own coordinate
 local RELOAD_NONE, RELOAD_MAG, RELOAD_CELL = 0, 1, 2
 
 function SWEP:SetupDataTables()
-    self:NetworkVar("Float", 0, "Bloom")
-    self:NetworkVar("Float", 1, "Kick1")
-    self:NetworkVar("Float", 2, "Kick2")
-    self:NetworkVar("Float", 3, "Kick3")
+    -- The three arc kicks (Recoil) and bloom, streak and last arc
+    -- (RecoilB), packed into two Ints (see sh_10_spread.lua), so a shot
+    -- changes 3 network vars instead of 7.
+    self:NetworkVar("Int", 7, "Recoil")
+    self:NetworkVar("Int", 0, "RecoilB")
     self:NetworkVar("Float", 4, "KickTime")
     self:NetworkVar("Float", 5, "ReloadEnd")
     self:NetworkVar("Float", 6, "Cell")
     self:NetworkVar("Float", 7, "SpinStart")   -- when the barrels started spinning, 0 = not spinning
-    self:NetworkVar("Int", 0, "Streak")
-    self:NetworkVar("Int", 1, "LastArc")
     self:NetworkVar("Int", 2, "ReloadKind")
     self:NetworkVar("Int", 3, "FireMode")
     self:NetworkVar("Int", 4, "BurstLeft")
@@ -528,20 +527,24 @@ if SERVER then
 
         if kind == RELOAD_MAG then
             local m = W.MagByIndex[self:GetReloadMag()]
-            local best = m and Pouch.TakeBest(owner, m.id)
+            local best, issued = nil, nil
+            if m then best, issued = Pouch.TakeBest(owner, m.id) end
             if not best then return end
-            -- The old magazine goes back into the inventory with what's left in it.
+            -- The old magazine goes back into the inventory with what's left
+            -- in it (still issued if it came from an armoury).
             local old = self:GetMag()
             if old and self:Clip1() > 0 then
-                Pouch.Add(owner, old.id, self:Clip1() / old.rounds, true)
+                Pouch.Add(owner, old.id, self:Clip1() / old.rounds, true, self.magIssued)
             end
+            self.magIssued = issued
             self:SetMagType(m.index)
             self:SetClip1(math.floor(best * m.rounds + 0.5))
         elseif kind == RELOAD_CELL then
-            local best = Pouch.TakeBest(owner, W.CELL)
+            local best, issued = Pouch.TakeBest(owner, W.CELL)
             if not best then return end
             local old = self:GetCell()
-            if old > 0.001 then Pouch.Add(owner, W.CELL, old, true) end
+            if old > 0.001 then Pouch.Add(owner, W.CELL, old, true, self.cellIssued) end
+            self.cellIssued = issued
             self:SetCell(best)
         end
     end
@@ -564,6 +567,9 @@ function SWEP:GetInventoryData()
         cell = self.UsesCell and self:GetCell() or nil,
         mode = self:GetFireMode(),
         safe = self:GetSafety() or nil,
+        -- Whether the loaded magazine / cell came from an armoury.
+        magIssued = self.magIssued or nil,
+        cellIssued = self.cellIssued or nil,
     }
 end
 
@@ -577,6 +583,9 @@ function SWEP:SetInventoryData(data)
     if self.UsesCell then self:SetCell(data.cell or 1) end
     if data.mode and self.FireModes[data.mode] then self:SetFireMode(data.mode) end
     if data.safe then self:SetSafety(true) end
+    -- An issued gun's own magazine and cell count as issued too.
+    self.magIssued = data.magIssued or data.issued or nil
+    self.cellIssued = data.cellIssued or data.issued or nil
 end
 
 -- Actually sprinting: sprint held, on the ground and moving faster than

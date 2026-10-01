@@ -147,7 +147,8 @@ end
 
 function A.Claim(ply, ent)
     if not IsValid(ent) or ent:GetClass() ~= "rhylib_locker" or ent:GetOwnerSid() ~= "" then return end
-    if ply:GetPos():DistToSqr(ent:GetPos()) > 200 * 200 then return end
+    local dist = Inv() and Inv().STORAGE_DIST or 160
+    if ply:GetPos():DistToSqr(ent:GetPos()) > dist * dist then return end
     local sid = ply:SteamID64()
     if not sid then return end
     if ownsLocker(sid) then

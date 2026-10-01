@@ -3,6 +3,10 @@
     so the client predicts it: sprint stops the moment you run dry, with
     no rubber-banding.
 
+    Stamina is a straight line in the network vars (see sh_00_config.lua).
+    This only writes a new line when the slope changes, so a long sprint
+    or a long rest sends nothing tick by tick.
+
     Sprinting = holding sprint, pressing a movement key, on the ground.
     Jumps are free for jetpack wearers (the jetpack does the work).
 ]]
@@ -15,33 +19,56 @@ local function cfg(key)
     return Config.Get("stamina", key)
 end
 
-Rhylib.Hook.Add("SetupMove", "stamina.move", function(ply, mv)
-    if not ply:Alive() or ply:GetMoveType() ~= MOVETYPE_WALK or ply:InVehicle() then return end
+-- Start a new line: stamina st at time from, changing by rate per second.
+local function setLine(ply, st, from, rate)
+    ply:SetDTFloat(S.DT_STAMINA, st)
+    ply:SetDTFloat(S.DT_FROM, from)
+    ply:SetDTFloat(S.DT_RATE, rate)
+end
 
-    local dt = FrameTime()
+Rhylib.Hook.Add("SetupMove", "stamina.move", function(ply, mv)
+    if not ply:Alive() or ply:GetMoveType() ~= MOVETYPE_WALK or ply:InVehicle() then
+        -- Ladders, noclip, vehicles: a sprint line must not keep draining.
+        if ply:GetDTFloat(S.DT_RATE) < 0 then
+            local now = CurTime()
+            setLine(ply, S.Get(ply, now), now + cfg("regenDelay"), cfg("regen"))
+        end
+        return
+    end
+
     local now = CurTime()
-    local max = cfg("max")
-    local st = ply:GetDTFloat(S.DT_STAMINA)
-    local used = ply:GetDTFloat(S.DT_USED)
+    local st = S.Get(ply, now)
+    local rate = ply:GetDTFloat(S.DT_RATE)
     local exhausted = ply:GetDTBool(S.DT_EXHAUSTED)
     local penalty, over = S.Penalty(ply)
     local onGround = ply:OnGround()
+    local regen = cfg("regen") * (1 - penalty * 0.5)
+
+    -- Ran dry while sprinting: exhausted until back to exhaustedUntil
+    -- (the line below then switches to resting).
+    if rate < 0 and st <= 0 then exhausted = true end
 
     -- Sprinting
     local moving = mv:GetForwardSpeed() ~= 0 or mv:GetSideSpeed() ~= 0
     local wantsSprint = mv:KeyDown(IN_SPEED) and moving and onGround and not mv:KeyDown(IN_DUCK)
-    local canSprint = not exhausted and not over and st > 0
+    local sprinting = wantsSprint and not exhausted and not over and st > 0
 
-    if wantsSprint and canSprint then
-        st = st - cfg("sprintDrain") * (1 + penalty) * dt
-        used = now
-        if st <= 0 then
-            st = 0
-            exhausted = true
+    if sprinting then
+        local drain = -cfg("sprintDrain") * (1 + penalty)
+        if math.abs(rate - drain) > 1e-3 then setLine(ply, st, now, drain) end
+    else
+        if wantsSprint then
+            -- Can't sprint right now: hold the player to walking speed.
+            mv:SetMaxClientSpeed(math.min(mv:GetMaxClientSpeed(), ply:GetWalkSpeed()))
         end
-    elseif wantsSprint then
-        -- Can't sprint right now: hold the player to walking speed.
-        mv:SetMaxClientSpeed(math.min(mv:GetMaxClientSpeed(), ply:GetWalkSpeed()))
+        if rate < 0 then
+            -- Just stopped sprinting: rest a moment, then recover.
+            setLine(ply, st, now + cfg("regenDelay"), regen)
+        elseif math.abs(rate - regen) > 1e-3 then
+            -- The load changed: same stamina, new recovery speed (a wait
+            -- that is still running keeps going).
+            setLine(ply, st, math.max(now, ply:GetDTFloat(S.DT_FROM)), regen)
+        end
     end
 
     -- Over the carry cap: slower walk.
@@ -54,28 +81,24 @@ Rhylib.Hook.Add("SetupMove", "stamina.move", function(ply, mv)
         local cost = cfg("jumpCost")
         if st >= cost then
             st = st - cost
-            used = now
+            if sprinting then
+                setLine(ply, st, now, ply:GetDTFloat(S.DT_RATE))
+            else
+                setLine(ply, st, now + cfg("regenDelay"), regen)
+            end
         else
             mv:SetButtons(bit.band(mv:GetButtons(), bit.bnot(IN_JUMP)))  -- too tired to jump
         end
     end
 
-    -- Recovery after a short rest
-    if st < max and now - used >= cfg("regenDelay") then
-        st = math.min(max, st + cfg("regen") * (1 - penalty * 0.5) * dt)
-    end
     if exhausted and st >= cfg("exhaustedUntil") then exhausted = false end
-
-    ply:SetDTFloat(S.DT_STAMINA, st)
-    if used ~= ply:GetDTFloat(S.DT_USED) then ply:SetDTFloat(S.DT_USED, used) end
     if exhausted ~= ply:GetDTBool(S.DT_EXHAUSTED) then ply:SetDTBool(S.DT_EXHAUSTED, exhausted) end
 end)
 
 if SERVER then
     -- Everyone spawns rested.
     Rhylib.Hook.Add("PlayerSpawn", "stamina.reset", function(ply)
-        ply:SetDTFloat(S.DT_STAMINA, cfg("max"))
-        ply:SetDTFloat(S.DT_USED, 0)
+        setLine(ply, cfg("max"), 0, 0)
         ply:SetDTBool(S.DT_EXHAUSTED, false)
     end)
 end

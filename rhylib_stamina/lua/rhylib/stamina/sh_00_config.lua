@@ -14,10 +14,17 @@
     maxPenalty is lower with a backpack worn. Over the carry cap you
     can't sprint and walk slower (overloadWalkMult).
 
-    State lives in the player's own network vars, predicted like movement:
-        DTFloat 28  stamina
-        DTFloat 29  last time stamina was used (regen waits regenDelay)
+    State lives in the player's own network vars, predicted like movement.
+    Player network vars go to every client that can see the player, so
+    stamina is stored as a straight line that only changes when
+    something changes (sprint starts or stops, a jump, the load changes),
+    not every tick:
+        DTFloat 28  stamina at the start of the line
+        DTFloat 29  when the line starts (in the future while regen waits)
+        DTFloat 26  stamina per second along the line (minus = sprinting)
         DTBool  28  exhausted
+        stamina now = DTFloat 28 + DTFloat 26 * max(0, now - DTFloat 29),
+                      kept between 0 and max
     The jetpack uses slots 29-31 for its bools and 30-31 for its floats.
 ]]
 
@@ -25,7 +32,8 @@ Rhylib.Stamina = Rhylib.Stamina or {}
 local S = Rhylib.Stamina
 
 S.DT_STAMINA = 28
-S.DT_USED = 29
+S.DT_FROM = 29
+S.DT_RATE = 26
 S.DT_EXHAUSTED = 28
 
 local Config = Rhylib.Config
@@ -46,12 +54,14 @@ local function cfg(key)
     return Config.Get("stamina", key)
 end
 
-function S.Get(ply)
-    return ply:GetDTFloat(S.DT_STAMINA)
+-- Stamina at time t (default now).
+function S.Get(ply, t)
+    local v = ply:GetDTFloat(S.DT_STAMINA) + ply:GetDTFloat(S.DT_RATE) * math.max(0, (t or CurTime()) - ply:GetDTFloat(S.DT_FROM))
+    return math.Clamp(v, 0, cfg("max"))
 end
 
 function S.Frac(ply)
-    return math.Clamp(ply:GetDTFloat(S.DT_STAMINA) / cfg("max"), 0, 1)
+    return S.Get(ply) / cfg("max")
 end
 
 function S.Exhausted(ply)
@@ -78,7 +88,7 @@ end
 -- Used by rhylib_weapons (sh_10_spread.lua); all arcs grow evenly.
 function S.SpreadPenalty(ply, baseCone)
     local below = cfg("lowAimBelow")
-    local st = ply:GetDTFloat(S.DT_STAMINA)
+    local st = S.Get(ply)
     if st >= below then return 0 end
     return (1 - st / below) * cfg("lowAimSpread") * baseCone
 end

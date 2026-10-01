@@ -89,6 +89,7 @@ Rhylib.Net.Receive("chat.send", function(ply)
     local target = net.ReadEntity()
     local text = string.Trim(net.ReadString())
     if not ch or text == "" then return end
+    if not ch.private then target = nil end  -- only private messages have a target
     text = string.sub(text, 1, Config.Get("chat", "maxLength"))
 
     local fn = route[ch.id]
@@ -98,6 +99,12 @@ Rhylib.Net.Receive("chat.send", function(ply)
 end, { rate = 2, burst = 5 })
 
 -- Typing indicator (the HUD's icons above heads read this).
+-- (A generous limit, so the final "stopped typing" isn't dropped when the
+-- chat is opened and closed quickly; it's also cleared on spawn and death.)
 Rhylib.Net.Receive("chat.typing", function(ply)
     ply:SetNW2Bool("rhylib_typing", net.ReadBool())
-end, { rate = 4, burst = 4 })
+end, { rate = 6, burst = 10 })
+
+local function notTyping(ply) ply:SetNW2Bool("rhylib_typing", false) end
+Rhylib.Hook.Add("PlayerSpawn", "chat.typing", notTyping)
+Rhylib.Hook.Add("PlayerDeath", "chat.typing", notTyping)

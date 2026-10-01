@@ -40,6 +40,8 @@ Config.Register("inventory", "width", 5, "Personal inventory width in cells")
 Config.Register("inventory", "height", 3, "Personal inventory height in cells")
 Config.Register("inventory", "saveInterval", 2, "Seconds between saves of changed inventories")
 Config.Register("inventory", "worldItemLife", 600, "Seconds before a dropped item on the ground is removed (0 = never)")
+Config.Register("inventory", "worldItemMax", 300, "Most dropped items on the ground at once; the oldest goes first")
+Config.Register("inventory", "worldItemPerPlayer", 15, "Most dropped items one player can have on the ground; their oldest goes first")
 Config.Register("inventory", "autoHotbar", true, "New weapons go into the first free hotbar slot")
 Config.Register("inventory", "combineTime", 0.6, "Combining munitions: seconds per partly used magazine or cell (total between 1 and 8 s)")
 
@@ -343,9 +345,10 @@ function Inv.AddItem(ply, id, count, data)
 
     local stackable = def.stack > 1 and (not def.fill or (data.fill or 1) >= 1)
     if stackable then
+        local probe = { data = data }
         for _, o in pairs(st.byUid) do
             if count <= 0 then break end
-            if o.id == id and o.count < def.stack and Items.IsFull(o) then
+            if o.id == id and o.count < def.stack and Items.IsFull(o) and Items.SameIssued(o, probe) then
                 local add = math.min(def.stack - o.count, count)
                 o.count = o.count + add
                 count = count - add
@@ -382,7 +385,8 @@ function Inv.Remove(ply, uid, amount)
     return inst
 end
 
--- Takes one of the fullest item of this type (for reloads). Returns its fill (0-1) or nil.
+-- Takes one of the fullest item of this type (for reloads). Returns its
+-- fill (0-1) and whether it was issued, or nil.
 function Inv.TakeBest(ply, id)
     local best, bestFill
     for _, o in pairs(Inv.Get(ply).byUid) do
@@ -392,13 +396,56 @@ function Inv.TakeBest(ply, id)
         end
     end
     if not best then return nil end
+    local issued = best.data and best.data.issued and true or nil
     Inv.Remove(ply, best.uid, 1)
-    return bestFill
+    return bestFill, issued
+end
+
+-- Dropped items on the ground, oldest first: all of them, and per player.
+-- Past the caps the oldest is removed, so drops always work but can't
+-- fill the server's entity limit.
+Inv.worldItems = Inv.worldItems or {}
+Inv.worldItemsBy = Inv.worldItemsBy or setmetatable({}, { __mode = "k" })
+
+-- (Removed entities stay valid until the end of the frame, so they're
+-- marked and skipped, and can't be counted twice by the other list.)
+local function prune(list)
+    for i = #list, 1, -1 do
+        local e = list[i]
+        if not IsValid(e) or e.rhylibGone then table.remove(list, i) end
+    end
+end
+
+local function makeRoom(list, max)
+    prune(list)
+    while #list >= max and #list > 0 do
+        local old = table.remove(list, 1)
+        if IsValid(old) then
+            old.rhylibGone = true
+            old:Remove()
+        end
+    end
+end
+
+-- Room for one more dropped item under the global cap (the grapple hook
+-- uses this for hooks that didn't grip).
+function Inv.MakeWorldRoom()
+    makeRoom(Inv.worldItems, math.max(1, Config.Get("inventory", "worldItemMax")))
 end
 
 function Inv.SpawnWorldItem(ply, id, count, data)
+    local mine = Inv.worldItemsBy[ply]
+    if not mine then
+        mine = {}
+        Inv.worldItemsBy[ply] = mine
+    end
+    makeRoom(mine, math.max(1, Config.Get("inventory", "worldItemPerPlayer")))
+    makeRoom(Inv.worldItems, math.max(1, Config.Get("inventory", "worldItemMax")))
+
     local ent = ents.Create("rhylib_world_item")
     if not IsValid(ent) then return end
+    mine[#mine + 1] = ent
+    Inv.worldItems[#Inv.worldItems + 1] = ent
     local start = ply:GetShootPos()
     local tr = util.TraceLine({ start = start, endpos = start + ply:GetAimVector() * 50, filter = ply })
     ent:SetItem(id, count, data)
@@ -411,7 +458,8 @@ end
 -- Adds an item, and drops whatever doesn't fit at the player's feet.
 function Inv.AddOrDrop(ply, id, count, data)
     local left = Inv.AddItem(ply, id, count, data)
-    if left > 0 then Inv.SpawnWorldItem(ply, id, left, data) end
+    -- Issued gear never lands on the ground: what doesn't fit is handed back.
+    if left > 0 and not (data and data.issued) then Inv.SpawnWorldItem(ply, id, left, data) end
 end
 
 -- single: drop just one off a stack (ctrl + drag out of the window).
@@ -519,7 +567,7 @@ end
 -- Put item uid in slot n (uid 0: just empty slot n).
 function Inv.SetHotbar(ply, uid, n)
     local st = Inv.Get(ply)
-    if n < 1 or n > Items.HOTBAR_PACK then return end
+    if n < 1 or n > Items.HotbarSize(st) then return end
     local active = ply:GetActiveWeapon()
     for _, o in pairs(st.byUid) do
         if o.hb == n and o.uid ~= uid then
@@ -564,13 +612,13 @@ local function addInto(ply, st, id, count, data, cid)
     if count <= 0 or not def then return end
     local full = not def.fill or (data.fill or 1) >= 1
     if c and full and def.stack > 1 then
+        local probe = { data = data }
         for _, o in pairs(c.items) do
             if count <= 0 then break end
-            if o.id == id and o.count < def.stack and Items.IsFull(o) then
+            if o.id == id and o.count < def.stack and Items.IsFull(o) and Items.SameIssued(o, probe) then
                 local add = math.min(def.stack - o.count, count)
                 o.count = o.count + add
                 count = count - add
-                if data.issued then o.data.issued = true end
                 update(ply, st, o)
             end
         end
@@ -609,8 +657,10 @@ local function partials(st)
                 local def = Items.defs[o.id]
                 local fill = o.data and o.data.fill or 1
                 if def and def.fill and fill < 0.999 and fill > 0 then
-                    groups[o.id] = groups[o.id] or {}
-                    table.insert(groups[o.id], o)
+                    -- Issued and normal ones are combined separately.
+                    local key = o.data.issued and (o.id .. "#issued") or o.id
+                    groups[key] = groups[key] or {}
+                    table.insert(groups[key], o)
                     n = n + 1
                 end
             end
@@ -662,8 +712,9 @@ function Inv.FinishCombine(ply)
 
     local groups = partials(st)
     local merged = 0
-    for id, list in pairs(groups) do
+    for _, list in pairs(groups) do
         if #list >= 2 then
+            local id = list[1].id
             local sum, issued = 0, false
             for _, o in ipairs(list) do
                 sum = sum + (o.data.fill or 1) * o.count
@@ -765,7 +816,11 @@ Rhylib.Hook.Add("PlayerCanPickupWeapon", "inventory.pickup", function(ply, wep)
     if not def then return end  -- not an inventory weapon: normal behaviour
 
     if wep.rhylibClaimed then return false end
+    -- This hook runs every tick while touching a weapon: remember a "no"
+    -- for half a second instead of scanning the grid each time.
+    if ply.rhylibPickupNoWep == wep and (ply.rhylibPickupNoUntil or 0) > CurTime() then return false end
     if not Inv.CanAdd(ply, class) then
+        ply.rhylibPickupNoWep, ply.rhylibPickupNoUntil = wep, CurTime() + 0.5
         if (ply.rhylibFullNotice or 0) < CurTime() then
             ply.rhylibFullNotice = CurTime() + 2
             ply:PrintMessage(HUD_PRINTCENTER, Inv.Has(ply, class) and "You already carry one" or "No room in your inventory")

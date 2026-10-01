@@ -24,7 +24,11 @@ end
 
 Rhylib.Hook.Add("SetupMove", "jetpack.move", function(ply, mv)
     if not ply:GetDTBool(J.DT_HAS) then return end
-    if IsValid(ply:GetDTEntity(31)) then return end  -- on a grapple rope (rhylib_weapons)
+    if IsValid(ply:GetDTEntity(31)) then
+        -- On a grapple rope (rhylib_weapons): no thrust, flames off.
+        if ply:GetDTBool(J.DT_THRUST) then ply:SetDTBool(J.DT_THRUST, false) end
+        return
+    end
 
     local dt = FrameTime()
     local now = CurTime()

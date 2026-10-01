@@ -37,6 +37,7 @@ local EXT = Items.EXT
 local SLOT_BACK = Items.SLOT_BACK
 local OP_REMOVE, OP_SET = 0, 1
 local MAX_DIST = 160
+Inv.STORAGE_DIST = MAX_DIST  -- also used by rhylib_armoury (claiming lockers)
 
 Inv.storages = Inv.storages or {}  -- [entity] = storage
 
@@ -168,8 +169,14 @@ local function sendChange(storage, op, inst, uid)
     end
 end
 
-local function changedStorage(storage)
-    if storage.onChanged then storage.onChanged(storage) end
+-- ply: who changed it. A saved storage (a locker) saves straight away,
+-- and so does that player's inventory, so both land in the same database
+-- write and a crash can't duplicate or lose the item that moved.
+local function changedStorage(storage, ply)
+    if storage.onChanged then
+        storage.onChanged(storage)
+        if IsValid(ply) and Inv.Save then Inv.Save(ply) end
+    end
 end
 
 local function sendOpen(ply, storage)
@@ -259,6 +266,8 @@ local function openStorage(ply)
     local st = Inv.Get(ply)
     local storage = st.ext
     if not storage or not IsValid(storage.ent) then return nil end
+    -- The range timer closes it within half a second; check here too.
+    if not ply:Alive() or ply:GetPos():DistToSqr(storage.ent:GetPos()) > MAX_DIST * MAX_DIST then return nil end
     return st, storage
 end
 
@@ -281,8 +290,9 @@ function Inv.Deposit(ply, uid, x, y, rot, single)
         for _, id in ipairs(storage.stock) do
             if id == inst.id then stocked = true break end
         end
-        if not stocked then
-            Inv.Note(ply, "That doesn't go in here")
+        if not stocked or not (inst.data and inst.data.issued) then
+            -- Only issued gear goes back (your own items would just vanish).
+            Inv.Note(ply, stocked and "Only issued gear can be handed back here" or "That doesn't go in here")
             I.sendSet(ply, st, inst)
             return
         end
@@ -315,7 +325,7 @@ function Inv.Deposit(ply, uid, x, y, rot, single)
         inst.count = inst.count - n
         I.update(ply, st, inst)
     end
-    changedStorage(storage)
+    changedStorage(storage, ply)
 end
 
 -- Storage item -> your container cid at x, y.
@@ -362,7 +372,7 @@ function Inv.Take(ply, suid, cid, x, y, rot, single)
         so.count = so.count - n
         sendChange(storage, OP_SET, so)
     end
-    changedStorage(storage)
+    changedStorage(storage, ply)
 end
 
 -- Rearranging inside a grid storage.
@@ -386,7 +396,7 @@ function Inv.StorageMove(ply, suid, x, y, rot, single)
     elseif n >= so.count and Items.Fits(storage.w, storage.h, storage.items, so.id, x, y, rot, suid) then
         so.x, so.y, so.rot = x, y, rot
         sendChange(storage, OP_SET, so)
-        changedStorage(storage)
+        changedStorage(storage, ply)
         return
     else
         sendChange(storage, OP_SET, so)  -- put the client's copy back
@@ -399,7 +409,7 @@ function Inv.StorageMove(ply, suid, x, y, rot, single)
         so.count = so.count - n
         sendChange(storage, OP_SET, so)
     end
-    changedStorage(storage)
+    changedStorage(storage, ply)
 end
 
 --------------------------------------------------------------------------

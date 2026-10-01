@@ -69,16 +69,18 @@ end
 
 -- Returns false if there's no room. force: never lose it (drops it on
 -- the ground with the inventory, ignores the limit without).
-function Pouch.Add(ply, kind, fill, force)
+-- issued: it came from an armoury (keeps that mark in the inventory).
+function Pouch.Add(ply, kind, fill, force, issued)
     if not KINDS[kind] then return false end
     fill = math.Clamp(fill, 0, 1)
     local Inv = inventory()
     if Inv then
+        local data = { fill = fill, issued = issued or nil }
         if force then
-            Inv.AddOrDrop(ply, kind, 1, { fill = fill })
+            Inv.AddOrDrop(ply, kind, 1, data)
             return true
         end
-        return Inv.AddItem(ply, kind, 1, { fill = fill }) == 0
+        return Inv.AddItem(ply, kind, 1, data) == 0
     end
 
     local list = get(ply, kind)
@@ -88,7 +90,8 @@ function Pouch.Add(ply, kind, fill, force)
     return true
 end
 
--- Removes and returns the fullest one, or nil if there are none.
+-- Removes and returns the fullest one (and, with the inventory, whether it
+-- was issued), or nil if there are none.
 function Pouch.TakeBest(ply, kind)
     if not KINDS[kind] then return nil end
     local Inv = inventory()

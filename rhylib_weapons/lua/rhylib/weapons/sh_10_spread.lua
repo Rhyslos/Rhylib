@@ -7,9 +7,13 @@
 
     All spread values are cone angles in degrees. State is stored in the
     weapon's predicted network vars, so server and client always agree:
-        Bloom, Kick1, Kick2, Kick3, KickTime, Streak, LastArc, Aiming
+        Recoil (kicks 1-3), RecoilB (bloom, streak, last arc), KickTime, Aiming
     Values decay over time, calculated from KickTime, so nothing has to
     be sent while they settle.
+
+    Weapon network vars go to every client that can see the weapon, so a
+    shot should change as few as possible: the kicks and the bloom are
+    stored in 0.01 and 0.005 degree steps and packed into two Ints.
 ]]
 
 local Spread = {}
@@ -24,12 +28,49 @@ Spread.BLOOM_TAU = 0.45      -- shared bloom decay, seconds
 Spread.STREAK_WINDOW = 0.6   -- seconds between same-arc shots to keep a streak
 Spread.STREAK_MAX = 4
 
+-- Packing: Recoil = three kicks, 10 bits each (0.01 degree steps, up to
+-- 10.23); RecoilB = bloom 10 bits (0.005 steps, up to 5.115), streak
+-- 3 bits, last arc 2 bits.
+local BLOOM_STEP, KICK_STEP = 0.005, 0.01
+local BLOOM_MAX_Q, KICK_MAX_Q = 1023, 1023
+
+local floor = math.floor
+local function q(v, step, maxQ)
+    v = floor(v / step + 0.5)
+    if v < 0 then return 0 end
+    if v > maxQ then return maxQ end
+    return v
+end
+
+-- Raw stored values: bloom, kick1, kick2, kick3, streak, last arc.
+function Spread.Unpack(wep)
+    local p = wep:GetRecoil()
+    local k1 = p % 1024 p = floor(p / 1024)
+    local k2 = p % 1024
+    local k3 = floor(p / 1024) % 1024
+    local r = wep:GetRecoilB()
+    local b = r % 1024 r = floor(r / 1024)
+    local streak = r % 8
+    local arc = floor(r / 8) % 4
+    return b * BLOOM_STEP, k1 * KICK_STEP, k2 * KICK_STEP, k3 * KICK_STEP, streak, arc
+end
+
+function Spread.Pack(wep, bloom, k1, k2, k3, streak, arc)
+    local p = q(k3, KICK_STEP, KICK_MAX_Q)
+    p = p * 1024 + q(k2, KICK_STEP, KICK_MAX_Q)
+    p = p * 1024 + q(k1, KICK_STEP, KICK_MAX_Q)
+    wep:SetRecoil(p)
+    local r = arc * 8 + math.Clamp(streak, 0, 7)
+    wep:SetRecoilB(r * 1024 + q(bloom, BLOOM_STEP, BLOOM_MAX_Q))
+end
+
 -- Decayed values at time t: bloom, kick1, kick2, kick3.
 function Spread.GetState(wep, t)
     local dt = math.max(0, t - wep:GetKickTime())
     local kd = math.exp(-dt / Spread.KICK_TAU)
     local bd = math.exp(-dt / Spread.BLOOM_TAU)
-    return wep:GetBloom() * bd, wep:GetKick1() * kd, wep:GetKick2() * kd, wep:GetKick3() * kd
+    local b, k1, k2, k3 = Spread.Unpack(wep)
+    return b * bd, k1 * kd, k2 * kd, k3 * kd
 end
 
 -- Resting cone size (the arc radius).
@@ -90,19 +131,20 @@ function Spread.AddShot(wep, arc, t)
     local cfg = wep.Spread
     local bloom, k1, k2, k3 = Spread.GetState(wep, t)
 
+    local _, _, _, _, lastStreak, lastArc = Spread.Unpack(wep)
     local streak = 1
-    if arc == wep:GetLastArc() and t - wep:GetKickTime() < Spread.STREAK_WINDOW then
-        streak = math.min(wep:GetStreak() + 1, Spread.STREAK_MAX)
+    if arc == lastArc and t - wep:GetKickTime() < Spread.STREAK_WINDOW then
+        streak = math.min(lastStreak + 1, Spread.STREAK_MAX)
     end
 
     local m = wep:GetAiming() and cfg.aimKickMult or 1
     local main, side = cfg.kickMain * streak * m, cfg.kickSide * m
 
-    wep:SetKick1(k1 + (arc == 1 and main or side))
-    wep:SetKick2(k2 + (arc == 2 and main or side))
-    wep:SetKick3(k3 + (arc == 3 and main or side))
-    wep:SetBloom(math.min(bloom + cfg.bloomPerShot * m, cfg.bloomMax))
+    Spread.Pack(wep,
+        math.min(bloom + cfg.bloomPerShot * m, cfg.bloomMax),
+        k1 + (arc == 1 and main or side),
+        k2 + (arc == 2 and main or side),
+        k3 + (arc == 3 and main or side),
+        streak, arc)
     wep:SetKickTime(t)
-    wep:SetStreak(streak)
-    wep:SetLastArc(arc)
 end

@@ -157,11 +157,20 @@ end
 -- rope lost what it was hanging from).
 function G.DropHook(pos)
     local inv = Rhylib.Inventory and Rhylib.Inventory.AddItem
+    if inv and Rhylib.Inventory.MakeWorldRoom then Rhylib.Inventory.MakeWorldRoom() end
     local ent = ents.Create(inv and "rhylib_world_item" or "rhylib_item_grapple")
     if not IsValid(ent) then return end
     if ent.SetItem then ent:SetItem(G.ITEM, 1, {}) end
     ent:SetPos(pos)
     ent:Spawn()
+    -- Counts toward the inventory's cap on dropped items; without the
+    -- inventory it just goes away after a while.
+    local list = Rhylib.Inventory and Rhylib.Inventory.worldItems
+    if inv and list then
+        list[#list + 1] = ent
+    else
+        SafeRemoveEntityDelayed(ent, 300)
+    end
 end
 
 local function tell(ply, msg)

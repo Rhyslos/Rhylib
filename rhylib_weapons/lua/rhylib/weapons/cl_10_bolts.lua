@@ -20,10 +20,10 @@ local STYLES = {
     [2] = { color = Color(255, 70, 60), length = 70, width = 5, glow = 14, life = 1.2 },    -- CIS red
     [3] = { color = Color(80, 255, 120), length = 70, width = 5, glow = 14, life = 1.2 },   -- green
     [4] = { color = Color(255, 170, 80), length = 140, width = 9, glow = 40, life = 6, rocket = true },  -- rocket
-    [5] = { color = Color(58, 60, 62), length = 0, width = 1.2, glow = 0, life = 0.6, hook = true },    -- grapple hook
+    [5] = { color = Color(14, 14, 14), length = 0, width = 1.8, glow = 0, life = 0.6, hook = true },    -- grapple hook
 }
-local COL_HOOK = Color(14, 14, 14)
-local HOOK_MINS, HOOK_MAXS = Vector(-4.5, -1, -1), Vector(1.5, 1, 1)
+local COL_HOOK = Color(58, 60, 62)
+local HOOK_MINS, HOOK_MAXS = Vector(-6.75, -1.5, -1.5), Vector(2.25, 1.5, 1.5)
 
 local BLEND_TIME = 0.08
 
@@ -55,17 +55,38 @@ local function muzzlePos(shooter, fallback)
     return fallback
 end
 
+local traceResult = {}
+local traceData = { mask = MASK_SHOT, output = traceResult }
+
+--[[
+    Each bolt is traced once, when it spawns, along its whole flight; after
+    that it just moves along the line and stops where that trace hit. (A
+    player who steps into its path later doesn't stop the visual; damage
+    is the server's job anyway.) Nothing is allocated per frame.
+]]
 function Bolts.Spawn(shooter, origin, dir, speed, colorIndex)
+    local style = STYLES[colorIndex] or STYLES[1]
     local muzzle = muzzlePos(shooter, origin)
+    local range = speed * style.life
+    traceData.start = origin
+    traceData.endpos = origin + dir * range
+    traceData.filter = IsValid(shooter) and shooter or nil
+    util.TraceLine(traceData)
+    local tr = traceResult
     Bolts.visual[#Bolts.visual + 1] = {
         shooter = shooter,
-        pos = origin,
-        dir = dir,
+        origin = Vector(origin),
+        pos = Vector(origin),
+        dir = Vector(dir),
         speed = speed,
-        style = STYLES[colorIndex] or STYLES[1],
+        style = style,
         offset = muzzle - origin,
         born = CurTime(),
         travelled = 0,
+        hitDist = tr.Hit and tr.Fraction * range or nil,
+        hitPos = tr.Hit and Vector(tr.HitPos) or nil,
+        hitNormal = tr.Hit and Vector(tr.HitNormal) or nil,
+        hitEnt = tr.Hit and tr.Entity or nil,
     }
 end
 
@@ -89,19 +110,17 @@ end, function(s)
     Bolts.Spawn(shooter, s.origin, s.dir, s.speed, s.color)
 end)
 
-local traceResult = {}
-local traceData = { mask = MASK_SHOT, output = traceResult }
-
-local function impact(tr, style)
+local function impact(b)
+    local style = b.style
     if style.rocket or style.hook then return end  -- the server handles these
     local ed = EffectData()
-    ed:SetOrigin(tr.HitPos)
-    ed:SetNormal(tr.HitNormal)
+    ed:SetOrigin(b.hitPos)
+    ed:SetNormal(b.hitNormal)
     util.Effect("AR2Impact", ed)
 
-    local ent = tr.Entity
+    local ent = b.hitEnt
     if not (IsValid(ent) and (ent:IsPlayer() or ent:IsNPC())) then
-        util.Decal("FadingScorch", tr.HitPos + tr.HitNormal, tr.HitPos - tr.HitNormal)
+        util.Decal("FadingScorch", b.hitPos + b.hitNormal, b.hitPos - b.hitNormal)
     end
 end
 
@@ -114,20 +133,17 @@ Rhylib.Hook.Add("Think", "weapons.bolts", function()
     local i = 1
     while i <= #list do
         local b = list[i]
-        local remove = not b.style or now - b.born > b.style.life  -- (no style: from before an autorefresh)
+        local remove = not b.style or not b.origin or now - b.born > b.style.life  -- (no style/origin: from before an autorefresh)
 
         if not remove then
-            local step = b.speed * dt
-            traceData.start = b.pos
-            traceData.endpos = b.pos + b.dir * step
-            traceData.filter = IsValid(b.shooter) and b.shooter or nil
-            local tr = util.TraceLine(traceData)
-            if tr.Hit then
-                impact(tr, b.style)
+            local t = b.travelled + b.speed * dt
+            if b.hitDist and t >= b.hitDist then
+                impact(b)
                 remove = true
             else
-                b.pos = traceData.endpos
-                b.travelled = b.travelled + step
+                b.travelled = t
+                local o, d = b.origin, b.dir
+                b.pos:SetUnpacked(o.x + d.x * t, o.y + d.y * t, o.z + d.z * t)
             end
         end
 
@@ -140,30 +156,44 @@ Rhylib.Hook.Add("Think", "weapons.bolts", function()
     end
 end)
 
+local head, tail = Vector(), Vector()
+
 Rhylib.Hook.Add("PostDrawTranslucentRenderables", "weapons.bolts", function(depth, skybox)
     if depth or skybox then return end
     local list = Bolts.visual
     if #list == 0 then return end
 
     local now = CurTime()
+    -- Pass 1: hooks and beams. Pass 2: glows. So each material is set
+    -- once per frame instead of twice per bolt.
+    render.SetMaterial(matBeam)
     for i = 1, #list do
         local b = list[i]
         local st = b.style
         if st and st.hook then
             -- The hook flying out, trailing its line back to the gun.
-            local head = b.pos
-            local from = muzzlePos(b.shooter, head)
+            local from = muzzlePos(b.shooter, b.pos)
             render.SetColorMaterial()
-            render.DrawBeam(from, head, st.width, 0, 1, st.color)
-            render.DrawBox(head, b.dir:Angle(), HOOK_MINS, HOOK_MAXS, COL_HOOK)
+            render.DrawBeam(from, b.pos, st.width, 0, 1, st.color)
+            render.DrawBox(b.pos, b.dir:Angle(), HOOK_MINS, HOOK_MAXS, COL_HOOK)
+            render.SetMaterial(matBeam)
         elseif st then
             local blend = math.max(0, 1 - (now - b.born) / BLEND_TIME)
-            local head = b.pos + b.offset * blend
-            local tail = head - b.dir * math.min(st.length, b.travelled + 1)
-
-            render.SetMaterial(matBeam)
+            local p, o, d = b.pos, b.offset, b.dir
+            head:SetUnpacked(p.x + o.x * blend, p.y + o.y * blend, p.z + o.z * blend)
+            local len = math.min(st.length, b.travelled + 1)
+            tail:SetUnpacked(head.x - d.x * len, head.y - d.y * len, head.z - d.z * len)
             render.DrawBeam(tail, head, st.width, 0, 1, st.color)
-            render.SetMaterial(matGlow)
+        end
+    end
+    render.SetMaterial(matGlow)
+    for i = 1, #list do
+        local b = list[i]
+        local st = b.style
+        if st and not st.hook and st.glow > 0 then
+            local blend = math.max(0, 1 - (now - b.born) / BLEND_TIME)
+            local p, o = b.pos, b.offset
+            head:SetUnpacked(p.x + o.x * blend, p.y + o.y * blend, p.z + o.z * blend)
             render.DrawSprite(head, st.glow, st.glow, st.color)
         end
     end

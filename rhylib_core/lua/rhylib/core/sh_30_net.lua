@@ -24,8 +24,12 @@
             return { shooter = net.ReadUInt(8), origin = net.ReadVector() }
         end, function(item) ... end)
 
-       Batches are flushed once per server tick. Each message carries a
-       count, so nothing is sent when nothing happened.
+       Batches are flushed once per server tick; nothing is sent when
+       nothing happened. In a message, each item is preceded by a 1 bit
+       "another item follows" flag and the list ends with a 0 bit. A
+       message is closed and a new one started once it passes about
+       60 KB, under the 64 KB net message limit. A writer that errors
+       is reported and its queue dropped, so it can't jam the batch.
 
     Write exact bit sizes (net.WriteUInt with a bit count). Never use
     net.WriteTable for anything sent often.
@@ -35,8 +39,7 @@ Rhylib.Net = Rhylib.Net or {}
 local Net = Rhylib.Net
 
 local PREFIX = "rhylib."
-local COUNT_BITS = 10                  -- up to 1023 items per message
-local MAX_PER_MSG = 1023               -- 2^COUNT_BITS - 1
+Net.MSG_SOFT_LIMIT = 60000             -- bytes; start a new message past this
 
 function Net.Name(name)
     return PREFIX .. name
@@ -135,15 +138,27 @@ if SERVER then
         self.dirty = true
     end
 
-    local function sendQueue(batch, queue, sendFn, target)
-        local total, i = #queue, 1
+    -- Writes items into as many messages as needed (each under the soft
+    -- size limit). Also used by modules that send their own batches.
+    function Net.SendItems(name, items, write, sendFn, target)
+        local total, i = #items, 1
+        local limit = Net.MSG_SOFT_LIMIT
         while i <= total do
-            local count = math.min(MAX_PER_MSG, total - i + 1)
-            net.Start(PREFIX .. batch.name)
-            net.WriteUInt(count, COUNT_BITS)
-            for j = i, i + count - 1 do batch.write(queue[j]) end
-            finish(batch.name, sendFn, target)
-            i = i + count
+            net.Start(PREFIX .. name)
+            repeat
+                net.WriteBool(true)
+                write(items[i])
+                i = i + 1
+            until i > total or net.BytesWritten() > limit
+            net.WriteBool(false)
+            finish(name, sendFn, target)
+        end
+    end
+
+    local function sendQueue(batch, queue, sendFn, target)
+        local ok, err = pcall(Net.SendItems, batch.name, queue, batch.write, sendFn, target)
+        if not ok then
+            Rhylib.Error("core", "batch %s: writer failed, %d items dropped: %s", batch.name, #queue, tostring(err))
         end
     end
 
@@ -177,8 +192,13 @@ if SERVER then
 else
     function Net.ReceiveBatch(name, readItem, onItem)
         net.Receive(PREFIX .. name, function()
-            local count = net.ReadUInt(COUNT_BITS)
-            for _ = 1, count do onItem(readItem()) end
+            -- A 1 bit before each item; 0 ends the list. The cap guards
+            -- against a broken message looping forever.
+            local n = 0
+            while n < 4096 and net.ReadBool() do
+                n = n + 1
+                onItem(readItem())
+            end
         end)
     end
 end

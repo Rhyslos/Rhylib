@@ -24,13 +24,21 @@ Bolts.active = Bolts.active or {}
 
 local Config = Rhylib.Config
 
-local shotBatch = Rhylib.Net.CreateBatch("wep.shot", function(s)
+-- Shot events. Each shot is written once: shots are grouped per tick by
+-- the area they start in (cubes of SHOT_CELL units), and each group goes
+-- in one message to the players near that area, in the core's batch
+-- format (read on the client with Rhylib.Net.ReceiveBatch). The shooter
+-- may get their own shots; the client skips them (it drew them already).
+Rhylib.Net.Register("wep.shot")
+local SHOT_CELL = 1024
+
+local function writeShot(s)
     net.WriteUInt(s.shooter, 13)
     net.WriteVector(s.origin)
     net.WriteNormal(s.dir)
     net.WriteUInt(s.speed, 14)
     net.WriteUInt(s.color, 4)
-end)
+end
 
 local hitBatch = Rhylib.Net.CreateBatch("wep.hit", function(h)
     net.WriteBool(h.head)
@@ -118,25 +126,65 @@ local function getHumans()
     return humans
 end
 
+-- Groups of this tick's shots, by area. Group tables are reused.
+local groups, groupKeys, groupPool = {}, {}, {}
+local floor = math.floor
+
 local function sendShot(owner, color, origin, dir, speed)
-    local range = Config.Get("weapons", "shotRange")
-    local rangeSqr = range * range
-    local sp = game.SinglePlayer()  -- in singleplayer the client doesn't predict, so the owner needs it too
-    local item = {
+    local cx, cy, cz = floor(origin.x / SHOT_CELL), floor(origin.y / SHOT_CELL), floor(origin.z / SHOT_CELL)
+    local key = (cx + 128) * 65536 + (cy + 128) * 256 + (cz + 128)
+    local g = groups[key]
+    if not g then
+        g = table.remove(groupPool) or { items = {} }
+        g.x, g.y, g.z = (cx + 0.5) * SHOT_CELL, (cy + 0.5) * SHOT_CELL, (cz + 0.5) * SHOT_CELL
+        groups[key] = g
+        groupKeys[#groupKeys + 1] = key
+    end
+    g.items[#g.items + 1] = {
         shooter = owner:EntIndex(),
         origin = origin,
         dir = dir,
         speed = math.min(speed, 16383),
         color = color,
     }
+end
+
+local recipients = {}
+local centre = Vector()
+local function flushShots()
+    if #groupKeys == 0 then return end
+    -- Players within shot range of any point in the cube get the group.
+    local reach = Config.Get("weapons", "shotRange") + SHOT_CELL * 0.87
+    local reachSqr = reach * reach
     local list = getHumans()
-    for i = 1, #list do
-        local ply = list[i]
-        if IsValid(ply) and (ply ~= owner or sp) and ply:GetPos():DistToSqr(origin) < rangeSqr then
-            shotBatch:Send(ply, item)
+    for k = 1, #groupKeys do
+        local key = groupKeys[k]
+        local g = groups[key]
+        centre:SetUnpacked(g.x, g.y, g.z)
+        local n = 0
+        for i = 1, #list do
+            local ply = list[i]
+            if IsValid(ply) and ply:GetPos():DistToSqr(centre) < reachSqr then
+                n = n + 1
+                recipients[n] = ply
+            end
         end
+        for i = #recipients, n + 1, -1 do recipients[i] = nil end
+
+        local items = g.items
+        if n > 0 then
+            local ok, err = pcall(Rhylib.Net.SendItems, "wep.shot", items, writeShot, net.Send, recipients)
+            if not ok then Rhylib.Error("weapons", "shot send failed: %s", tostring(err)) end
+        end
+        for i = #items, 1, -1 do items[i] = nil end
+        groups[key] = nil
+        groupKeys[k] = nil
+        groupPool[#groupPool + 1] = g
     end
 end
+
+-- After the weapons have fired this tick (the core's batches flush at 1000).
+Rhylib.Hook.Add("Tick", "weapons.shots.flush", flushShots, 990)
 
 -- Called from the weapon's PrimaryAttack on the server.
 -- opts (optional): speed, color, life, onHit(bolt, tr), onExpire(bolt)

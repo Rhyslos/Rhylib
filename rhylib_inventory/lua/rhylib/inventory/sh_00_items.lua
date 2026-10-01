@@ -225,9 +225,18 @@ function Items.MergeTarget(items, inst, x, y)
     local def = Items.defs[inst.id]
     if not def or def.stack <= 1 or not Items.IsFull(inst) then return nil end
     local target = Items.At(items, x, y, inst.uid)
-    if target and target.id == inst.id and target.count < def.stack and Items.IsFull(target) then
+    if target and target.id == inst.id and target.count < def.stack and Items.IsFull(target)
+        and Items.SameIssued(target, inst) then
         return target
     end
+end
+
+-- Issued (armoury) and normal items never stack together, or the issued
+-- mark could be lost.
+function Items.SameIssued(a, b)
+    local ia = a.data and a.data.issued and true or false
+    local ib = b.data and b.data.issued and true or false
+    return ia == ib
 end
 
 --------------------------------------------------------------------------

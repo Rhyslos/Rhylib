@@ -48,9 +48,12 @@ if SERVER then
     end
 
     function ENT:Use(ply)
-        if not IsValid(ply) or not ply:IsPlayer() or not self.itemId then return end
+        -- taken: Remove() only happens at the end of the frame, so a second
+        -- player pressing E in the same tick must not get it too.
+        if self.taken or not IsValid(ply) or not ply:IsPlayer() or not self.itemId then return end
         local left = Rhylib.Inventory.AddItem(ply, self.itemId, self.itemCount, self.itemData)
         if left <= 0 then
+            self.taken = true
             ply:EmitSound("items/ammo_pickup.wav", 60)
             self:Remove()
         elseif left < self.itemCount then
