@@ -13,6 +13,10 @@
     With a locker, crate or armoury open, it shows on the right. Drag items
     between the two. Under the Back slot: Combine munitions.
 
+    Along the bottom: the hotbar (4 slots, 6 with a backpack). Drag an item
+    onto a slot to put it there (keys 1-4 / 1-6 then pick it), drag it off
+    or right-click the slot to empty it.
+
     One panel paints all grids; the only child panel is the model preview.
     Nothing runs while the window is closed except a key check.
 ]]
@@ -213,7 +217,13 @@ function PANEL:Relayout()
     self.model:SetPos(pad, top)
     self.model:SetSize(modelW, contentH)
 
-    self:SetSize(width, top + contentH + self.footer + pad * 0.5)
+    -- Hotbar row along the bottom, starting under the Back slot.
+    self.hotbarN = Items.HotbarSize(Inv)
+    self.hotbarX = slotX
+    self.hotbarY = top + contentH + label + self.gap * 2
+    width = math.max(width, slotX + self:SpanPx(self.hotbarN) + pad)
+
+    self:SetSize(width, self.hotbarY + self.cell + self.footer + pad * 0.5)
     self:Center()  -- stays centred when a backpack grid appears or disappears
 end
 
@@ -232,6 +242,38 @@ function PANEL:HitTest(mx, my, margin)
                 return r, math.floor((mx - r.x) / self.step), math.floor((my - r.y) / self.step)
             end
         end
+    end
+end
+
+-- Hotbar slot number under panel coordinates, or nil.
+function PANEL:HotbarAt(mx, my)
+    if not self.hotbarY or my < self.hotbarY or my > self.hotbarY + self.cell then return nil end
+    local n = math.floor((mx - self.hotbarX) / self.step) + 1
+    if n < 1 or n > self.hotbarN then return nil end
+    if mx - self.hotbarX - (n - 1) * self.step > self.cell then return nil end  -- in the gap
+    return n
+end
+
+function PANEL:PaintHotbar()
+    local s = self.s
+    local active = LocalPlayer():GetActiveWeapon()
+    local mx, my = self:CursorPos()
+    local hover = self.drag and not self.drag.fromExt and self:HotbarAt(mx, my)
+    draw.SimpleText("Hotbar", self:Font(15), self.hotbarX, self.hotbarY - self.label * 0.5, UI.Colors.textDim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+    draw.SimpleText("drag items here · right-click to empty", self:Font(12), self.hotbarX + math.floor(60 * s), self.hotbarY - self.label * 0.5,
+        UI.Colors.textDim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+    for n = 1, self.hotbarN do
+        local x, y = self.hotbarX + (n - 1) * self.step, self.hotbarY
+        local inst = Inv.HotbarItem(n)
+        if inst then
+            self:DrawItemBox(inst, x, y, self.cell, self.cell, self.drag and self.drag.inst == inst and 70 or 255)
+        else
+            surface.SetDrawColor(COL_SLOT)
+            surface.DrawRect(x, y, self.cell, self.cell)
+        end
+        surface.SetDrawColor(hover == n and COL_OK_LINE or COL_BORDER)
+        surface.DrawOutlinedRect(x, y, self.cell, self.cell, hover == n and math.max(1, math.floor(2 * s)) or 1)
+        draw.SimpleText(tostring(n), self:Font(13), x + self.cell - math.floor(5 * s), y + math.floor(3 * s), UI.Colors.textDim, TEXT_ALIGN_RIGHT)
     end
 end
 
@@ -266,6 +308,10 @@ function PANEL:DrawItemBox(inst, x, y, pw, ph, alpha, endless)
     local font = self:Font(14)
     local pad = math.floor(5 * s)
     draw.SimpleText(fitText(def.name, font, pw - pad * 2), font, x + pad, y + pad, UI.Colors.text)
+    if inst.hb and inst.c ~= EXT and inst.c then
+        -- Hotbar slot badge, bottom-left.
+        draw.SimpleText("[" .. inst.hb .. "]", self:Font(12), x + pad, y + ph - pad, UI.Colors.accent, TEXT_ALIGN_LEFT, TEXT_ALIGN_BOTTOM)
+    end
 
     local corner
     if endless then
@@ -344,8 +390,10 @@ function PANEL:Paint(pw, ph)
     for _, r in ipairs(self.regions) do self:PaintRegion(r, dragUid) end
 
     self.buttons = {}
+    self:PaintHotbar()
     self:PaintCombine()
     self:PaintExtControls()
+    self:PaintNote(pw, ph)
 
     if self.drag then
         self:PaintDrag()
@@ -378,7 +426,16 @@ function PANEL:PaintCombine()
         draw.SimpleText("Combining…", self:Font(13), r.x + r.w * 0.5, r.y + r.h * 0.5, UI.Colors.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
         return
     end
-    self:Button(r.x, r.y, r.w, r.h, "Combine munitions", function() Inv.RequestCombine() end, Inv.cont[BACK] ~= nil)
+    self:Button(r.x, r.y, r.w, r.h, "Combine munitions", function() Inv.RequestCombine() end)
+end
+
+-- The last message from the server, for a few seconds, above the footer.
+function PANEL:PaintNote(pw, ph)
+    if not Inv.note or RealTime() - (Inv.noteTime or 0) > 3 then return end
+    local a = math.Clamp((3 - (RealTime() - Inv.noteTime)) * 255, 0, 255)
+    local col = UI.Colors.warn
+    draw.SimpleText(Inv.note, self:Font(14), pw - self.pad, ph - self.footer * 0.5 - self.pad * 0.25,
+        Color(col.r, col.g, col.b, a), TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
 end
 
 -- Lock / unclaim buttons for the owner of an open locker.
@@ -465,6 +522,7 @@ function PANEL:DropAllowed(d, r, tx, ty)
         return (not r.slot and Items.MergeTarget(c.items, probe, tx, ty) ~= nil)
             or Items.CanPlace(Inv, d.inst.id, r.cid, tx, ty, d.rot)
     end
+    if d.fromHotbar then return false end
     local ok = Items.CanLeave(Inv, d.inst) or r.cid == d.inst.c
     return ok and ((not r.slot and Items.MergeTarget(c.items, d.inst, tx, ty) ~= nil)
         or Items.CanPlace(Inv, d.inst.id, r.cid, tx, ty, d.rot, not d.single and d.inst.uid or nil))
@@ -555,6 +613,21 @@ function PANEL:OnMousePressed(code)
         end
     end
 
+    -- Hotbar row: right-click empties a slot, left-drag moves or removes it.
+    local mx, my = self:CursorPos()
+    local hb = self:HotbarAt(mx, my)
+    if hb then
+        local inst = Inv.HotbarItem(hb)
+        if not inst then return end
+        if code == MOUSE_RIGHT then
+            Inv.RequestHotbar(nil, hb)
+        elseif code == MOUSE_LEFT then
+            self.drag = { inst = inst, rot = inst.rot, offX = 0, offY = 0, fromHotbar = hb, single = false }
+            self:MouseCapture(true)
+        end
+        return
+    end
+
     local inst, r, cx, cy = self:ItemAtCursor()
     if not inst then return end
     local fromExt = r.cid == EXT
@@ -591,6 +664,17 @@ function PANEL:OnMouseReleased(code)
     local pw, ph = self:GetSize()
     local outside = mx < 0 or my < 0 or mx > pw or my > ph
 
+    -- Onto the hotbar: put it in that slot. A slot dragged anywhere else empties.
+    local hb = not d.fromExt and self:HotbarAt(mx, my)
+    if hb then
+        if hb ~= d.fromHotbar then Inv.RequestHotbar(d.inst, hb) end
+        return
+    end
+    if d.fromHotbar then
+        Inv.RequestHotbar(nil, d.fromHotbar)
+        return
+    end
+
     if d.fromExt then
         local c = Inv.cont[EXT]
         if outside or not c or not c.items[d.inst.uid] then return end
@@ -606,7 +690,7 @@ function PANEL:OnMouseReleased(code)
 
     if not Inv.byUid[d.inst.uid] then return end
     if outside then
-        Inv.RequestDrop(d.inst)
+        Inv.RequestDrop(d.inst, d.single)
         return
     end
 

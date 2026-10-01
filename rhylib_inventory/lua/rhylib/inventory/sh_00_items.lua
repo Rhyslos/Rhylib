@@ -249,6 +249,16 @@ Items.SLOT_BACK = 3
 Items.EXT = 4
 Items.CONT_BITS = 3
 
+-- Hotbar: each item can sit in one numbered slot (inst.hb). 4 slots, or
+-- 6 while a backpack is worn. Anything you hold that isn't in the
+-- inventory (force-given) goes in an overflow slot after them.
+Items.HOTBAR = 4
+Items.HOTBAR_PACK = 6
+
+function Items.HotbarSize(state)
+    return state.cont[Items.BACK] and Items.HOTBAR_PACK or Items.HOTBAR
+end
+
 -- Which items a container accepts at all.
 function Items.ContainerAllows(cid, def)
     if cid == Items.SLOT_BACK then return def.slot == "back" end
@@ -296,6 +306,7 @@ function Items.WriteInstance(inst)
     net.WriteBool(inst.rot and true or false)
     net.WriteUInt(math.Clamp(inst.count, 0, 255), Items.COUNT_BITS)
     net.WriteBool(inst.data and inst.data.issued or false)
+    net.WriteUInt(inst.hb or 0, 3)  -- hotbar slot, 0 = none
     if def and def.fill then
         net.WriteUInt(math.Round(math.Clamp(inst.data and inst.data.fill or 1, 0, 1) * 255), 8)
     end
@@ -310,6 +321,7 @@ function Items.ReadInstance()
     local rot = net.ReadBool()
     local count = net.ReadUInt(Items.COUNT_BITS)
     local data = { issued = net.ReadBool() or nil }
+    local hb = net.ReadUInt(3)
     if def and def.fill then data.fill = net.ReadUInt(8) / 255 end
-    return { uid = uid, c = c, id = def and def.id, x = x, y = y, rot = rot, count = count, data = data }
+    return { uid = uid, c = c, id = def and def.id, x = x, y = y, rot = rot, count = count, data = data, hb = hb > 0 and hb or nil }
 end

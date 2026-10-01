@@ -111,6 +111,13 @@ end, function(ch)
     end
 end)
 
+-- Short messages from the server, shown in the inventory window.
+net.Receive(Rhylib.Net.Name("inv.note"), function()
+    Inv.note = net.ReadString()
+    Inv.noteTime = RealTime()
+    if not IsValid(Inv.panel) then notification.AddLegacy(Inv.note, NOTIFY_GENERIC, 3) end
+end)
+
 net.Receive(Rhylib.Net.Name("inv.busy"), function()
     Inv.busyEnd = net.ReadFloat()
     Inv.busyStart = CurTime()
@@ -144,6 +151,21 @@ function Inv.CloseExt()
     Inv.ext = nil
     Rhylib.Net.Start("inv.close")
     net.SendToServer()
+end
+
+-- Put an item in hotbar slot n, or empty the slot (inst nil).
+function Inv.RequestHotbar(inst, n)
+    Rhylib.Net.Start("inv.hotbar")
+    net.WriteUInt(inst and inst.uid or 0, Items.UID_BITS)
+    net.WriteUInt(n, 3)
+    net.SendToServer()
+end
+
+-- The item in hotbar slot n, if any.
+function Inv.HotbarItem(n)
+    for _, inst in pairs(Inv.byUid) do
+        if inst.hb == n then return inst end
+    end
 end
 
 function Inv.RequestSplit(inst)
@@ -191,9 +213,10 @@ function Inv.RequestMove(inst, cid, x, y, rot, single)
     net.SendToServer()
 end
 
-function Inv.RequestDrop(inst)
+function Inv.RequestDrop(inst, single)
     Rhylib.Net.Start("inv.drop")
     net.WriteUInt(inst.uid, Items.UID_BITS)
+    net.WriteBool(single or false)
     net.SendToServer()
 end
 

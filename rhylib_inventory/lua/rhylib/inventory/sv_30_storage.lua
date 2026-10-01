@@ -269,7 +269,7 @@ function Inv.Deposit(ply, uid, x, y, rot, single)
     local inst = st.byUid[uid]
     if not inst then return end
     if not Items.CanLeave(st, inst) then
-        ply:PrintMessage(HUD_PRINTCENTER, "Empty the backpack first")
+        Inv.Note(ply, "Empty the backpack first")
         I.sendSet(ply, st, inst)
         return
     end
@@ -282,7 +282,7 @@ function Inv.Deposit(ply, uid, x, y, rot, single)
             if id == inst.id then stocked = true break end
         end
         if not stocked then
-            ply:PrintMessage(HUD_PRINTCENTER, "That doesn't go in here")
+            Inv.Note(ply, "That doesn't go in here")
             I.sendSet(ply, st, inst)
             return
         end
@@ -327,7 +327,7 @@ function Inv.Take(ply, suid, cid, x, y, rot, single)
     local def = Items.defs[so.id]
     if not def then return end
     if def.weapon and Inv.Has(ply, so.id) then
-        ply:PrintMessage(HUD_PRINTCENTER, "You already carry one")
+        Inv.Note(ply, "You already carry one")
         return
     end
 
@@ -347,6 +347,7 @@ function Inv.Take(ply, suid, cid, x, y, rot, single)
         I.update(ply, st, target)
     elseif Items.CanPlace(st, so.id, cid, x, y, rot) then
         local inst = { uid = I.nextUid(st), id = so.id, count = n, data = data }
+        Inv.AutoHotbar(st, inst)
         I.place(ply, st, inst, cid, x, y, rot)
         I.giveWeapon(ply, inst)
     else

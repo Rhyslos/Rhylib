@@ -40,6 +40,7 @@ Config.Register("inventory", "width", 5, "Personal inventory width in cells")
 Config.Register("inventory", "height", 3, "Personal inventory height in cells")
 Config.Register("inventory", "saveInterval", 2, "Seconds between saves of changed inventories")
 Config.Register("inventory", "worldItemLife", 600, "Seconds before a dropped item on the ground is removed (0 = never)")
+Config.Register("inventory", "autoHotbar", true, "New weapons go into the first free hotbar slot")
 Config.Register("inventory", "combineTime", 0.6, "Combining munitions: seconds per partly used magazine or cell (total between 1 and 8 s)")
 
 Inv.states = Inv.states or {}  -- [ply] = state
@@ -47,6 +48,7 @@ Inv.dirty = Inv.dirty or {}    -- [ply] = true
 
 Rhylib.Net.Register("inv.full")
 Rhylib.Net.Register("inv.busy")
+Rhylib.Net.Register("inv.note")
 
 local OP_REMOVE, OP_SET, OP_DIMS = 0, 1, 2
 
@@ -237,7 +239,7 @@ end
 local function serialize(st)
     local out = {}
     for _, o in pairs(st.byUid) do
-        out[#out + 1] = { o.id, o.x, o.y, o.rot and 1 or 0, o.count, o.data, o.c }
+        out[#out + 1] = { o.id, o.x, o.y, o.rot and 1 or 0, o.count, o.data, o.c, o.hb }
     end
     return out
 end
@@ -252,11 +254,19 @@ local function load(ply, st)
             if (pass == 1) == (cid == SLOT_BACK) then
                 local id, x, y, rot, count = row[1], row[2], row[3], row[4] == 1, row[5]
                 if Items.defs[id] and Items.CanPlace(st, id, cid, x, y, rot) then
-                    local inst = { uid = nextUid(st), id = id, count = count, data = istable(row[6]) and row[6] or {} }
+                    local inst = { uid = nextUid(st), id = id, count = count, data = istable(row[6]) and row[6] or {}, hb = tonumber(row[8]) }
                     place(ply, st, inst, cid, x, y, rot)
                 end
             end
         end
+    end
+    -- Saved before the hotbar existed: give the weapons slots once.
+    local any = false
+    for _, o in pairs(st.byUid) do
+        if o.hb then any = true break end
+    end
+    if not any then
+        for _, o in pairs(st.byUid) do Inv.AutoHotbar(st, o) end
     end
     Inv.dirty[ply] = nil
 end
@@ -336,6 +346,7 @@ function Inv.AddItem(ply, id, count, data)
         if not cid then break end
         local n = stackable and math.min(def.stack, count) or 1
         local inst = { uid = nextUid(st), id = id, count = n, data = table.Copy(data) }
+        Inv.AutoHotbar(st, inst)
         place(ply, st, inst, cid, x, y, rot)
         count = count - n
         giveWeapon(ply, inst)
@@ -390,22 +401,28 @@ function Inv.AddOrDrop(ply, id, count, data)
     if left > 0 then Inv.SpawnWorldItem(ply, id, left, data) end
 end
 
-function Inv.Drop(ply, uid)
+-- single: drop just one off a stack (ctrl + drag out of the window).
+function Inv.Drop(ply, uid, single)
     local st = Inv.Get(ply)
     local inst = st.byUid[uid]
     if not inst then return end
     if not Items.CanLeave(st, inst) then
-        ply:PrintMessage(HUD_PRINTCENTER, "Empty the backpack first")
+        Inv.Note(ply, "Empty the backpack first")
         return
     end
-    if inst.data and inst.data.issued then
-        removeInst(ply, st, uid)  -- issued gear goes back, it never lands on the ground
-        ply:PrintMessage(HUD_PRINTCENTER, "Handed back")
-        return
+    local n = (single and inst.count > 1) and 1 or inst.count
+    local issued = inst.data and inst.data.issued
+    if not issued then
+        captureWeapon(ply, inst)
+        if not IsValid(Inv.SpawnWorldItem(ply, inst.id, n, inst.data)) then return end
     end
-    captureWeapon(ply, inst)
-    local ent = Inv.SpawnWorldItem(ply, inst.id, inst.count, inst.data)
-    if IsValid(ent) then removeInst(ply, st, uid) end
+    if n < inst.count then
+        inst.count = inst.count - n
+        update(ply, st, inst)
+    else
+        removeInst(ply, st, uid)
+    end
+    if issued then Inv.Note(ply, "Issued gear handed back") end  -- never lands on the ground
 end
 
 -- Moves one item off a stack to x, y (ctrl + drag).
@@ -445,7 +462,7 @@ function Inv.Move(ply, uid, cid, x, y, rot, single)
     end
 
     if cid ~= inst.c and not Items.CanLeave(st, inst) then
-        ply:PrintMessage(HUD_PRINTCENTER, "Empty the backpack first")
+        Inv.Note(ply, "Empty the backpack first")
         sendSet(ply, st, inst)
         return
     end
@@ -469,6 +486,40 @@ function Inv.Move(ply, uid, cid, x, y, rot, single)
     end
 end
 
+--------------------------------------------------------------------------
+-- Hotbar slots (inst.hb). One item per slot.
+--------------------------------------------------------------------------
+
+-- New weapons go into the first free slot (if autoHotbar is on).
+function Inv.AutoHotbar(st, inst)
+    local def = Items.defs[inst.id]
+    if inst.hb or not def or not def.weapon or not Config.Get("inventory", "autoHotbar") then return end
+    local used = {}
+    for _, o in pairs(st.byUid) do
+        if o.hb then used[o.hb] = true end
+    end
+    for n = 1, Items.HotbarSize(st) do
+        if not used[n] then inst.hb = n return end
+    end
+end
+
+-- Put item uid in slot n (uid 0: just empty slot n).
+function Inv.SetHotbar(ply, uid, n)
+    local st = Inv.Get(ply)
+    if n < 1 or n > Items.HOTBAR_PACK then return end
+    for _, o in pairs(st.byUid) do
+        if o.hb == n and o.uid ~= uid then
+            o.hb = nil
+            update(ply, st, o)
+        end
+    end
+    local inst = st.byUid[uid]
+    if inst and inst.hb ~= n then
+        inst.hb = n
+        update(ply, st, inst)
+    end
+end
+
 -- Splits a stack in two; the new half goes to the first free spot,
 -- same container first.
 function Inv.Split(ply, uid)
@@ -479,7 +530,7 @@ function Inv.Split(ply, uid)
     local cid, x, y, rot = inst.c, Items.FindSpot(st.cont[inst.c], inst.id)
     if not x then cid, x, y, rot = findSpot(st, inst.id) end
     if not cid or not x then
-        ply:PrintMessage(HUD_PRINTCENTER, "No room to split the stack")
+        Inv.Note(ply, "No room to split the stack")
         return
     end
     local half = { uid = nextUid(st), id = inst.id, count = n, data = table.Copy(inst.data or {}) }
@@ -518,20 +569,34 @@ local function addInto(ply, st, id, count, data, cid)
 end
 
 --------------------------------------------------------------------------
--- Combine munitions: partly used magazines and power cells in the
--- backpack are poured together (2 magazines at 30% become one at 60%).
--- Takes a moment; the result is worked out when the timer ends.
+-- Combine munitions: partly used magazines and power cells you carry,
+-- in the main grid or the backpack, are poured together (2 magazines at
+-- 30% become one at 60%). The results go into the backpack if you wear
+-- one, otherwise the main grid. Takes a moment; the result is worked out when the
+-- timer ends.
 --------------------------------------------------------------------------
 
-local function partials(back)
+-- A short message shown in the inventory window (it covers the HUD).
+function Inv.Note(ply, text)
+    Rhylib.Net.Start("inv.note")
+    net.WriteString(text)
+    net.Send(ply)
+end
+
+local function partials(st)
     local groups, n = {}, 0
-    for _, o in pairs(back.items) do
-        local def = Items.defs[o.id]
-        local fill = o.data and o.data.fill or 1
-        if def and def.fill and fill < 0.999 and fill > 0 then
-            groups[o.id] = groups[o.id] or {}
-            table.insert(groups[o.id], o)
-            n = n + 1
+    for _, cid in ipairs({ MAIN, BACK }) do
+        local c = st.cont[cid]
+        if c then
+            for _, o in pairs(c.items) do
+                local def = Items.defs[o.id]
+                local fill = o.data and o.data.fill or 1
+                if def and def.fill and fill < 0.999 and fill > 0 then
+                    groups[o.id] = groups[o.id] or {}
+                    table.insert(groups[o.id], o)
+                    n = n + 1
+                end
+            end
         end
     end
     return groups, n
@@ -545,19 +610,14 @@ end
 
 function Inv.StartCombine(ply)
     local st = Inv.Get(ply)
-    local back = st.cont[BACK]
-    if not back then
-        ply:PrintMessage(HUD_PRINTCENTER, "Wear a backpack first")
-        return
-    end
     if st.combineEnd and st.combineEnd > CurTime() then return end
-    local groups, n = partials(back)
+    local groups, n = partials(st)
     local useful = false
     for _, list in pairs(groups) do
         if #list >= 2 then useful = true break end
     end
     if not useful then
-        ply:PrintMessage(HUD_PRINTCENTER, "Nothing to combine in the backpack")
+        Inv.Note(ply, "Nothing to combine: needs 2+ partly used of the same kind")
         return
     end
     local dur = math.Clamp(n * Config.Get("inventory", "combineTime"), 1, 8)
@@ -580,10 +640,11 @@ function Inv.FinishCombine(ply)
     local st = Inv.Get(ply)
     st.combineEnd = nil
     sendBusy(ply, 0)
-    local back = st.cont[BACK]
-    if not back or not ply:Alive() then return end
+    if not ply:Alive() then return end
+    local into = st.cont[BACK] and BACK or MAIN
 
-    local groups = partials(back)
+    local groups = partials(st)
+    local merged = 0
     for id, list in pairs(groups) do
         if #list >= 2 then
             local sum, issued = 0, false
@@ -594,11 +655,12 @@ function Inv.FinishCombine(ply)
             end
             local full = math.floor(sum + 0.0001)
             local rest = sum - full
-            addInto(ply, st, id, full, { fill = 1, issued = issued or nil }, BACK)
-            if rest > 0.005 then addInto(ply, st, id, 1, { fill = rest, issued = issued or nil }, BACK) end
+            addInto(ply, st, id, full, { fill = 1, issued = issued or nil }, into)
+            if rest > 0.005 then addInto(ply, st, id, 1, { fill = rest, issued = issued or nil }, into) end
+            merged = merged + #list
         end
     end
-    ply:PrintMessage(HUD_PRINTCENTER, "Munitions combined")
+    Inv.Note(ply, merged > 0 and ("Combined " .. merged .. " partly used items") or "Nothing left to combine")
 end
 
 function Inv.SendFull(ply)
@@ -647,6 +709,11 @@ Rhylib.Net.Receive("inv.move", function(ply)
     Inv.Move(ply, uid, cid, x, y, rot, single)
 end, { rate = 20, burst = 10 })
 
+Rhylib.Net.Receive("inv.hotbar", function(ply)
+    local uid = net.ReadUInt(Items.UID_BITS)
+    Inv.SetHotbar(ply, uid, net.ReadUInt(3))
+end, { rate = 10, burst = 10 })
+
 Rhylib.Net.Receive("inv.split", function(ply)
     Inv.Split(ply, net.ReadUInt(Items.UID_BITS))
 end, { rate = 5, burst = 5 })
@@ -656,8 +723,9 @@ Rhylib.Net.Receive("inv.combine", function(ply)
 end, { rate = 2, burst = 2 })
 
 Rhylib.Net.Receive("inv.drop", function(ply)
-    Inv.Drop(ply, net.ReadUInt(Items.UID_BITS))
-end, { rate = 5, burst = 5 })
+    local uid = net.ReadUInt(Items.UID_BITS)
+    Inv.Drop(ply, uid, net.ReadBool())
+end, { rate = 8, burst = 8 })
 
 Rhylib.Net.Receive("inv.use", function(ply)
     local inst = Inv.Get(ply).byUid[net.ReadUInt(Items.UID_BITS)]
