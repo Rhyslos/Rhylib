@@ -55,6 +55,10 @@ SWEP.Mags = { "mag_large", "mag_small" }
 SWEP.FireModes = { "auto" }
 SWEP.ReloadTime = 3.2
 
+-- No firing gesture on the player model: the shotgun one jerks the
+-- body around at 900 rpm.
+SWEP.PlayerFireAnim = false
+
 SWEP.SpinUp = 0.6
 SWEP.SpinMoveMult = 0.6
 SWEP.SpinSound = "weapons/physcannon/physcannon_charge.wav"  -- placeholder

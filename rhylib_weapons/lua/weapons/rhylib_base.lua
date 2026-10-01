@@ -360,7 +360,9 @@ function SWEP:FireShot()
 
     self:EmitSound(self.FireSound, 80, util.SharedRandom("rhylib.pitch", 96, 104), 1, CHAN_WEAPON)
     self:SendWeaponAnim(ACT_VM_PRIMARYATTACK)
-    owner:SetAnimation(PLAYER_ATTACK1)
+    -- The third-person firing gesture (SWEP.PlayerFireAnim = false turns it
+    -- off, for guns whose hold type's gesture looks wrong).
+    if self.PlayerFireAnim ~= false then owner:SetAnimation(PLAYER_ATTACK1) end
 
     if owner:IsPlayer() then
         owner:ViewPunch(Angle(-0.3, util.SharedRandom("rhylib.punch", -0.15, 0.15), 0))
