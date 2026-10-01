@@ -12,6 +12,7 @@ local Config = Rhylib.Config
 
 Rhylib.Net.Register("chat.msg")
 Rhylib.Perms.Register("rhylib.chat.admin", "admin", "See the admin chat channel")
+Rhylib.Perms.Register("rhylib.chat.event", "admin", "Post in the Event chat channel")
 
 local lastAdvert = setmetatable({}, { __mode = "k" })
 
@@ -70,6 +71,25 @@ route.admin = function(ply, ch, text)
             end)
         end
     end
+end
+
+route.rp = function(ply, ch, text)
+    send(player.GetHumans(), ch, ply, text)
+end
+
+-- Staff only (permission); everyone sees it.
+route.event = function(ply, ch, text)
+    Rhylib.Perms.Check(ply, "rhylib.chat.event", function(ok)
+        if not IsValid(ply) then return end
+        if not ok then
+            note(ply, "Only event staff can post events")
+            return
+        end
+        send(player.GetHumans(), ch, ply, text)
+        hook.Run("Rhylib.ChatMessage", ply, ch.id, text, nil)
+        print(string.format("[Chat][%s] %s: %s", ch.name, ply:Nick(), text))
+    end)
+    return false  -- sent (and logged) above, after the permission check
 end
 
 route.pm = function(ply, ch, text, target)

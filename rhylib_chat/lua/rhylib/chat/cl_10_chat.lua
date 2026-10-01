@@ -109,15 +109,28 @@ net.Receive(Rhylib.Net.Name("chat.msg"), function()
     end
     local name = IsValid(sender) and sender:Nick() or "?"
     local nameCol = IsValid(sender) and team.GetColor(sender:Team()) or COL_DIM
-    local segs = { { ch.color, "[" .. ch.name .. "] " }, { nameCol, name } }
-    if ch.private then
-        local to = IsValid(target) and target:Nick() or "?"
-        segs[#segs + 1] = { COL_DIM, (target == LocalPlayer() and " → you" or (" → " .. to)) }
+    local segs = { { ch.color, "[" .. ch.name .. "] " } }
+    if ch.action then
+        -- RP: an action, "* Name does something".
+        segs[#segs + 1] = { ch.color, "* " }
+        segs[#segs + 1] = { nameCol, name }
+        segs[#segs + 1] = { ch.color, " " .. text }
+    else
+        segs[#segs + 1] = { nameCol, name }
+        if ch.private then
+            local to = IsValid(target) and target:Nick() or "?"
+            segs[#segs + 1] = { COL_DIM, (target == LocalPlayer() and " → you" or (" → " .. to)) }
+        end
+        segs[#segs + 1] = { ch.id == "event" and ch.color or COL_TEXT, ": " .. text }
     end
-    segs[#segs + 1] = { COL_TEXT, ": " .. text }
     Chat.Add(segs, IsValid(sender) and sender:SteamID64() or nil)
-    chat.PlaySound()
-    MsgC(ch.color, "[" .. ch.name .. "] ", nameCol, name, COL_TEXT, ": " .. text .. "\n")
+    if ch.id == "event" then
+        Chat.ShowEvent(name, text)
+        surface.PlaySound("buttons/blip1.wav")
+    else
+        chat.PlaySound()
+    end
+    MsgC(ch.color, "[" .. ch.name .. "] ", nameCol, name, COL_TEXT, (ch.action and " " or ": ") .. text .. "\n")
 end)
 
 --------------------------------------------------------------------------
@@ -895,4 +908,50 @@ Rhylib.Hook.Add("PlayerBindPress", "chat.open", function(_, bind, pressed)
         Chat.Open()
         return true
     end
+end)
+
+--------------------------------------------------------------------------
+-- Event banner: the latest event, top centre, for a few seconds.
+--------------------------------------------------------------------------
+
+local EVENT_TIME = 9
+local event
+local COL_EVENT = Color(255, 205, 80)
+
+function Chat.ShowEvent(by, text)
+    event = { by = by, text = text, at = CurTime() }
+end
+
+Rhylib.Hook.Add("HUDPaint", "chat.event", function()
+    if not event then return end
+    local age = CurTime() - event.at
+    if age > EVENT_TIME then
+        event = nil
+        return
+    end
+    local a = math.min(1, age * 4, (EVENT_TIME - age) * 1.5)
+    local s = ScrH() / 1080
+    local font, small = UI.Font(math.floor(20 * s + 0.5), 700), UI.Font(math.floor(13 * s + 0.5))
+    surface.SetFont(font)
+    local tw = surface.GetTextSize(event.text)
+    local w = math.min(math.max(tw + 60 * s, 360 * s), ScrW() * 0.7)
+    local h = 62 * s
+    local x, y = math.floor((ScrW() - w) * 0.5), math.floor(90 * s)
+    surface.SetDrawColor(COL_BG.r, COL_BG.g, COL_BG.b, COL_BG.a * a)
+    surface.DrawRect(x, y, w, h)
+    surface.SetDrawColor(COL_EVENT.r, COL_EVENT.g, COL_EVENT.b, 255 * a)
+    surface.DrawRect(x, y, w, math.max(2, math.floor(2 * s)))
+    surface.SetDrawColor(COL_EDGE_DARK.r, COL_EDGE_DARK.g, COL_EDGE_DARK.b, COL_EDGE_DARK.a * a)
+    surface.DrawOutlinedRect(x, y, w, h)
+    draw.SimpleText("EVENT · " .. string.upper(event.by), small, x + w * 0.5, y + 16 * s, ColorAlpha(COL_EVENT, 255 * a), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+    -- Long text is cut to the banner width (the full line is in the chat).
+    local text = event.text
+    if tw > w - 30 * s then
+        while #text > 1 and surface.GetTextSize(text .. "…") > w - 30 * s do
+            text = string.sub(text, 1, (utf8.offset(text, -1) or #text) - 1)  -- drop one whole character
+        end
+        text = text .. "…"
+        event.text, tw = text, surface.GetTextSize(text)
+    end
+    draw.SimpleText(text, font, x + w * 0.5, y + 40 * s, ColorAlpha(COL_TEXT, 255 * a), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
 end)

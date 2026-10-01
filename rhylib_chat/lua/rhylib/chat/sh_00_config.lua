@@ -1,7 +1,9 @@
 --[[
     Chat channels and command parsing (shared).
 
-    Channels: public, local, advert, admin, and private messages.
+    Channels: public, local, advert, admin, private messages, RP (public
+    roleplay actions) and Event (event announcements to everyone, sent by
+    staff with the rhylib.chat.event permission).
     (Squad, battalion and command come with those systems.)
 
     Typing:
@@ -11,6 +13,8 @@
       /local text   /l text               people near you
       /advert text  /ad text              everyone, highlighted, with a cooldown
       /admin text   /a text               admins (anyone can send, for reports)
+      /rp text                            everyone, as an action: "* Name text"
+      /event text   /ev text              everyone, highlighted with a banner (staff)
       /pm name text  /pm "two words" text a private message
       /local (nothing else)               switches your current channel
 
@@ -30,7 +34,9 @@ Chat.CHANNELS = {
     { id = "advert", name = "Advert", color = Color(239, 159, 39), cmds = { "advert", "ad" }, desc = "Everyone, highlighted (cooldown)" },
     { id = "admin", name = "Admin", color = Color(226, 75, 74), cmds = { "admin", "a" }, desc = "Reach the admins" },
     { id = "pm", name = "PM", color = Color(190, 150, 255), cmds = { "pm", "w", "msg" }, desc = "Private message: /pm name text", private = true },
-}
+    { id = "rp", name = "RP", color = Color(120, 190, 230), cmds = { "rp" }, desc = "Roleplay actions, everyone sees them", action = true },
+    { id = "event", name = "Event", color = Color(255, 205, 80), cmds = { "event", "ev" }, desc = "Event announcements to everyone (staff)", staff = "rhylib.chat.event" },
+}  -- 7 channels max with 3 bits; add new ones at the end
 Chat.byId, Chat.byCmd = {}, {}
 for i, c in ipairs(Chat.CHANNELS) do
     c.index = i
