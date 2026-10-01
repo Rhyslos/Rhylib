@@ -32,6 +32,11 @@ local UI = Rhylib.UI
 Chat.lines = Chat.lines or {}      -- { time, segs = { { col, text }, ... }, sid = sender SteamID64 }
 Chat.current = Chat.current or nil -- current channel
 Chat.scroll = 0
+Chat.history = Chat.history or {}  -- lines you sent this session, oldest first
+
+local function maxLength()
+    return Rhylib.Config.Get("chat", "maxLength") or 300
+end
 
 local MAX_LINES = 150
 local SHOW_TIME = 12               -- seconds a message stays when the chat is closed
@@ -201,8 +206,8 @@ function Chat.Rect()
         local mx, my = HUD.Margins("ammo")  -- same margins as the ammo box on the other cheek
         local bottom = H - my
         local top = math.floor(visorEdgeY(mx))
-        local right = math.floor(Chat.VisorEdgeX(bottom))
-        return mx, top, right - mx, bottom - top, true
+        local w = math.floor(W * 0.25)
+        return mx, top, w, bottom - top, true
     end
     local w, h = math.floor(W * 0.22), math.floor(260 * s)
     return math.floor(24 * s), H - math.floor(210 * s) - h, w, h, false
@@ -220,18 +225,20 @@ local function shape(x, y, w, h, visor)
     local pts, top = { { x = x, y = y } }, { { x, y } }
 
     if visor then
-        -- Along the curve from the top-left corner down to the bottom-right.
-        -- The corner itself sits exactly on the curve (y is rounded), or the
-        -- outline would dent inward and the fill would draw wrong.
+        -- Along the curve from the top-left corner to the right edge, then
+        -- straight down. Both ends sit exactly on the curve (y is rounded),
+        -- or the outline would dent inward and the fill would draw wrong.
         local cy = visorEdgeY(x)
         pts[1].y, top[1][2] = cy, cy
         for _, c in ipairs(visorCurve()) do
-            if c[1] > x and c[1] < x1 and c[2] > y and c[2] < y1 then
+            if c[1] > x and c[1] < x1 and c[2] > cy and c[2] < y1 then
                 pts[#pts + 1] = { x = c[1], y = c[2] }
                 top[#top + 1] = { c[1], c[2] }
             end
         end
-        top[#top + 1] = { x1, y1 }
+        local ey = math.min(visorEdgeY(x1), y1)
+        pts[#pts + 1] = { x = x1, y = ey }
+        top[#top + 1] = { x1, ey }
     else
         local cut = math.floor(14 * ScrH() / 1080)
         pts[#pts + 1] = { x = x1 - cut, y = y }
@@ -267,8 +274,37 @@ local function wrap(msg, font, w)
         local run = nil  -- the piece words of this segment are joining
         local pendingSpace = 0
         for word, space in string.gmatch(seg[2], "(%S*)(%s*)") do
+            -- A word wider than a whole line (someone holding a key down)
+            -- is cut into pieces that each fit, carrying on on the next line.
+            local ww = word ~= "" and surface.GetTextSize(word) or 0
+            while ww > w do
+                local room = w - (x > 0 and (x + pendingSpace * spaceW) or 0)
+                -- Characters, not bytes; text that isn't valid UTF-8 is cut by byte.
+                local chars = utf8.len(word)
+                local function prefix(n)
+                    if not chars then return string.sub(word, 1, n) end
+                    return string.sub(word, 1, (utf8.offset(word, n + 1) or (#word + 1)) - 1)
+                end
+                local piece = ""
+                for n = 1, chars or #word do
+                    local nextPiece = prefix(n)
+                    if surface.GetTextSize(nextPiece) > room then break end
+                    piece = nextPiece
+                end
+                if piece == "" and x == 0 then piece = prefix(1) end  -- always place at least one character
+                if piece ~= "" then
+                    x = x + pendingSpace * spaceW
+                    if run then run[2] = run[2] .. string.rep(" ", pendingSpace) .. piece else
+                        run = { seg[1], piece, x }
+                        line[#line + 1] = run
+                    end
+                    word = string.sub(word, #piece + 1)
+                    ww = surface.GetTextSize(word)
+                end
+                lines[#lines + 1] = line
+                line, x, run, pendingSpace = {}, 0, nil, 0
+            end
             if word ~= "" then
-                local ww = surface.GetTextSize(word)
                 if x > 0 and x + pendingSpace * spaceW + ww > w then
                     lines[#lines + 1] = line
                     line, x, run, pendingSpace = {}, 0, nil, 0
@@ -540,6 +576,12 @@ end
 local function submit(str)
     str = string.Trim(str)
     if str == "" then return false end
+    -- Remember it for Up/Down (no repeats in a row, the last 30).
+    local hist = Chat.history
+    if hist[#hist] ~= str then
+        hist[#hist + 1] = str
+        if #hist > 30 then table.remove(hist, 1) end
+    end
     -- Chat's own settings, handled here (never sent).
     local low = string.lower(str)
     if low == "/togglechat" or low == "/pinchat" then
@@ -589,9 +631,17 @@ function PANEL:Init()
     entry:SetPaintBackground(false)
     entry.Paint = function(e, w, h)
         e:DrawTextEntryText(COL_TEXT, Color(70, 100, 140), COL_TEXT)
-        if e:GetValue() == "" then
+        local len = #e:GetValue()
+        if len == 0 then
             draw.SimpleText("Message " .. currentChannel().name .. "…", self.m.font, 2, h * 0.5, COL_DIM, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        elseif len > maxLength() - 40 then
+            draw.SimpleText(len .. "/" .. maxLength(), UI.Font(12), w - 4, h * 0.5, len >= maxLength() and Color(226, 75, 74) or COL_DIM,
+                TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
         end
+    end
+    -- Character limit (the server cuts longer messages anyway).
+    entry.AllowInput = function(e)
+        if #e:GetValue() >= maxLength() then return true end
     end
     entry.OnEnter = function(e)
         local value = e:GetValue()
@@ -610,6 +660,11 @@ function PANEL:Init()
         Chat.Close()
     end
     entry.OnChange = function(e)
+        local value = e:GetValue()
+        if #value > maxLength() then  -- pasted past the limit
+            e:SetText(string.sub(value, 1, maxLength()))
+            e:SetCaretPos(maxLength())
+        end
         self.menu = nil
         self:CheckSwitch()
         self:UpdateSuggest()
@@ -630,6 +685,18 @@ function PANEL:Init()
             return true
         elseif code == KEY_DOWN and #self.suggest > 0 then
             self.pick = math.min(#self.suggest, self.pick + 1)
+            return true
+        elseif code == KEY_UP or code == KEY_DOWN then
+            -- Your earlier messages: Up goes back, Down comes forward.
+            local hist = Chat.history
+            if #hist == 0 then return true end
+            local i = (self.histIndex or (#hist + 1)) + (code == KEY_UP and -1 or 1)
+            i = math.Clamp(i, 1, #hist + 1)
+            self.histIndex = i
+            local value = hist[i] or ""
+            e:SetText(value)
+            e:SetCaretPos(#value)
+            self.suggest = {}
             return true
         elseif code == KEY_ENTER or code == KEY_PAD_ENTER then
             e:OnEnter()
