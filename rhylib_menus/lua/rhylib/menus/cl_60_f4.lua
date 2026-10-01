@@ -537,8 +537,17 @@ function PANEL:Paint(w, h)
     draw.SimpleText(job .. "   ·   " .. money(myMoney()), K.Font(14, 600), w - s(14), s(20), C.text, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
 end
 
-function PANEL:OnKeyCodePressed(code)
-    if code == KEY_F4 then self:Remove() end
+-- F4 closes it, but only a fresh press: the key must have been let go
+-- since the menu opened (holding F4 never closes it).
+function PANEL:Think()
+    local down = input.IsKeyDown(KEY_F4)
+    if not down then
+        self.f4Released = true
+    elseif self.f4Released and not self.f4WasDown then
+        self:Remove()
+        return
+    end
+    self.f4WasDown = down
 end
 
 vgui.Register("RhylibF4", PANEL, "EditablePanel")
@@ -569,12 +578,15 @@ Rhylib.Hook.Add("PlayerBindPress", "menus.f4", function(_, bind, pressed)
     end
 end)
 
--- And in case DarkRP opens its menu another way.
+-- In case DarkRP opens its menu another way: it can only open ours.
+-- Closing is ours alone (F4 press, Esc, the Close button), so nothing
+-- from DarkRP can close it when the key is let go.
 local function takeOver()
     if not DarkRP then return end
-    DarkRP.openF4Menu = function() if not IsValid(Menus.f4) then Menus.ToggleF4() end end
-    DarkRP.closeF4Menu = function() if IsValid(Menus.f4) then Menus.f4:Remove() end end
-    DarkRP.toggleF4Menu = Menus.ToggleF4
+    local function open() if not IsValid(Menus.f4) then Menus.ToggleF4() end end
+    DarkRP.openF4Menu = open
+    DarkRP.toggleF4Menu = open
+    DarkRP.closeF4Menu = function() end
     DarkRP.getF4MenuPanel = function() return Menus.f4 end
 end
 Rhylib.Hook.Add("InitPostEntity", "menus.f4", takeOver)
