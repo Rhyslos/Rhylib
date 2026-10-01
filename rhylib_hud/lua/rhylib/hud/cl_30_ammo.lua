@@ -98,7 +98,7 @@ Rhylib.Hook.Add("HUDPaint", "hud.ammo", function()
         local mx, my = HUD.Margins("ammo")
         local x = ScrW() - w - mx
         local y = ScrH() - contentH - pad * 2 - my
-        HUD.Panel(x, y, w, contentH + pad * 2)
+        HUD.Frame(x, y, w, contentH + pad * 2, { cut = math.floor(12 * s), cutLeft = true })
         drawContent(ply, wep, x + pad, y + pad, w - pad * 2, sizes)
     else
         local x, y, w = HUD.Plate(1)

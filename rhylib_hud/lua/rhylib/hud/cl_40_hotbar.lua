@@ -215,24 +215,36 @@ Rhylib.Hook.Add("HUDPaint", "hud.hotbar", function()
     local active = ply:GetActiveWeapon()
 
     local since = RealTime() - lastSwitch
-    -- In the helmet visor the bar hides completely when idle, so it
-    -- doesn't block the chin opening.
     local visor = HUD.VisorActive and HUD.VisorActive()
-    local minAlpha = visor and 0 or 90
     local alpha = 255
-    if fadeVar:GetBool() or visor then
-        alpha = since < 2.5 and 255 or math.max(minAlpha, 255 - (since - 2.5) * 400)
+    if fadeVar:GetBool() then
+        alpha = since < 2.5 and 255 or math.max(90, 255 - (since - 2.5) * 400)
     end
 
-    -- Square-ish boxes between the corner plates; they shrink to fit.
-    local gap = math.floor(6 * s)
-    local space = ScrW() * 0.44
-    local bw = math.floor(math.Clamp((space - gap * (count - 1)) / count, 56 * s, 104 * s))
-    local bh = math.floor(76 * s)
-    local total = count * bw + (count - 1) * gap
-    local x = math.floor((ScrW() - total) * 0.5)
-    local _, my = HUD.Margins("hotbar")
-    local y = ScrH() - bh - my
+    local gap, bw, bh, total, x, y
+    if visor then
+        -- Helmet visor: on the right cheek, against the ammo box, clear of
+        -- the cheek edge (and the stamina strip along it).
+        gap = math.floor(5 * s)
+        bh = math.floor(58 * s)
+        local mx, my = HUD.Margins("ammo")
+        local right = ScrW() - math.floor(240 * s) - mx - math.floor(10 * s)  -- the ammo box's left side
+        y = ScrH() - my - bh
+        local left = (HUD.VisorCheekX and HUD.VisorCheekX(y, 1) or ScrW() * 0.6) + ScrH() * 0.022
+        bw = math.floor(math.Clamp((right - left - gap * (count - 1)) / count, 40 * s, 96 * s))
+        total = count * bw + (count - 1) * gap
+        x = math.floor(right - total)
+    else
+        -- Square-ish boxes between the corner plates; they shrink to fit.
+        gap = math.floor(6 * s)
+        local space = ScrW() * 0.44
+        bw = math.floor(math.Clamp((space - gap * (count - 1)) / count, 56 * s, 104 * s))
+        bh = math.floor(76 * s)
+        total = count * bw + (count - 1) * gap
+        x = math.floor((ScrW() - total) * 0.5)
+        local _, my = HUD.Margins("hotbar")
+        y = ScrH() - bh - my
+    end
 
     -- Shared with the stamina bar, which sits on top (even while this fades out).
     local r = HUD.HotbarRect
@@ -247,7 +259,7 @@ Rhylib.Hook.Add("HUDPaint", "hud.hotbar", function()
         local isActive = e.wep ~= nil and e.wep == active
         local a = isActive and math.min(255, alpha * 2) or alpha
         if e.empty then a = a * 0.5 end
-        HUD.Panel(bx, y, bw, bh, a)
+        HUD.Frame(bx, y, bw, bh, { alpha = a, ticks = isActive })
         if isActive then
             surface.SetDrawColor(C.accent.r, C.accent.g, C.accent.b, a)
             surface.DrawRect(bx, y + bh - barH, bw, barH)

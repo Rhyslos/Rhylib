@@ -5,10 +5,11 @@
     a chin opening at the bottom centre. Around it: a curved brow along
     the top and two cheek pieces in the lower corners.
 
-    On the left edge: four transparent blue blocks for armour. On the
-    right edge: four transparent red blocks for health. Each block is
-    always 25%; a partly used block fills from the bottom. The ammo
-    counter sits on the lower-right cheek (cl_30_ammo.lua).
+    Armour (blue, left) and health (red, right) are four long bars each,
+    lying along the cheek edges just inside the helmet, from the screen
+    side toward the chin (not all the way). Each bar is always 25%; a
+    partly used bar fills from the screen side. The ammo counter sits on
+    the lower-right cheek (cl_30_ammo.lua), the chat on the lower-left.
 
     Hidden in third person, in vehicles and while dead.
     Toggle: rhylib_hud_visor 0/1.
@@ -37,12 +38,31 @@ local CHEEK_TOP = 0.75       -- where the cheek meets the screen side
 local CHIN_HALF = 0.1        -- half the chin opening width (0.1 = 20% of the screen)
 local CURVE_STEPS = 32
 
--- Armour / health blocks.
-local BLOCK_X = 0.004        -- distance from the screen side
-local BLOCK_W = 0.04
-local BLOCK_TOP = 0.2
-local BLOCK_H = 0.105
-local BLOCK_GAP = 0.013
+-- Armour / health bars along the cheek edges (shares of the screen).
+local BAR_OFFSET = 0.005     -- below the helmet edge
+local BAR_THICK = 0.009      -- bar thickness
+local BAR_FROM = 0.012       -- starts this far from the screen side (share of the width)
+local BAR_TO = 0.3           -- ends here (the chin opening starts at 0.4)
+local BAR_GAP = 0.006        -- gap between the four bars (share of the width)
+local BAR_STEPS = 10         -- pieces per bar (sets how smoothly a bar fills)
+
+-- The cheek curve, as in build() below: x and y shares at t.
+local function cheekPoint(t)
+    local u = 1 - t
+    local function bz(p0, p1, p2, p3) return u * u * u * p0 + 3 * u * u * t * p1 + 3 * u * t * t * p2 + t * t * t * p3 end
+    return bz(0, 0.3, 0.39, 0.4), bz(0.75, 0.8, 0.86, 1.0)
+end
+
+-- Height share of the cheek edge at width share fx (0..0.4).
+local function cheekY(fx)
+    local lo, hi = 0, 1
+    for _ = 1, 30 do
+        local mid = (lo + hi) * 0.5
+        if cheekPoint(mid) < fx then lo = mid else hi = mid end
+    end
+    local _, y = cheekPoint((lo + hi) * 0.5)
+    return y
+end
 
 function HUD.VisorActive()
     if not visorVar:GetBool() then return false end
@@ -76,7 +96,7 @@ end
 local cache = { w = 0, h = 0 }
 
 local function build(W, H)
-    cache = { w = W, h = H, tris = {}, edges = {}, blocks = {} }
+    cache = { w = W, h = H, tris = {}, edges = {}, bars = {} }
 
     -- Brow: a smooth sag, deepest in the middle.
     local brow = {}
@@ -111,34 +131,60 @@ local function build(W, H)
         cache.edges[#cache.edges + 1] = curve
     end
 
-    -- Block rectangles, bottom block first.
+    -- Bars: for each side, four bars of small quads along the curve.
+    -- bars[side][k] = { quads = { {x1,y1, x2,y2, x3,y3, x4,y4}, ... }, outline = { points } }
+    cache.bars = {}
+    local span = (BAR_TO - BAR_FROM - BAR_GAP * 3) / 4
     for _, side in ipairs({ -1, 1 }) do
+        local function sx(f) return side < 0 and f * W or (1 - f) * W end
         local list = {}
-        local bw = BLOCK_W * W
-        local x = side < 0 and BLOCK_X * W or W - BLOCK_X * W - bw
-        for k = 4, 1, -1 do
-            local y = (BLOCK_TOP + (k - 1) * (BLOCK_H + BLOCK_GAP)) * H
-            list[#list + 1] = { x, y, bw, BLOCK_H * H }
+        for k = 1, 4 do
+            local f0 = BAR_FROM + (k - 1) * (span + BAR_GAP)
+            local top, bottom = {}, {}
+            for i = 0, BAR_STEPS do
+                local fx = f0 + span * i / BAR_STEPS
+                local y = cheekY(fx)
+                top[#top + 1] = { sx(fx), (y + BAR_OFFSET) * H }
+                bottom[#bottom + 1] = { sx(fx), (y + BAR_OFFSET + BAR_THICK) * H }
+            end
+            local quads = {}
+            for i = 1, BAR_STEPS do
+                local a1, b1, a2, b2 = top[i], top[i + 1], bottom[i + 1], bottom[i]
+                quads[i] = { { x = a1[1], y = a1[2] }, { x = b1[1], y = b1[2] }, { x = a2[1], y = a2[2] }, { x = b2[1], y = b2[2] } }
+                if side > 0 then  -- mirrored: keep the winding clockwise
+                    local q = quads[i]
+                    quads[i] = { q[2], q[1], q[4], q[3] }
+                end
+            end
+            local outline = {}
+            for _, p in ipairs(top) do outline[#outline + 1] = p end
+            for i = #bottom, 1, -1 do outline[#outline + 1] = bottom[i] end
+            list[k] = { quads = quads, outline = outline }
         end
-        cache.blocks[side] = list
+        cache.bars[side] = list
     end
 end
 
--- Four blocks for a 0..1 value, each block 25%, filling from the bottom.
-local function drawBlocks(list, frac, fill, line)
-    local thick = math.max(1, math.floor(ScrH() / 540))
-    for k, r in ipairs(list) do
+-- Four bars for a 0..1 value, each bar 25%, filling from the screen side.
+local function drawBars(list, frac, fill, line)
+    draw.NoTexture()
+    for k, bar in ipairs(list) do
         local part = math.Clamp(frac * 4 - (k - 1), 0, 1)
-        local x, y, w, h = r[1], r[2], r[3], r[4]
-        if part > 0 then
-            local fh = math.floor(h * part + 0.5)
+        local n = math.floor(part * BAR_STEPS + 0.5)
+        if n > 0 then
             surface.SetDrawColor(fill)
-            surface.DrawRect(x, y + h - fh, w, fh)
+            for i = 1, n do surface.DrawPoly(bar.quads[i]) end
+        end
+        if part > 0 then
             surface.SetDrawColor(line)
         else
             surface.SetDrawColor(line.r, line.g, line.b, COL_EMPTY_ALPHA)
         end
-        surface.DrawOutlinedRect(x, y, w, h, thick)
+        local o = bar.outline
+        for i = 1, #o do
+            local p, q = o[i], o[i % #o + 1]
+            surface.DrawLine(p[1], p[2], q[1], q[2])
+        end
     end
 end
 
@@ -167,6 +213,87 @@ Rhylib.Hook.Add("HUDPaint", "hud.visor", function()
     local ply = LocalPlayer()
     local maxAr = ply.GetMaxArmor and ply:GetMaxArmor() or 100
     if maxAr <= 0 then maxAr = 100 end
-    drawBlocks(cache.blocks[-1], ply:Armor() / maxAr, COL_ARMOR_FILL, COL_ARMOR_LINE)
-    drawBlocks(cache.blocks[1], math.max(ply:Health(), 0) / math.max(ply:GetMaxHealth(), 1), COL_HEALTH_FILL, COL_HEALTH_LINE)
+    drawBars(cache.bars[-1], ply:Armor() / maxAr, COL_ARMOR_FILL, COL_ARMOR_LINE)
+    drawBars(cache.bars[1], math.max(ply:Health(), 0) / math.max(ply:GetMaxHealth(), 1), COL_HEALTH_FILL, COL_HEALTH_LINE)
 end, -10)
+
+--------------------------------------------------------------------------
+-- Helpers for other HUD parts that sit on the cheeks (stamina, hotbar).
+--------------------------------------------------------------------------
+
+-- Screen x of the cheek edge at screen y. side -1 = left cheek, 1 = right.
+-- (Above the cheek: the screen side; below the chin: the chin edge.)
+function HUD.VisorCheekX(y, side)
+    local W, H = ScrW(), ScrH()
+    local fy = y / H
+    local lo, hi = 0, 1
+    for _ = 1, 30 do
+        local mid = (lo + hi) * 0.5
+        local _, py = cheekPoint(mid)
+        if py < fy then lo = mid else hi = mid end
+    end
+    local fx = cheekPoint((lo + hi) * 0.5)
+    return side < 0 and fx * W or (1 - fx) * W
+end
+
+--[[
+    A strip along a cheek edge, as quads, from width share fx0 to fx1,
+    offset into the cheek along the edge's normal (so it keeps its
+    thickness where the edge gets steep near the chin). Shares of the
+    screen height for offset and thickness. Quads are ordered from fx0
+    to fx1 and wound for surface.DrawPoly. Cached per screen size.
+]]
+local stripCache = {}
+function HUD.VisorStrip(side, fx0, fx1, offset, thick, steps)
+    local W, H = ScrW(), ScrH()
+    local key = table.concat({ W, H, side, fx0, fx1, offset, thick, steps }, ",")
+    if stripCache[key] then return stripCache[key] end
+
+    -- t at a width share.
+    local function tAt(fx)
+        local lo, hi = 0, 1
+        for _ = 1, 30 do
+            local mid = (lo + hi) * 0.5
+            if cheekPoint(mid) < fx then lo = mid else hi = mid end
+        end
+        return (lo + hi) * 0.5
+    end
+    local t0, t1 = tAt(fx0), tAt(fx1)
+    local outer, inner = {}, {}
+    for i = 0, steps do
+        local t = t0 + (t1 - t0) * i / steps
+        local px, py = cheekPoint(t)
+        local qx, qy = cheekPoint(math.min(t + 0.001, 1))
+        local tx, ty = (qx - px) * W, (qy - py) * H
+        local len = math.sqrt(tx * tx + ty * ty)
+        local nx, ny = -ty / len, tx / len  -- into the left cheek (down and out)
+        local x, y = px * W, py * H
+        local o1, o2 = offset * H, (offset + thick) * H
+        local ax, ay = x + nx * o1, y + ny * o1
+        local bx, by = x + nx * o2, y + ny * o2
+        if side > 0 then ax, bx = W - ax, W - bx end
+        outer[#outer + 1] = { ax, ay }
+        inner[#inner + 1] = { bx, by }
+    end
+    local quads = {}
+    for i = 1, steps do
+        local a, b, c, d = outer[i], outer[i + 1], inner[i + 1], inner[i]
+        local q = { { x = a[1], y = a[2] }, { x = b[1], y = b[2] }, { x = c[1], y = c[2] }, { x = d[1], y = d[2] } }
+        -- Keep the winding clockwise on screen.
+        local area = 0
+        for k = 1, 4 do
+            local p, n = q[k], q[k % 4 + 1]
+            area = area + (p.x * n.y - n.x * p.y)
+        end
+        if area < 0 then q = { q[1], q[4], q[3], q[2] } end
+        quads[i] = q
+    end
+    local strip = { quads = quads, outer = outer, inner = inner }
+    stripCache[key] = strip
+    return strip
+end
+
+-- Where the armour/health bars end, so others can carry on from there.
+HUD.VISOR_BAR_TO = BAR_TO
+HUD.VISOR_BAR_OFFSET = BAR_OFFSET
+HUD.VISOR_BAR_THICK = BAR_THICK

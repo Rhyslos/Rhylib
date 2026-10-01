@@ -67,6 +67,15 @@ Rhylib.Hook.Add("HUDPaint", "hud.target", function()
     local barW, barH = math.floor(120 * s), math.max(3, math.floor(5 * s))
     local armor = target:GetNW2Int("rhylib_armor", 0)
 
+    -- A dark plate behind it all, in the HUD's style.
+    local nameFont = UI.Font(20)
+    surface.SetFont(nameFont)
+    local nameW = surface.GetTextSize(target:Nick())
+    local plateW = math.max(nameW, barW) + math.floor(16 * s)
+    local plateH = (armor > 0 and (barH + math.floor(3 * s)) or 0) + barH + math.floor(6 * s)
+        + (job and math.floor(17 * s) or 0) + math.floor(22 * s) + math.floor(8 * s)
+    HUD.Frame(x - plateW * 0.5, y - plateH + math.floor(4 * s), plateW, plateH, { alpha = a * 0.9, ticks = false })
+
     -- Stack upward from the head: bars at the bottom, name on top.
     local cy = y
     if armor > 0 then
@@ -84,7 +93,7 @@ Rhylib.Hook.Add("HUDPaint", "hud.target", function()
     local tc = team.GetColor(target:Team())
     nameCol.r, nameCol.g, nameCol.b, nameCol.a = tc.r, tc.g, tc.b, a
     outlineCol.a = a * 0.6
-    draw.SimpleTextOutlined(target:Nick(), UI.Font(20), x, cy, nameCol, TEXT_ALIGN_CENTER, TEXT_ALIGN_BOTTOM, 1, outlineCol)
+    draw.SimpleTextOutlined(target:Nick(), nameFont, x, cy, nameCol, TEXT_ALIGN_CENTER, TEXT_ALIGN_BOTTOM, 1, outlineCol)
 end)
 
 --------------------------------------------------------------------------

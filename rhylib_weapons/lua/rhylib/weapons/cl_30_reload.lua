@@ -185,12 +185,20 @@ Rhylib.Hook.Add("HUDPaint", "weapons.reload", function()
         local isPick = pick == opt
         local empty = opt.count <= 0
 
-        local bg = isPick and COL_PICK or UI.Colors.bg
-        draw.RoundedBox(8 * s, ox - w * 0.5, oy - h * 0.5, w, h, bg)
-        if isPick then
-            surface.SetDrawColor(empty and UI.Colors.bad or UI.Colors.accent)
-            surface.DrawOutlinedRect(ox - w * 0.5, oy - h * 0.5, w, h, math.max(1, math.floor(2 * s)))
+        -- House-style plate (rhylib_hud) with a coloured stripe; plain box without the HUD.
+        local bx, by = ox - w * 0.5, oy - h * 0.5
+        local HUD = Rhylib.HUD
+        if HUD and HUD.Frame then
+            HUD.Frame(bx, by, w, h, { ticks = isPick })
+        else
+            draw.RoundedBox(0, bx, by, w, h, UI.Colors.bg)
         end
+        if isPick then
+            surface.SetDrawColor(COL_PICK)
+            surface.DrawRect(bx + 1, by + 1, w - 2, h - 2)
+        end
+        surface.SetDrawColor(empty and UI.Colors.bad or (isPick and UI.Colors.accent or UI.Colors.border))
+        surface.DrawRect(bx + 1, by + 1, 3, h - 2)
 
         local textCol = empty and UI.Colors.textDim or UI.Colors.text
         draw.SimpleText(opt.label, UI.Font(20), ox, oy - 10 * s, textCol, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)

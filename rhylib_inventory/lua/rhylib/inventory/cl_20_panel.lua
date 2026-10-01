@@ -30,27 +30,58 @@ local MAIN, BACK, SLOT_BACK, EXT = Items.MAIN, Items.BACK, Items.SLOT_BACK, Item
 local keyVar = CreateClientConVar("rhylib_inventory_key", "i", true, false, "Key that opens the Rhylib inventory")
 local sizeVar = CreateClientConVar("rhylib_inventory_cellsize", "100", true, false, "Inventory cell size in pixels at 1080p (48-128); everything else scales with it. Reopen the inventory to apply.")
 
+-- Same look as the HUD and the chat: dark plates, black outlines, a faint
+-- light line along the top, small corner ticks, caps labels.
+-- Items: a dark body with a stripe in their category's colour.
 local CATEGORY_COLORS = {
-    weapon = Color(58, 69, 82),
-    ammo = Color(74, 65, 48),
-    medical = Color(47, 74, 60),
-    gear = Color(69, 64, 58),
-    misc = Color(62, 62, 60),
+    weapon = { body = Color(30, 37, 46), stripe = Color(96, 140, 196) },
+    ammo = { body = Color(42, 36, 25), stripe = Color(206, 152, 62) },
+    medical = { body = Color(25, 40, 31), stripe = Color(96, 186, 126) },
+    gear = { body = Color(38, 35, 30), stripe = Color(168, 146, 112) },
+    misc = { body = Color(34, 34, 33), stripe = Color(136, 136, 130) },
 }
-local COL_CELL = Color(42, 44, 40)
-local COL_BORDER = Color(68, 70, 64)
-local COL_BACK_CELL = Color(46, 42, 34)
-local COL_BACK_BORDER = Color(154, 122, 60)
-local COL_SLOT = Color(36, 38, 35)
+local COL_BG = Color(14, 16, 15, 242)
+local COL_HEADER = Color(22, 25, 23, 255)
+local COL_EDGE_DARK = Color(0, 0, 0, 230)
+local COL_EDGE_LIGHT = Color(170, 176, 180, 70)
+local COL_TICK = Color(170, 176, 180, 150)
+local COL_LABEL = Color(140, 142, 136)
+local COL_CELL = Color(24, 27, 25)
+local COL_BORDER = Color(42, 46, 42)
+local COL_BACK_CELL = Color(30, 27, 21)
+local COL_BACK_BORDER = Color(96, 78, 42)
+local COL_SLOT = Color(20, 22, 21)
 local COL_OK = Color(151, 196, 89, 60)
 local COL_BAD = Color(226, 75, 74, 60)
 local COL_OK_LINE = Color(151, 196, 89)
 local COL_BAD_LINE = Color(226, 75, 74)
-local COL_TIP = Color(20, 21, 19, 245)
-local COL_EXT_CELL = Color(36, 42, 48)
-local COL_EXT_BORDER = Color(70, 96, 122)
-local COL_BUTTON = Color(52, 56, 52)
-local COL_BUTTON_HOVER = Color(66, 72, 66)
+local COL_TIP = Color(14, 16, 15, 248)
+local COL_EXT_CELL = Color(20, 26, 32)
+local COL_EXT_BORDER = Color(46, 66, 86)
+local COL_BUTTON = Color(26, 29, 27)
+local COL_BUTTON_HOVER = Color(38, 50, 64)
+local COL_HILITE = Color(255, 255, 255, 14)
+
+-- Corner ticks on a box (bottom corners, or all four).
+local function ticks(x, y, w, h, s, all)
+    local t = math.floor(7 * s)
+    surface.SetDrawColor(COL_TICK)
+    surface.DrawRect(x, y + h - 2, t, 2)
+    surface.DrawRect(x, y + h - t, 2, t)
+    surface.DrawRect(x + w - t, y + h - 2, t, 2)
+    surface.DrawRect(x + w - 2, y + h - t, 2, t)
+    if all then
+        surface.DrawRect(x, y, t, 2)
+        surface.DrawRect(x, y, 2, t)
+        surface.DrawRect(x + w - t, y, t, 2)
+        surface.DrawRect(x + w - 2, y, 2, t)
+    end
+end
+
+-- Small caps label.
+local function label(self, text, x, y, align, col)
+    draw.SimpleText(string.upper(text), self:Font(12, 700), x, y, col or COL_LABEL, align or TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+end
 
 local function ctrlDown()
     return input.IsKeyDown(KEY_LCONTROL) or input.IsKeyDown(KEY_RCONTROL)
@@ -156,8 +187,8 @@ function PANEL:Init()
     self:Relayout()
 end
 
-function PANEL:Font(size)
-    return UI.Font(math.Round(size * self.k))
+function PANEL:Font(size, weight)
+    return UI.Font(math.Round(size * self.k), weight)
 end
 
 function PANEL:SpanPx(n)
@@ -259,7 +290,7 @@ function PANEL:PaintHotbar()
     local active = LocalPlayer():GetActiveWeapon()
     local mx, my = self:CursorPos()
     local hover = self.drag and not self.drag.fromExt and self:HotbarAt(mx, my)
-    draw.SimpleText("Hotbar", self:Font(15), self.hotbarX, self.hotbarY - self.label * 0.5, UI.Colors.textDim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+    label(self, "Hotbar", self.hotbarX, self.hotbarY - self.label * 0.5)
     draw.SimpleText("drag items here · right-click to empty", self:Font(12), self.hotbarX + math.floor(60 * s), self.hotbarY - self.label * 0.5,
         UI.Colors.textDim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
     for n = 1, self.hotbarN do
@@ -295,9 +326,16 @@ function PANEL:DrawItemBox(inst, x, y, pw, ph, alpha, endless)
     if not def then return end
     local s = self.s
 
-    local col = CATEGORY_COLORS[def.category] or CATEGORY_COLORS.misc
-    surface.SetDrawColor(col.r, col.g, col.b, alpha)
+    local cat = CATEGORY_COLORS[def.category] or CATEGORY_COLORS.misc
+    local body, stripe = cat.body, cat.stripe
+    surface.SetDrawColor(body.r, body.g, body.b, alpha)
     surface.DrawRect(x, y, pw, ph)
+    surface.SetDrawColor(COL_HILITE.r, COL_HILITE.g, COL_HILITE.b, COL_HILITE.a * alpha / 255)
+    surface.DrawRect(x, y, pw, math.floor(ph * 0.35))  -- a faint sheen on the top part
+    surface.SetDrawColor(stripe.r, stripe.g, stripe.b, alpha)
+    surface.DrawRect(x, y, math.max(2, math.floor(3 * s)), ph)
+    surface.SetDrawColor(0, 0, 0, alpha * 0.85)
+    surface.DrawOutlinedRect(x, y, pw, ph)
 
     local active = LocalPlayer():GetActiveWeapon()
     if def.weapon and IsValid(active) and active:GetClass() == def.weapon then
@@ -307,10 +345,10 @@ function PANEL:DrawItemBox(inst, x, y, pw, ph, alpha, endless)
 
     local font = self:Font(14)
     local pad = math.floor(5 * s)
-    draw.SimpleText(fitText(def.name, font, pw - pad * 2), font, x + pad, y + pad, UI.Colors.text)
+    draw.SimpleText(fitText(def.name, font, pw - pad * 3), font, x + pad * 2, y + pad, UI.Colors.text)
     if inst.hb and inst.c ~= EXT and inst.c then
         -- Hotbar slot badge, bottom-left.
-        draw.SimpleText("[" .. inst.hb .. "]", self:Font(12), x + pad, y + ph - pad, UI.Colors.accent, TEXT_ALIGN_LEFT, TEXT_ALIGN_BOTTOM)
+        draw.SimpleText("[" .. inst.hb .. "]", self:Font(12, 700), x + pad * 2, y + ph - pad, UI.Colors.accent, TEXT_ALIGN_LEFT, TEXT_ALIGN_BOTTOM)
     end
 
     local corner
@@ -343,7 +381,7 @@ function PANEL:PaintRegion(r, dragUid)
         surface.DrawRect(r.x, r.y, r.pw, r.ph)
         surface.SetDrawColor(COL_BORDER)
         surface.DrawOutlinedRect(r.x, r.y, r.pw, r.ph)
-        draw.SimpleText(r.title, self:Font(15), r.x + r.pw * 0.5, r.y - self.label * 0.5, UI.Colors.textDim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        label(self, r.title, r.x, r.y - self.label * 0.5)
         if next(c.items) == nil then
             draw.SimpleText("Empty", self:Font(14), r.x + r.pw * 0.5, r.y + r.ph * 0.5, UI.Colors.textDim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
         end
@@ -361,8 +399,11 @@ function PANEL:PaintRegion(r, dragUid)
             end
         end
         if isExt and Inv.ext then
-            draw.SimpleText(Inv.ext.title, self:Font(15), r.x, r.y - self.label * 0.5, UI.Colors.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            label(self, Inv.ext.title, r.x, r.y - self.label * 0.5, TEXT_ALIGN_LEFT, UI.Colors.text)
+        elseif r.cid == MAIN then
+            label(self, "Carried", r.x, r.y - self.label * 0.5)
         end
+        ticks(r.x - 3, r.y - 3, self:SpanPx(r.gw) + 6, self:SpanPx(r.gh) + 6, self.s)
     end
 
     local endless = r.cid == EXT and Inv.ext and Inv.ext.depot
@@ -377,14 +418,25 @@ function PANEL:Paint(pw, ph)
     if self:LayoutKey() ~= self.layoutKey then self:Relayout() end
     local s = self.s
 
-    draw.RoundedBox(math.floor(8 * s), 0, 0, pw, ph, UI.Colors.bg)
-    draw.SimpleText("Inventory", self:Font(20), self.pad, self.header * 0.5, UI.Colors.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+    -- Frame: plate, header band with a rule, outline, top light line, ticks.
+    surface.SetDrawColor(COL_BG)
+    surface.DrawRect(0, 0, pw, ph)
+    surface.SetDrawColor(COL_HEADER)
+    surface.DrawRect(0, 0, pw, self.header)
+    surface.SetDrawColor(UI.Colors.accent.r, UI.Colors.accent.g, UI.Colors.accent.b, 170)
+    surface.DrawRect(0, self.header - 1, pw, 1)
+    surface.SetDrawColor(COL_EDGE_DARK)
+    surface.DrawOutlinedRect(0, 0, pw, ph)
+    surface.SetDrawColor(COL_EDGE_LIGHT)
+    surface.DrawLine(1, 1, pw - 1, 1)
+    ticks(0, 0, pw, ph, s, true)
+
+    draw.SimpleText("INVENTORY", self:Font(16, 700), self.pad, self.header * 0.5, UI.Colors.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
     self:PaintWeight(pw)
     draw.SimpleText("Drag to move · Ctrl+drag takes one · R rotates · Right-click for options · Drag out to drop",
-        self:Font(13), self.pad, ph - self.footer * 0.5 - self.pad * 0.25, UI.Colors.textDim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        self:Font(12), self.pad, ph - self.footer * 0.5 - self.pad * 0.25, COL_LABEL, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
 
-    draw.SimpleText(Inv.cont[BACK] and "Backpack" or "No backpack worn", self:Font(15), self.rightX, self.backLabelY,
-        UI.Colors.textDim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+    label(self, Inv.cont[BACK] and "Backpack" or "No backpack worn", self.rightX, self.backLabelY)
 
     local dragUid = self.drag and self.drag.inst.uid
     for _, r in ipairs(self.regions) do self:PaintRegion(r, dragUid) end
@@ -406,8 +458,15 @@ end
 function PANEL:Button(x, y, w, h, text, fn, enabled)
     local mx, my = self:CursorPos()
     local hover = enabled ~= false and mx >= x and mx <= x + w and my >= y and my <= y + h
-    draw.RoundedBox(math.floor(4 * self.s), x, y, w, h, hover and COL_BUTTON_HOVER or COL_BUTTON)
-    draw.SimpleText(text, self:Font(13), x + w * 0.5, y + h * 0.5, enabled == false and UI.Colors.textDim or UI.Colors.text,
+    surface.SetDrawColor(hover and COL_BUTTON_HOVER or COL_BUTTON)
+    surface.DrawRect(x, y, w, h)
+    surface.SetDrawColor(COL_EDGE_DARK)
+    surface.DrawOutlinedRect(x, y, w, h)
+    surface.SetDrawColor(COL_EDGE_LIGHT)
+    surface.DrawLine(x + 1, y + 1, x + w - 1, y + 1)
+    surface.SetDrawColor(UI.Colors.accent.r, UI.Colors.accent.g, UI.Colors.accent.b, enabled == false and 60 or 200)
+    surface.DrawRect(x + 1, y + 1, math.max(2, math.floor(3 * self.s)), h - 2)
+    draw.SimpleText(string.upper(text), self:Font(12, 700), x + w * 0.5, y + h * 0.5, enabled == false and UI.Colors.textDim or UI.Colors.text,
         TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
     if enabled ~= false then self.buttons[#self.buttons + 1] = { x = x, y = y, w = w, h = h, fn = fn } end
 end
@@ -420,10 +479,13 @@ function PANEL:PaintCombine()
     if Inv.busyEnd and Inv.busyEnd > now then
         local total = math.max(Inv.busyEnd - (Inv.busyStart or now), 0.01)
         local frac = math.Clamp(1 - (Inv.busyEnd - now) / total, 0, 1)
-        draw.RoundedBox(math.floor(4 * self.s), r.x, r.y, r.w, r.h, COL_BUTTON)
+        surface.SetDrawColor(COL_BUTTON)
+        surface.DrawRect(r.x, r.y, r.w, r.h)
+        surface.SetDrawColor(COL_EDGE_DARK)
+        surface.DrawOutlinedRect(r.x, r.y, r.w, r.h)
         surface.SetDrawColor(UI.Colors.accent.r, UI.Colors.accent.g, UI.Colors.accent.b, 90)
         surface.DrawRect(r.x, r.y, math.floor(r.w * frac), r.h)
-        draw.SimpleText("Combining…", self:Font(13), r.x + r.w * 0.5, r.y + r.h * 0.5, UI.Colors.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+        draw.SimpleText("COMBINING…", self:Font(12, 700), r.x + r.w * 0.5, r.y + r.h * 0.5, UI.Colors.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
         return
     end
     self:Button(r.x, r.y, r.w, r.h, "Combine munitions", function() Inv.RequestCombine() end)
@@ -599,9 +661,17 @@ function PANEL:PaintTooltip()
     local bx, by = mx + 16 * s, my + 16 * s
 
     DisableClipping(true)
-    draw.RoundedBox(math.floor(4 * s), bx, by, tw + pad * 2, #lines * lh + pad * 2, COL_TIP)
+    local tw2, th2 = tw + pad * 2, #lines * lh + pad * 2
+    local stripe = (CATEGORY_COLORS[def.category] or CATEGORY_COLORS.misc).stripe
+    surface.SetDrawColor(COL_TIP)
+    surface.DrawRect(bx, by, tw2, th2)
+    surface.SetDrawColor(stripe)
+    surface.DrawRect(bx, by, tw2, 2)
+    surface.SetDrawColor(COL_EDGE_DARK)
+    surface.DrawOutlinedRect(bx, by, tw2, th2)
+    ticks(bx, by, tw2, th2, s)
     for i, l in ipairs(lines) do
-        draw.SimpleText(l, font, bx + pad, by + pad + (i - 1) * lh, i == 1 and UI.Colors.text or UI.Colors.textDim)
+        draw.SimpleText(l, i == 1 and self:Font(14, 700) or font, bx + pad, by + pad + (i - 1) * lh, i == 1 and stripe or UI.Colors.textDim)
     end
     DisableClipping(false)
 end
