@@ -20,7 +20,7 @@ end
 function Inv.CleanHotbar(ply)
     local removed = 0
     for _, wep in ipairs(ply:GetWeapons()) do
-        if IsValid(wep) and not inInventory(ply, wep:GetClass()) then
+        if IsValid(wep) and not inInventory(ply, wep:GetClass()) and wep:GetClass() ~= Inv.STOWED then
             ply:StripWeapon(wep:GetClass())
             removed = removed + 1
         end

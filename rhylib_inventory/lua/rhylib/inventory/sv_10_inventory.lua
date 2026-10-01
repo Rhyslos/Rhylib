@@ -91,11 +91,24 @@ local function giveWeapon(ply, inst)
     end
 end
 
+Inv.STOWED = "rhylib_stowed"  -- the empty weapon (lua/weapons/rhylib_stowed.lua)
+
+-- Put the gun away: hold the empty Stowed weapon.
+function Inv.Stow(ply)
+    if not ply:HasWeapon(Inv.STOWED) then ply:Give(Inv.STOWED) end
+    ply:SelectWeapon(Inv.STOWED)
+end
+
 local function stripWeapon(ply, inst)
     local def = Items.defs[inst.id]
     if not def or not def.weapon then return end
     captureWeapon(ply, inst)
-    if ply:HasWeapon(def.weapon) then ply:StripWeapon(def.weapon) end
+    if ply:HasWeapon(def.weapon) then
+        local active = ply:GetActiveWeapon()
+        local wasActive = IsValid(active) and active:GetClass() == def.weapon
+        ply:StripWeapon(def.weapon)
+        if wasActive then Inv.Stow(ply) end
+    end
 end
 
 function Inv.CaptureWeapons(ply)
@@ -507,10 +520,14 @@ end
 function Inv.SetHotbar(ply, uid, n)
     local st = Inv.Get(ply)
     if n < 1 or n > Items.HOTBAR_PACK then return end
+    local active = ply:GetActiveWeapon()
     for _, o in pairs(st.byUid) do
         if o.hb == n and o.uid ~= uid then
             o.hb = nil
             update(ply, st, o)
+            -- Taken off the hotbar while in your hands: put it away.
+            local def = Items.defs[o.id]
+            if def and def.weapon and IsValid(active) and active:GetClass() == def.weapon then Inv.Stow(ply) end
         end
     end
     local inst = st.byUid[uid]
@@ -773,7 +790,9 @@ end)
 
 Rhylib.Hook.Add("PlayerSpawn", "inventory.weapons", function(ply)
     timer.Simple(0, function()
-        if IsValid(ply) and ply:Alive() then Inv.GiveAllWeapons(ply) end
+        if not (IsValid(ply) and ply:Alive()) then return end
+        Inv.GiveAllWeapons(ply)
+        Inv.Stow(ply)  -- everyone spawns with their guns stowed
     end)
 end)
 

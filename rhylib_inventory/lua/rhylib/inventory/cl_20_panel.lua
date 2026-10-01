@@ -584,7 +584,11 @@ function PANEL:PaintTooltip()
     if def.large then lines[#lines + 1] = "Too large for a backpack" end
     if inst.data and inst.data.issued then lines[#lines + 1] = "Issued: handed back if dropped" end
     if inst.c == EXT and Inv.ext and Inv.ext.depot then lines[#lines + 1] = "Endless supply, drag to take (Ctrl: just one)" end
-    if def.weapon then lines[#lines + 1] = "Right-click to equip" end
+    if inst.hb then
+        lines[#lines + 1] = "On the hotbar (" .. inst.hb .. ")"
+    elseif inst.c ~= EXT then
+        lines[#lines + 1] = "Right-click → Equip to put it on the hotbar"
+    end
 
     local font = self:Font(14)
     surface.SetFont(font)
@@ -644,8 +648,23 @@ function PANEL:OnMousePressed(code)
         if inst.count > 1 then
             menu:AddOption("Split stack", function() Inv.RequestSplit(inst) end)
         end
-        if def and def.weapon then
-            menu:AddOption("Equip", function() Inv.RequestUse(inst) end)
+        -- Equip = put it on the hotbar (first free slot); Unequip = take it off.
+        if def and inst.c ~= SLOT_BACK then
+            if inst.hb then
+                menu:AddOption("Unequip", function() Inv.RequestHotbar(nil, inst.hb) end)
+            else
+                menu:AddOption("Equip", function()
+                    local free
+                    for n = 1, Items.HotbarSize(Inv) do
+                        if not Inv.HotbarItem(n) then free = n break end
+                    end
+                    if not free then
+                        Inv.note, Inv.noteTime = "Hotbar full: empty a slot first", RealTime()
+                        return
+                    end
+                    Inv.RequestHotbar(inst, free)
+                end)
+            end
         end
         if def and def.slot == "back" and inst.c ~= SLOT_BACK then
             menu:AddOption("Wear", function() Inv.RequestMove(inst, SLOT_BACK, 0, 0, false) end)
