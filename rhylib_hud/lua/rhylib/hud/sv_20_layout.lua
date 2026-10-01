@@ -1,7 +1,8 @@
 --[[
-    The first-person HUD layout, picked by an admin for the whole server:
+    The server's default first-person HUD layout (players can pick their
+    own in the pause menu's settings):
         rhylib_hud_layout            shows the current one and the choices
-        rhylib_hud_layout <name>     switches (f4, f5, console)
+        rhylib_hud_layout <name>     switches (f5, f4, console, thirdperson)
     Saved, so it survives restarts.
 ]]
 
@@ -22,7 +23,7 @@ concommand.Add("rhylib_hud_layout", function(ply, _, args)
         local names = {}
         for k in pairs(HUD.Layouts) do names[#names + 1] = k end
         table.sort(names)
-        reply(ply, "HUD layout: " .. HUD.VisorLayout() .. " (choices: " .. table.concat(names, ", ") .. ")")
+        reply(ply, "Default HUD layout: " .. HUD.ServerLayout() .. " (choices: " .. table.concat(names, ", ") .. ")")
         return
     end
     Rhylib.Perms.Check(ply, "rhylib.hud.layout", function(ok)
@@ -36,6 +37,6 @@ concommand.Add("rhylib_hud_layout", function(ply, _, args)
         end
         SetGlobal2String("rhylib_hud_layout", name)
         Rhylib.Data.Set("hud", "layout", name)
-        reply(ply, "HUD layout set to " .. name .. ": " .. HUD.Layouts[name])
+        reply(ply, "Default HUD layout set to " .. name .. ": " .. HUD.Layouts[name])
     end)
 end)

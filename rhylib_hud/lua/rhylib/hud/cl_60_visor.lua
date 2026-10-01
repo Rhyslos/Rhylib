@@ -66,6 +66,7 @@ end
 
 function HUD.VisorActive()
     if not visorVar:GetBool() then return false end
+    if HUD.VisorLayout and HUD.VisorLayout() == "thirdperson" then return false end
     local ply = LocalPlayer()
     if not IsValid(ply) or not ply:Alive() or ply:InVehicle() or ply:ShouldDrawLocalPlayer() then return false end
     local wep = ply:GetActiveWeapon()

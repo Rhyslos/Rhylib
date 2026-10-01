@@ -1,0 +1,191 @@
+--[[
+    Settings page. Each setting is bound to a client convar and only shows
+    when that convar exists (its addon is installed).
+
+        Rhylib.Menus.AddSetting("HUD", {
+            id = "hud.fade", order = 20,
+            title = "Hotbar fades", desc = "Dim the hotbar when you're not switching weapons",
+            kind = "toggle",                -- toggle, choice, slider or key
+            convar = "rhylib_hud_hotbar_fade",
+            -- choice: options = { { "value", "Label" }, ... }, get/set optional
+            -- slider: min, max, decimals
+        })
+]]
+
+local Menus = Rhylib.Menus
+local K = Menus.Kit
+local C = K.C
+
+Menus.settings = Menus.settings or {}
+Menus.sectionOrder = Menus.sectionOrder or {}
+
+function Menus.AddSetting(section, setting)
+    local list = Menus.settings[section]
+    if not list then
+        list = {}
+        Menus.settings[section] = list
+        Menus.sectionOrder[#Menus.sectionOrder + 1] = section
+    end
+    for i, s in ipairs(list) do
+        if s.id == setting.id then
+            list[i] = setting
+            return
+        end
+    end
+    list[#list + 1] = setting
+end
+
+local function cvGet(name)
+    local cv = GetConVar(name)
+    return cv and cv:GetString() or ""
+end
+
+local function control(row, st)
+    local get = st.get or function() return cvGet(st.convar) end
+    local set = st.set or function(v) RunConsoleCommand(st.convar, tostring(v)) end
+
+    if st.kind == "toggle" then
+        local t = K.Toggle(row.right, function() return tobool(get()) end, function(on) set(on and 1 or 0) end)
+        t:Dock(RIGHT)
+    elseif st.kind == "choice" then
+        local c = K.Choices(row.right, st.options, function() return tostring(get()) end, set)
+        c:Dock(FILL)
+    elseif st.kind == "slider" then
+        local sl = K.Slider(row.right, st.min, st.max, st.decimals,
+            function() return tonumber(get()) or st.min end, set)
+        sl:Dock(FILL)
+    elseif st.kind == "key" then
+        -- Click, then press a key (Esc cancels).
+        local b = vgui.Create("DButton", row.right)
+        b:Dock(RIGHT)
+        b:SetWide(K.S(120))
+        b:SetText("")
+        function b:DoClick()
+            surface.PlaySound("ui/buttonclick.wav")
+            self.trapping = true
+            Menus.keyTrapping = true
+            input.StartKeyTrapping()
+        end
+        function b:Think()
+            if not self.trapping or not input.IsKeyTrapping() then
+                if self.trapping and not input.IsKeyTrapping() then self.trapping = false Menus.keyTrapping = false end
+                return
+            end
+            local code = input.CheckKeyTrapping()
+            if code then
+                self.trapping = false
+                -- Cleared a moment later, so the Esc that cancelled doesn't
+                -- also open or close the menu.
+                timer.Simple(0.2, function() Menus.keyTrapping = false end)
+                if code ~= KEY_ESCAPE then
+                    local name = input.GetKeyName(code)
+                    if name then set(string.lower(name)) end
+                end
+            end
+        end
+        function b:OnRemove()
+            if self.trapping then input.StopKeyTrapping() Menus.keyTrapping = false end
+        end
+        function b:Paint(w, h)
+            K.SetCol(self:IsHovered() and C.buttonHover or C.button)
+            surface.DrawRect(0, 0, w, h)
+            K.SetCol(C.edgeDark)
+            surface.DrawOutlinedRect(0, 0, w, h)
+            local label = self.trapping and "PRESS A KEY" or string.upper(get())
+            draw.SimpleText(label, K.Font(13, 700), w * 0.5, h * 0.5, self.trapping and C.accent or C.text, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
+            return true
+        end
+    end
+end
+
+Menus.AddPage("settings", {
+    title = "Settings",
+    order = 10,
+    build = function(page)
+        local sp = K.Scroll(page)
+        sp:Dock(FILL)
+        for _, section in ipairs(Menus.sectionOrder) do
+            local list = {}
+            for _, st in ipairs(Menus.settings[section]) do
+                if not st.convar or ConVarExists(st.convar) then list[#list + 1] = st end
+            end
+            table.sort(list, function(a, b) return (a.order or 50) < (b.order or 50) end)
+            if #list > 0 then
+                local h = K.Heading(sp, section)
+                h:Dock(TOP)
+                h:DockMargin(0, K.S(6), K.S(10), K.S(6))
+                for _, st in ipairs(list) do
+                    local row = K.Row(sp, st.title, st.desc)
+                    row:Dock(TOP)
+                    row:DockMargin(0, 0, K.S(10), K.S(4))
+                    if st.kind == "choice" then row.right:SetWide(K.S(st.wide or 460)) end
+                    control(row, st)
+                end
+            end
+        end
+    end,
+})
+
+--------------------------------------------------------------------------
+-- The settings Rhylib's addons have
+--------------------------------------------------------------------------
+
+Menus.AddSetting("HUD", {
+    id = "hud.firstperson", order = 10, wide = 560,
+    title = "First-person HUD",
+    desc = "How the hotbar and ammo look in first person",
+    kind = "choice", convar = "rhylib_hud_firstperson",
+    options = { { "", "Server default" }, { "f5", "F5 tiles" }, { "f4", "F4 strip" }, { "console", "Console" }, { "thirdperson", "Third-person" } },
+    get = function()
+        local v = cvGet("rhylib_hud_firstperson")
+        local HUD = Rhylib.HUD
+        if HUD and HUD.Layouts and not HUD.Layouts[v] then return "" end
+        return v
+    end,
+})
+Menus.AddSetting("HUD", {
+    id = "hud.fade", order = 20,
+    title = "Hotbar fades", desc = "Dim the hotbar when you're not switching weapons",
+    kind = "toggle", convar = "rhylib_hud_hotbar_fade",
+})
+
+Menus.AddSetting("Third person", {
+    id = "tp.on", order = 10,
+    title = "Third person", desc = "Over-the-shoulder camera",
+    kind = "toggle", convar = "rhylib_thirdperson",
+})
+Menus.AddSetting("Third person", {
+    id = "tp.side", order = 20,
+    title = "Shoulder",
+    kind = "choice", convar = "rhylib_thirdperson_side",
+    options = { { "-1", "Left" }, { "1", "Right" } },
+})
+Menus.AddSetting("Third person", {
+    id = "tp.key", order = 30,
+    title = "Toggle key", kind = "key", convar = "rhylib_thirdperson_key",
+})
+Menus.AddSetting("Third person", {
+    id = "tp.swapkey", order = 40,
+    title = "Swap shoulder key", kind = "key", convar = "rhylib_thirdperson_swapkey",
+})
+Menus.AddSetting("Third person", {
+    id = "tp.crouch", order = 50,
+    title = "Camera rise when crouching", desc = "So the camera clears your arms",
+    kind = "slider", convar = "rhylib_thirdperson_crouchup", min = 0, max = 30,
+})
+
+Menus.AddSetting("Chat", {
+    id = "chat.pinned", order = 10,
+    title = "Keep the chat visible", desc = "Same as /togglechat",
+    kind = "toggle", convar = "rhylib_chat_pinned",
+})
+
+Menus.AddSetting("Inventory", {
+    id = "inv.key", order = 10,
+    title = "Inventory key", kind = "key", convar = "rhylib_inventory_key",
+})
+Menus.AddSetting("Inventory", {
+    id = "inv.cell", order = 20,
+    title = "Cell size", desc = "Size of the inventory grid; reopen the inventory to apply",
+    kind = "slider", convar = "rhylib_inventory_cellsize", min = 48, max = 128,
+})
