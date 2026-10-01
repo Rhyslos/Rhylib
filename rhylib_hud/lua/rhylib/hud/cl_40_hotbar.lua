@@ -1,5 +1,6 @@
 --[[
-    Hotbar, bottom centre. Replaces the default weapon selection.
+    Hotbar. Replaces the default weapon selection. Third person: a row at
+    the bottom centre. Helmet visor: a console plate next to the ammo box.
 
     With rhylib_inventory: fixed numbered slots that you fill yourself by
     dragging items onto the hotbar row in the inventory window (4 slots,
@@ -193,6 +194,189 @@ local function fit(text, font, maxW)
     return text .. "…"
 end
 
+local rectPool = {}
+local function rect(i)
+    local r = rectPool[i]
+    if not r then
+        r = {}
+        rectPool[i] = r
+    end
+    return r
+end
+
+--[[
+    Where each entry's box goes (third person, or the visor without the
+    inventory). Third person: one row, centred between the corner plates.
+    The visor with the inventory uses the console below instead.
+]]
+local function layout(visor, s)
+    local rects = {}
+    local count = #entries
+
+    if not visor then
+        local gap = math.floor(6 * s)
+        local space = ScrW() * 0.44
+        local bw = math.floor(math.Clamp((space - gap * (count - 1)) / count, 56 * s, 104 * s))
+        local bh = math.floor(76 * s)
+        local total = count * bw + (count - 1) * gap
+        local x = math.floor((ScrW() - total) * 0.5)
+        local _, my = HUD.Margins("hotbar")
+        local y = ScrH() - bh - my
+        for i = 1, count do
+            local r = rect(i)
+            r.x, r.y, r.w, r.h = x + (i - 1) * (bw + gap), y, bw, bh
+            rects[i] = r
+        end
+        return rects
+    end
+
+    for i = 1, count do
+        local r = rect(i)
+        local w = math.floor(70 * s)
+        r.x, r.y, r.w, r.h = ScrW() * 0.62 + (i - 1) * (w + 6 * s), ScrH() - math.floor(90 * s), w, math.floor(62 * s)
+        rects[i] = r
+    end
+    return rects
+end
+
+--------------------------------------------------------------------------
+-- Helmet visor console (with the inventory): one plate built like the
+-- ammo box, right next to it and as tall. Slots 1-4 are cells in it.
+-- Above slots 2-4 a tab holds the overflow slot ("OTHER") and the
+-- backpack slots 5 and 6, each group under its own header.
+--------------------------------------------------------------------------
+
+local CELL_W = 92            -- cell width at 1080p (narrower if the cheek is in the way)
+local COL_DIVIDER = Color(170, 176, 180, 46)
+local COL_HEAD_TEXT = Color(150, 152, 146)
+local tcol = Color(0, 0, 0)
+
+local function txt(text, size, weight, x, y, col, ax, ay, a)
+    tcol.r, tcol.g, tcol.b, tcol.a = col.r, col.g, col.b, (col.a or 255) * a / 255
+    return draw.SimpleText(text, UI.Font(size, weight), x, y, tcol, ax or TEXT_ALIGN_LEFT, ay or TEXT_ALIGN_CENTER)
+end
+
+local function fill(col, a, x, y, w, h)
+    surface.SetDrawColor(col.r, col.g, col.b, (col.a or 255) * a / 255)
+    surface.DrawRect(x, y, w, h)
+end
+
+local tabItems = {}
+
+local function drawConsole(active, alpha, s)
+    local C = HUD.Colors
+    local S = HUD.Style
+    local ax, ay, _, ah = HUD.VisorAmmoRect()
+    local right = ax - math.floor(10 * s)
+    local cut = math.floor(12 * s)
+    local margin = ScrH() * 0.042   -- clear of the cheek edge and the stamina strip along it
+    local function edge(yy) return (HUD.VisorCheekX and HUD.VisorCheekX(yy, 1) or ScrW() * 0.6) + margin end
+
+    -- The plate: as tall as the ammo box, as wide as four cells allow.
+    local y, h = ay, ah
+    local x = math.floor(math.max(edge(y + cut), right - CELL_W * 4 * s))
+    local w = right - x
+    local cw = w / 4
+
+    local r = HUD.HotbarRect
+    r.x, r.y, r.w, r.h, r.frame = x, y, w, h, FrameNumber()
+
+    HUD.Frame(x, y, w, h, { alpha = alpha, cut = cut, cutLeft = true })
+    local inset = math.floor(4 * s)
+    local barH = math.max(2, math.floor(3 * s))
+    for i = 1, 4 do
+        local e = entries[i]
+        local bx = math.floor(x + (i - 1) * cw)
+        local bw = math.floor(x + i * cw) - bx
+        if i > 1 then fill(COL_DIVIDER, alpha, bx, y + math.floor(10 * s), 1, h - math.floor(20 * s)) end
+        if e then
+            local isActive = e.wep ~= nil and e.wep == active
+            local a = isActive and math.min(255, alpha * 2) or alpha
+            if isActive then
+                fill(C.accent, a * 0.1, bx + inset, y + inset, bw - inset * 2, h - inset * 2)
+                fill(C.accent, a, bx + inset, y + h - inset - barH, bw - inset * 2, barH)
+            end
+            local tx = bx + math.floor((i == 1 and 16 or 10) * s)
+            local tw = bx + bw - tx - math.floor(6 * s)
+            txt(tostring(e.key), 14, 700, tx, y + math.floor(20 * s), isActive and C.accent or C.dim, nil, nil, a)
+            local mid = y + h * 0.52
+            if e.empty then
+                txt("Empty", 14, 400, tx, mid, C.dim, nil, nil, a * 0.5)
+            else
+                txt(fit(e.name, UI.Font(15, isActive and 500 or 400), tw), 15, isActive and 500 or 400, tx, mid, isActive and C.text or C.dim, nil, nil, a)
+                if e.sub then txt(e.sub, 12, 400, tx, mid + math.floor(20 * s), C.dim, nil, nil, a * 0.8) end
+            end
+        end
+    end
+
+    -- The tab above: overflow first, then the backpack slots.
+    local n = #tabItems
+    for k = 1, n do tabItems[k] = nil end
+    local count = #entries
+    local over = entries[count] and entries[count].overflow and entries[count] or nil
+    local packs = 0
+    if over then tabItems[#tabItems + 1] = over end
+    for i = 5, 6 do
+        if entries[i] and not entries[i].overflow then
+            tabItems[#tabItems + 1] = entries[i]
+            packs = packs + 1
+        end
+    end
+    n = #tabItems
+    if n == 0 then return end
+
+    local th = math.floor(40 * s)
+    local hh = math.floor(14 * s)
+    local ty = y - math.floor(8 * s) - th
+    -- Right-aligned over the last cells, and clear of the cheek.
+    local tx0 = math.floor(math.max(right - n * cw, x + cw, edge(ty)))
+    local tw = right - tx0
+    local tcw = tw / n
+    HUD.Frame(tx0, ty, tw, th, { alpha = alpha, ticks = false })
+    fill(S.header, alpha, tx0 + 1, ty + 1, tw - 2, hh)
+
+    -- Header labels, each with a rule under its group.
+    local others = over and 1 or 0
+    if over then
+        fill(S.tick, alpha * 0.6, tx0 + 1, ty + hh, math.floor(tcw) - 2, 1)
+        txt("OTHER", 10, 700, tx0 + math.floor(8 * s), ty + 1 + hh * 0.5, COL_HEAD_TEXT, nil, nil, alpha)
+    end
+    if packs > 0 then
+        local px = math.floor(tx0 + others * tcw)
+        fill(C.accent, alpha * 0.7, px + 1, ty + hh, right - px - 2, 1)
+        txt("BACKPACK", 10, 700, px + math.floor(8 * s), ty + 1 + hh * 0.5, COL_HEAD_TEXT, nil, nil, alpha)
+    end
+
+    local cy = ty + hh + (th - hh) * 0.5
+    for k, e in ipairs(tabItems) do
+        local bx = math.floor(tx0 + (k - 1) * tcw)
+        local bw = math.floor(tx0 + k * tcw) - bx
+        if k > 1 then fill(COL_DIVIDER, alpha, bx, ty + hh + math.floor(4 * s), 1, th - hh - math.floor(8 * s)) end
+        local isActive = e.wep ~= nil and e.wep == active
+        if e.overflow then
+            for _, wp in ipairs(e.overflow) do
+                if wp == active then isActive = true end
+            end
+        end
+        local a = isActive and math.min(255, alpha * 2) or alpha
+        if isActive then fill(C.accent, a, bx + 2, ty + th - 3, bw - 4, 2) end
+        local lx = bx + math.floor(8 * s)
+        local kw = txt(tostring(e.key), 11, 700, lx, cy, isActive and C.accent or C.dim, nil, nil, a)
+        local nx = lx + kw + math.floor(6 * s)
+        local extra = e.overflow and #e.overflow > 1 and ("+" .. (#e.overflow - 1)) or nil
+        local room = bx + bw - nx - math.floor(6 * s)
+        if extra then
+            local ew = txt(extra, 11, 400, bx + bw - math.floor(6 * s), cy, C.dim, TEXT_ALIGN_RIGHT, nil, a)
+            room = room - ew - math.floor(4 * s)
+        end
+        if e.empty then
+            txt("Empty", 12, 400, nx, cy, C.dim, nil, nil, a * 0.5)
+        elseif room > 8 * s then
+            txt(fit(e.name, UI.Font(12, 400), room), 12, 400, nx, cy, isActive and C.text or C.dim, nil, nil, a)
+        end
+    end
+end
+
 Rhylib.Hook.Add("HUDPaint", "hud.hotbar", function()
     if HUD.Hidden() then return end
     local ply = LocalPlayer()
@@ -221,55 +405,41 @@ Rhylib.Hook.Add("HUDPaint", "hud.hotbar", function()
         alpha = since < 2.5 and 255 or math.max(90, 255 - (since - 2.5) * 400)
     end
 
-    local gap, bw, bh, total, x, y
-    if visor then
-        -- Helmet visor: on the right cheek, against the ammo box, clear of
-        -- the cheek edge (and the stamina strip along it).
-        gap = math.floor(5 * s)
-        bh = math.floor(58 * s)
-        local mx, my = HUD.Margins("ammo")
-        local right = ScrW() - math.floor(240 * s) - mx - math.floor(10 * s)  -- the ammo box's left side
-        y = ScrH() - my - bh
-        local left = (HUD.VisorCheekX and HUD.VisorCheekX(y, 1) or ScrW() * 0.6) + ScrH() * 0.022
-        bw = math.floor(math.Clamp((right - left - gap * (count - 1)) / count, 40 * s, 96 * s))
-        total = count * bw + (count - 1) * gap
-        x = math.floor(right - total)
-    else
-        -- Square-ish boxes between the corner plates; they shrink to fit.
-        gap = math.floor(6 * s)
-        local space = ScrW() * 0.44
-        bw = math.floor(math.Clamp((space - gap * (count - 1)) / count, 56 * s, 104 * s))
-        bh = math.floor(76 * s)
-        total = count * bw + (count - 1) * gap
-        x = math.floor((ScrW() - total) * 0.5)
-        local _, my = HUD.Margins("hotbar")
-        y = ScrH() - bh - my
+    if visor and inventory() and HUD.VisorAmmoRect then
+        drawConsole(active, alpha, s)
+        return
     end
+
+    -- One rect per entry: rects[i] = { x, y, w, h }.
+    local rects = layout(visor, s)
+    local r0, rl = rects[1], rects[#rects]
 
     -- Shared with the stamina bar, which sits on top (even while this fades out).
     local r = HUD.HotbarRect
-    r.x, r.y, r.w, r.h, r.frame = x, y, total, bh, FrameNumber()
+    r.x, r.y, r.w, r.h, r.frame = r0.x, r0.y, rl.x + rl.w - r0.x, r0.h, FrameNumber()
 
     if alpha <= 0 then return end
     local font = UI.Font(14)
     local barH = math.max(2, math.floor(3 * s))
 
     for i, e in ipairs(entries) do
-        local bx = x + (i - 1) * (bw + gap)
+        local rc = rects[i]
+        local bx, by, bw, bh = rc.x, rc.y, rc.w, rc.h
         local isActive = e.wep ~= nil and e.wep == active
         local a = isActive and math.min(255, alpha * 2) or alpha
         if e.empty then a = a * 0.5 end
-        HUD.Frame(bx, y, bw, bh, { alpha = a, ticks = isActive })
+        HUD.Frame(bx, by, bw, bh, { alpha = a, ticks = isActive })
         if isActive then
             surface.SetDrawColor(C.accent.r, C.accent.g, C.accent.b, a)
-            surface.DrawRect(bx, y + bh - barH, bw, barH)
+            surface.DrawRect(bx, by + bh - barH, bw, barH)
         end
-        HUD.Text(e.overflow and (e.key .. " +") or tostring(e.key), 13, bx + math.floor(7 * s), y + math.floor(5 * s), C.dim, nil, nil, a)
-
+        HUD.Text(e.overflow and (e.key .. " +") or tostring(e.key), 13, bx + math.floor(7 * s), by + math.floor(5 * s), C.dim, nil, nil, a)
         if not e.empty then
-            HUD.Text(fit(e.name, font, bw - 10 * s), 14, bx + bw * 0.5, y + bh * 0.5, isActive and C.text or C.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, a)
-            if e.sub then
-                HUD.Text(e.sub, 12, bx + bw * 0.5, y + bh * 0.76, C.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, a)
+            local small = bh < 50 * s
+            HUD.Text(fit(e.name, font, bw - 10 * s), 14, bx + bw * 0.5, by + bh * (small and 0.62 or 0.5), isActive and C.text or C.dim,
+                TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, a)
+            if e.sub and not small then
+                HUD.Text(e.sub, 12, bx + bw * 0.5, by + bh * 0.76, C.dim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, a)
             end
         end
     end

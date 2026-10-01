@@ -263,8 +263,12 @@ function HUD.VisorStrip(side, fx0, fx1, offset, thick, steps)
     for i = 0, steps do
         local t = t0 + (t1 - t0) * i / steps
         local px, py = cheekPoint(t)
-        local qx, qy = cheekPoint(math.min(t + 0.001, 1))
-        local tx, ty = (qx - px) * W, (qy - py) * H
+        -- Direction of the curve here (looking back at the very end).
+        local ta, tb = t, t + 0.001
+        if tb > 1 then ta, tb = t - 0.001, t end
+        local ax0, ay0 = cheekPoint(ta)
+        local bx0, by0 = cheekPoint(tb)
+        local tx, ty = (bx0 - ax0) * W, (by0 - ay0) * H
         local len = math.sqrt(tx * tx + ty * ty)
         local nx, ny = -ty / len, tx / len  -- into the left cheek (down and out)
         local x, y = px * W, py * H

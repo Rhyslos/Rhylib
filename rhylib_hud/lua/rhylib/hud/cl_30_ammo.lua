@@ -2,10 +2,12 @@
     Ammo counter.
       Third person: on a plate in the bottom-right corner.
       Helmet visor: a box on the lower-right cheek.
+    Both are always the same size, whatever they hold.
 
     Rhylib weapons: shots in the magazine, spare magazines and (for cell
     weapons) the power cell charge. Other weapons: clip and reserve.
-    Weapons without ammo (physgun, tool gun, hands) show nothing.
+    The box always stays: holding nothing (or your guns stowed) it says
+    "Unarmed"; weapons without ammo (physgun, tool gun) show their name.
 
     Rows, top to bottom:
         weapon name
@@ -79,29 +81,48 @@ end
 
 local sizes = {}  -- reused every frame
 
+-- The visor ammo box: always its full size (room for the cell rows), like
+-- the third-person plate. The hotbar console lines up with it.
+function HUD.VisorAmmoRect()
+    local s = HUD.Scale()
+    local pad = math.floor(12 * s)
+    local w = math.floor(240 * s)
+    local h = math.floor(20 * s) + math.floor(46 * s) + math.floor(34 * s) + pad * 2
+    local mx, my = HUD.Margins("ammo")
+    return ScrW() - w - mx, ScrH() - h - my, w, h
+end
+
+-- Holding nothing, or a weapon without ammo: just a name and a line.
+local function drawEmpty(wep, x, y, w, sizes)
+    local s = HUD.Scale()
+    local C = HUD.Colors
+    local unarmed = not IsValid(wep) or wep.IsRhylibStowed
+    HUD.Text(unarmed and "Stowed" or (wep:GetPrintName() or ""), 16, x, y, C.dim)
+    y = y + sizes.name
+    HUD.Text(unarmed and "UNARMED" or "—", 30, x, y + sizes.count * 0.5, unarmed and C.dim or C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+    if unarmed then
+        HUD.Text("pick a hotbar slot", 13, x + w, y + sizes.count - math.floor(2 * s), C.dim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_BOTTOM)
+    end
+end
+
 Rhylib.Hook.Add("HUDPaint", "hud.ammo", function()
     if HUD.Hidden() then return end
     local ply = LocalPlayer()
     local wep = ply:GetActiveWeapon()
-    if not IsValid(wep) then return end
-    if wep:Clip1() < 0 and wep:GetPrimaryAmmoType() < 0 then return end
+    local empty = not IsValid(wep) or wep.IsRhylibStowed or (wep:Clip1() < 0 and wep:GetPrimaryAmmoType() < 0)
 
     local s = HUD.Scale()
     sizes.name = math.floor(20 * s)
     sizes.count = math.floor(46 * s)
-    sizes.cell = (wep.IsRhylib and wep.UsesCell) and math.floor(34 * s) or 0
-    local contentH = sizes.name + sizes.count + sizes.cell
+    sizes.cell = (not empty and wep.IsRhylib and wep.UsesCell) and math.floor(34 * s) or 0
 
     if HUD.VisorActive and HUD.VisorActive() then
         local pad = math.floor(12 * s)
-        local w = math.floor(240 * s)
-        local mx, my = HUD.Margins("ammo")
-        local x = ScrW() - w - mx
-        local y = ScrH() - contentH - pad * 2 - my
-        HUD.Frame(x, y, w, contentH + pad * 2, { cut = math.floor(12 * s), cutLeft = true })
-        drawContent(ply, wep, x + pad, y + pad, w - pad * 2, sizes)
+        local x, y, w, h = HUD.VisorAmmoRect()
+        HUD.Frame(x, y, w, h, { cut = math.floor(12 * s), cutLeft = true })
+        if empty then drawEmpty(wep, x + pad, y + pad, w - pad * 2, sizes) else drawContent(ply, wep, x + pad, y + pad, w - pad * 2, sizes) end
     else
         local x, y, w = HUD.Plate(1)
-        drawContent(ply, wep, x, y, w, sizes)
+        if empty then drawEmpty(wep, x, y, w, sizes) else drawContent(ply, wep, x, y, w, sizes) end
     end
 end)

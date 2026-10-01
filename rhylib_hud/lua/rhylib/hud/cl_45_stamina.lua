@@ -4,8 +4,9 @@
     red while you're exhausted, and fades out after 2 seconds at full.
 
       Third person: a thin bar on top of the hotbar, as wide as it.
-      Helmet visor: two mirrored strips along the cheek edges, in the
-                    stretch between the armour/health bars and the chin.
+      Helmet visor: two mirrored strips along the cheek edges, from the
+                    armour/health bars down to the bottom of the screen,
+                    as thick as those bars, always shown.
                     Together they're one bar whose middle is the chin, so
                     each half shrinks toward the chin.
 ]]
@@ -21,23 +22,53 @@ local fullSince = 0
 
 -- Visor strips: from just past the armour/health bars to near the chin.
 local STRIP_GAP = 0.006     -- after the last armour/health bar (share of the width)
-local STRIP_END = 0.392     -- the chin edge is at 0.4
-local STRIP_THICK = 0.006
-local STRIP_STEPS = 24
+local STRIP_END = 0.4       -- the curve's end: the bottom of the screen
+local STRIP_STEPS = 28
+
+local partQuad = { { x = 0, y = 0 }, { x = 0, y = 0 }, { x = 0, y = 0 }, { x = 0, y = 0 } }
+local revQuad = { {}, {}, {}, {} }
+local function partQuadRev(q)
+    revQuad[1], revQuad[2], revQuad[3], revQuad[4] = q[1], q[4], q[3], q[2]
+    return revQuad
+end
 
 local function drawVisor(frac, col, a, alpha)
     local from = (HUD.VISOR_BAR_TO or 0.3) + STRIP_GAP
     local off = HUD.VISOR_BAR_OFFSET or 0.005
     draw.NoTexture()
     for _, side in ipairs({ -1, 1 }) do
-        local strip = HUD.VisorStrip(side, from, STRIP_END, off, STRIP_THICK, STRIP_STEPS)
+        local strip = HUD.VisorStrip(side, from, STRIP_END, off, HUD.VISOR_BAR_THICK or 0.009, STRIP_STEPS)
         -- Track, then the filled part at the chin end.
         surface.SetDrawColor(COL_TRACK.r, COL_TRACK.g, COL_TRACK.b, COL_TRACK.a * alpha / 255)
         for _, q in ipairs(strip.quads) do surface.DrawPoly(q) end
-        local n = math.floor(frac * STRIP_STEPS + 0.5)
-        if n > 0 then
-            surface.SetDrawColor(col.r, col.g, col.b, a)
-            for i = STRIP_STEPS - n + 1, STRIP_STEPS do surface.DrawPoly(strip.quads[i]) end
+        -- Whole pieces, then the part-filled piece cut where the fill ends,
+        -- so it shrinks smoothly instead of a piece at a time.
+        local filled = math.Clamp(frac, 0, 1) * STRIP_STEPS
+        local n = math.floor(filled)
+        surface.SetDrawColor(col.r, col.g, col.b, a)
+        for i = STRIP_STEPS - n + 1, STRIP_STEPS do surface.DrawPoly(strip.quads[i]) end
+        local part = filled - n
+        if part > 0.01 and n < STRIP_STEPS then
+            local k = STRIP_STEPS - n            -- the piece from point k to k + 1
+            local o0, o1 = strip.outer[k], strip.outer[k + 1]
+            local i0, i1 = strip.inner[k], strip.inner[k + 1]
+            local u = 1 - part
+            local q = partQuad
+            q[1].x, q[1].y = o0[1] + (o1[1] - o0[1]) * u, o0[2] + (o1[2] - o0[2]) * u
+            q[2].x, q[2].y = o1[1], o1[2]
+            q[3].x, q[3].y = i1[1], i1[2]
+            q[4].x, q[4].y = i0[1] + (i1[1] - i0[1]) * u, i0[2] + (i1[2] - i0[2]) * u
+            -- Keep the winding clockwise on screen.
+            local area = 0
+            for j = 1, 4 do
+                local p, nx = q[j], q[j % 4 + 1]
+                area = area + (p.x * nx.y - nx.x * p.y)
+            end
+            if area < 0 then
+                surface.DrawPoly(partQuadRev(q))
+            else
+                surface.DrawPoly(q)
+            end
         end
         -- End ticks across the strip.
         local tick = HUD.Style and HUD.Style.tick
@@ -58,8 +89,12 @@ Rhylib.Hook.Add("HUDPaint", "hud.stamina", function()
     local now = RealTime()
 
     -- Fade out after 2 s at full, fade straight back in when used.
+    -- (In the helmet visor it always stays, like the armour and health.)
+    local visor = HUD.VisorActive and HUD.VisorActive() and HUD.VisorStrip
     local alpha = 255
-    if frac >= 1 then
+    if visor then
+        fullSince = 0
+    elseif frac >= 1 then
         if fullSince == 0 then fullSince = now end
         alpha = math.Clamp(255 - (now - fullSince - 2) * 510, 0, 255)
     else
@@ -73,7 +108,7 @@ Rhylib.Hook.Add("HUDPaint", "hud.stamina", function()
     local a = alpha
     if low then a = a * (0.65 + 0.35 * math.cos(now * 7)) end  -- gentle blink
 
-    if HUD.VisorActive and HUD.VisorActive() and HUD.VisorStrip then
+    if visor then
         drawVisor(frac, col, a, alpha)
         return
     end
