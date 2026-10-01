@@ -25,47 +25,112 @@ local SOUNDS = {
 
 local GAP = math.rad(14)          -- slit width
 local SIXTY = math.rad(60)
-local SEGMENTS = 12
 local MIN_RADIUS = 10             -- px at 1080p, so tiny cones stay readable
 local LINE, OUTLINE = 2, 4        -- px at 1080p
+local CHORD = 3                   -- px per arc piece (smooth curve at any size)
+local PAD = 2                     -- px of soft edge added to each stroke
 
 local colLine = Color(244, 244, 240)
 local colOutline = Color(0, 0, 0, 128)
 local colHead = Color(255, 90, 80)
 local colMark = Color(0, 0, 0)
 
-local verts = { { x = 0, y = 0 }, { x = 0, y = 0 }, { x = 0, y = 0 }, { x = 0, y = 0 } }
+local smoothVar = CreateClientConVar("rhylib_crosshair_smooth", "1", true, false, "Anti-aliased crosshair lines (0 = plain polygons)", 0, 1)
 
--- Draws one convex quad. surface.DrawPoly needs clockwise order, so flip if needed.
+--[[
+    Smooth strokes: every stroke is a quad textured with a soft profile
+    (opaque middle, fading to clear over the outer quarter on each side),
+    so edges are anti-aliased instead of stair-stepped. The profile lives in
+    a tiny render target made at runtime (no file to download), refreshed
+    now and then in case the game lost it (alt-tab, video settings).
+]]
+local strokeMat, strokeRT, strokeAt = nil, nil, 0
+
+local function buildStroke()
+    strokeRT = strokeRT or GetRenderTargetEx("rhylib_xh_stroke", 8, 64, RT_SIZE_LITERAL, MATERIAL_RT_DEPTH_NONE, 4 + 8, 0, IMAGE_FORMAT_RGBA8888)
+    render.PushRenderTarget(strokeRT)
+    render.OverrideAlphaWriteEnable(true, true)
+    render.Clear(255, 255, 255, 0, true, true)
+    -- Write colour and alpha exactly (no blending with what's there).
+    render.OverrideBlend(true, BLEND_ONE, BLEND_ZERO, BLENDFUNC_ADD, BLEND_ONE, BLEND_ZERO, BLENDFUNC_ADD)
+    cam.Start2D()
+        draw.NoTexture()
+        for y = 0, 63 do
+            local d = math.min(y + 0.5, 64 - (y + 0.5)) / 16  -- 0 at the edge, 1 a quarter in
+            surface.SetDrawColor(255, 255, 255, math.Clamp(d, 0, 1) * 255)
+            surface.DrawRect(0, y, 8, 1)
+        end
+    cam.End2D()
+    render.OverrideBlend(false)
+    render.OverrideAlphaWriteEnable(false)
+    render.PopRenderTarget()
+    strokeMat = strokeMat or CreateMaterial("rhylib_xh_stroke_mat", "UnlitGeneric", {
+        ["$basetexture"] = strokeRT:GetName(),
+        ["$translucent"] = "1",
+        ["$vertexcolor"] = "1",
+        ["$vertexalpha"] = "1",
+    })
+    strokeAt = RealTime()
+end
+
+local verts = {
+    { x = 0, y = 0, u = 0, v = 0 }, { x = 0, y = 0, u = 1, v = 0 },
+    { x = 0, y = 0, u = 1, v = 1 }, { x = 0, y = 0, u = 0, v = 1 },
+}
+
+-- One convex quad: 1-2 is one long edge (v = 0), 4-3 the other (v = 1).
+-- surface.DrawPoly needs clockwise order, so flip if needed.
 local function quad(x1, y1, x2, y2, x3, y3, x4, y4)
     local area = (x1 * y2 - x2 * y1) + (x2 * y3 - x3 * y2) + (x3 * y4 - x4 * y3) + (x4 * y1 - x1 * y4)
+    local a, b, c, d = verts[1], verts[2], verts[3], verts[4]
+    a.x, a.y, a.v = x1, y1, 0
+    c.x, c.y, c.v = x3, y3, 1
     if area < 0 then
-        x2, y2, x4, y4 = x4, y4, x2, y2
+        b.x, b.y, b.v = x4, y4, 1
+        d.x, d.y, d.v = x2, y2, 0
+    else
+        b.x, b.y, b.v = x2, y2, 0
+        d.x, d.y, d.v = x4, y4, 1
     end
-    verts[1].x, verts[1].y = x1, y1
-    verts[2].x, verts[2].y = x2, y2
-    verts[3].x, verts[3].y = x3, y3
-    verts[4].x, verts[4].y = x4, y4
     surface.DrawPoly(verts)
 end
 
+local padNow = 0  -- extra stroke width while drawing smooth
+
 local function arc(cx, cy, r, a0, a1, w)
+    w = w + padNow
     local ri, ro = r - w * 0.5, r + w * 0.5
-    local step = (a1 - a0) / SEGMENTS
-    for i = 0, SEGMENTS - 1 do
-        local t0, t1 = a0 + step * i, a0 + step * (i + 1)
-        local c0, s0, c1, s1 = math.cos(t0), math.sin(t0), math.cos(t1), math.sin(t1)
+    local n = math.Clamp(math.ceil(r * (a1 - a0) / CHORD), 6, 64)
+    local step = (a1 - a0) / n
+    local c0, s0 = math.cos(a0), math.sin(a0)
+    for i = 1, n do
+        local t1 = a0 + step * i
+        local c1, s1 = math.cos(t1), math.sin(t1)
         quad(cx + c0 * ro, cy + s0 * ro, cx + c1 * ro, cy + s1 * ro,
              cx + c1 * ri, cy + s1 * ri, cx + c0 * ri, cy + s0 * ri)
+        c0, s0 = c1, s1
     end
 end
 
 local function line(x1, y1, x2, y2, w)
+    w = w + padNow
     local dx, dy = x2 - x1, y2 - y1
     local len = math.sqrt(dx * dx + dy * dy)
     if len == 0 then return end
     local nx, ny = -dy / len * w * 0.5, dx / len * w * 0.5
     quad(x1 + nx, y1 + ny, x2 + nx, y2 + ny, x2 - nx, y2 - ny, x1 - nx, y1 - ny)
+end
+
+-- Set up for a batch of strokes: smooth (textured) or plain.
+local function beginStrokes()
+    if smoothVar:GetBool() then
+        if not strokeMat or RealTime() - strokeAt > 5 then buildStroke() end
+        surface.SetMaterial(strokeMat)
+        padNow = PAD
+    else
+        draw.NoTexture()
+        padNow = 0
+    end
 end
 
 -- Cone angle (degrees) to screen pixels. Source FOV is horizontal at 4:3.
@@ -102,7 +167,7 @@ function X.Draw(wep, x, y)
     local o1, o2, o3 = W.Spread.Offsets(wep, t)
     offsets[1], offsets[2], offsets[3] = degToPx(o1, fov), degToPx(o2, fov), degToPx(o3, fov)
 
-    draw.NoTexture()
+    beginStrokes()
     surface.SetDrawColor(colOutline)
     drawShape(x, y, r, offsets, s, OUTLINE * s)
     surface.SetDrawColor(colLine)
