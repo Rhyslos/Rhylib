@@ -76,9 +76,7 @@ function PANEL:Init()
     bottom:SetTall(s(34) * 2 + s(6))
     bottom.Paint = nil
     local quit = K.Button(bottom, "Disconnect", function()
-        K.Prompt("Disconnect", "Type yes to leave the server.", "", function(t)
-            if string.lower(string.Trim(t)) == "yes" then RunConsoleCommand("disconnect") end
-        end)
+        RunConsoleCommand("disconnect")
     end, { danger = true, align = "left" })
     quit:Dock(BOTTOM)
     local gm = K.Button(bottom, "Game menu  (Shift + Esc)", function()
