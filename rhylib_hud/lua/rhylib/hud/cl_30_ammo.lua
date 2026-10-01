@@ -81,6 +81,61 @@ end
 
 local sizes = {}  -- reused every frame
 
+--[[
+    What the ammo readouts show, gathered once (for the visor layouts in
+    cl_42_layouts.lua). Reuses one table.
+      unarmed, noAmmo   holding nothing / a weapon without ammo
+      name, mode, safe  weapon name, fire mode label, safety on
+      clip, maxClip     shots in the magazine and its size
+      magShort          loaded magazine type ("Med"), or nil
+      spare             spare magazines of the loaded type (or reserve)
+      others            "+2 small" for other types this gun takes, or nil
+      cell, cells       power cell charge 0-1 and spares (cell weapons), or nil
+]]
+local info = {}
+function HUD.AmmoInfo(ply, wep)
+    for k in pairs(info) do info[k] = nil end
+    local unarmed = not IsValid(wep) or wep.IsRhylibStowed
+    info.unarmed = unarmed
+    if unarmed then
+        info.name = "Stowed"
+        return info
+    end
+    info.name = wep:GetPrintName() or ""
+    if wep:Clip1() < 0 and wep:GetPrimaryAmmoType() < 0 then
+        info.noAmmo = true
+        return info
+    end
+    if wep.GetFireModeName then
+        info.safe = wep:GetSafety()
+        info.mode = info.safe and "SAFE" or string.upper(wep:GetFireModeName())
+    end
+    info.clip = math.max(wep:Clip1(), 0)
+    info.maxClip = wep.GetMagSize and wep:GetMagSize() or wep:GetMaxClip1()
+    if wep.IsRhylib and wep.GetMag then
+        local mag = wep:GetMag()
+        info.magShort = mag and mag.short or nil
+        info.magRounds = mag and mag.rounds or nil
+        info.spare = mag and ply:GetAmmoCount(mag.ammo) or 0
+        local extra
+        for _, id in ipairs(wep.Mags) do
+            local other = Rhylib.Weapons.MagTypes[id]
+            if other and other ~= mag then
+                local n = ply:GetAmmoCount(other.ammo)
+                if n > 0 then extra = (extra and extra .. " " or "") .. "+" .. n .. " " .. string.lower(other.short) end
+            end
+        end
+        info.others = extra
+        if wep.UsesCell then
+            info.cell = wep:GetCell()
+            info.cells = ply:GetAmmoCount("rhylib_cell")
+        end
+    elseif wep:GetPrimaryAmmoType() >= 0 then
+        info.spare = ply:GetAmmoCount(wep:GetPrimaryAmmoType())
+    end
+    return info
+end
+
 -- The visor ammo box: always its full size (room for the cell rows), like
 -- the third-person plate. The hotbar console lines up with it.
 function HUD.VisorAmmoRect()
@@ -107,6 +162,8 @@ end
 
 Rhylib.Hook.Add("HUDPaint", "hud.ammo", function()
     if HUD.Hidden() then return end
+    -- The visor layouts f4/f5 draw the ammo with the hotbar (cl_42_layouts.lua).
+    if HUD.LayoutDrawsAmmo and HUD.LayoutDrawsAmmo() then return end
     local ply = LocalPlayer()
     local wep = ply:GetActiveWeapon()
     local empty = not IsValid(wep) or wep.IsRhylibStowed or (wep:Clip1() < 0 and wep:GetPrimaryAmmoType() < 0)

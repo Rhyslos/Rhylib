@@ -246,9 +246,36 @@ end
 -- backpack slots 5 and 6, each group under its own header.
 --------------------------------------------------------------------------
 
-local CELL_W = 92            -- cell width at 1080p (narrower if the cheek is in the way)
-local COL_DIVIDER = Color(170, 176, 180, 46)
-local COL_HEAD_TEXT = Color(150, 152, 146)
+local CELL_W = 100           -- cell width at 1080p (narrower if the cheek is in the way)
+local COL_PLATE = Color(28, 32, 31, 236)     -- a little lighter than the helmet shell
+local COL_HEADER = Color(40, 45, 43, 250)
+local COL_DIVIDER = Color(170, 176, 180, 60)
+local COL_HEAD_TEXT = Color(165, 168, 160)
+
+--[[
+    Smallest x for a plate from y0 to y1 that stays clear of the bars and
+    the stamina strip along the right cheek. The plate's top-left corner
+    is cut cutW wide and cutH high, so it can tuck in under the curve.
+]]
+local function clearLeft(y0, y1, cutW, cutH, s)
+    local gap = 8 * s
+    local strip = HUD.VisorStrip and HUD.VisorStrip(1, 0.012, 0.4, 0.005, 0.009, 48)
+    if not strip then
+        return (HUD.VisorCheekX and HUD.VisorCheekX(y0 + cutH, 1) or ScrW() * 0.6) + ScrH() * 0.042
+    end
+    local x = 0
+    for _, list in ipairs({ strip.outer, strip.inner }) do
+        for _, p in ipairs(list) do
+            local py = p[2]
+            if py >= y0 and py <= y1 then
+                local need = p[1] + gap
+                if cutH > 0 and py < y0 + cutH then need = need - cutW * (1 - (py - y0) / cutH) end
+                if need > x then x = need end
+            end
+        end
+    end
+    return x
+end
 local tcol = Color(0, 0, 0)
 
 local function txt(text, size, weight, x, y, col, ax, ay, a)
@@ -262,26 +289,27 @@ local function fill(col, a, x, y, w, h)
 end
 
 local tabItems = {}
+local headerVerts = { { x = 0, y = 0 }, { x = 0, y = 0 }, { x = 0, y = 0 }, { x = 0, y = 0 } }
 
 local function drawConsole(active, alpha, s)
     local C = HUD.Colors
     local S = HUD.Style
     local ax, ay, _, ah = HUD.VisorAmmoRect()
     local right = ax - math.floor(10 * s)
-    local cut = math.floor(12 * s)
-    local margin = ScrH() * 0.042   -- clear of the cheek edge and the stamina strip along it
-    local function edge(yy) return (HUD.VisorCheekX and HUD.VisorCheekX(yy, 1) or ScrW() * 0.6) + margin end
+    -- A wide, shallow cut on the top-left corner, about the slope of the
+    -- cheek there, so the plate reaches further left.
+    local cutW, cutH = math.floor(60 * s), math.floor(30 * s)
 
     -- The plate: as tall as the ammo box, as wide as four cells allow.
     local y, h = ay, ah
-    local x = math.floor(math.max(edge(y + cut), right - CELL_W * 4 * s))
+    local x = math.floor(math.max(clearLeft(y, y + h, cutW, cutH, s), right - CELL_W * 4 * s))
     local w = right - x
     local cw = w / 4
 
     local r = HUD.HotbarRect
     r.x, r.y, r.w, r.h, r.frame = x, y, w, h, FrameNumber()
 
-    HUD.Frame(x, y, w, h, { alpha = alpha, cut = cut, cutLeft = true })
+    HUD.Frame(x, y, w, h, { alpha = alpha, cut = cutW, cutH = cutH, cutLeft = true, bg = COL_PLATE })
     local inset = math.floor(4 * s)
     local barH = math.max(2, math.floor(3 * s))
     for i = 1, 4 do
@@ -296,7 +324,8 @@ local function drawConsole(active, alpha, s)
                 fill(C.accent, a * 0.1, bx + inset, y + inset, bw - inset * 2, h - inset * 2)
                 fill(C.accent, a, bx + inset, y + h - inset - barH, bw - inset * 2, barH)
             end
-            local tx = bx + math.floor((i == 1 and 16 or 10) * s)
+            -- The first cell's number sits clear of the cut corner.
+            local tx = bx + math.floor(10 * s) + (i == 1 and math.floor(cutW * (1 - 20 * s / cutH)) or 0)
             local tw = bx + bw - tx - math.floor(6 * s)
             txt(tostring(e.key), 14, 700, tx, y + math.floor(20 * s), isActive and C.accent or C.dim, nil, nil, a)
             local mid = y + h * 0.52
@@ -325,33 +354,55 @@ local function drawConsole(active, alpha, s)
     n = #tabItems
     if n == 0 then return end
 
-    local th = math.floor(40 * s)
+    -- The tab also has a cut top-left corner, so it reaches in under the
+    -- curve and its cells stay roomy.
+    local th = math.floor(34 * s)
     local hh = math.floor(14 * s)
-    local ty = y - math.floor(8 * s) - th
+    local ty = y - math.floor(6 * s) - th
+    local tcutW, tcutH = math.floor(60 * s), math.floor(30 * s)
     -- Right-aligned over the last cells, and clear of the cheek.
-    local tx0 = math.floor(math.max(right - n * cw, x + cw, edge(ty)))
+    local tx0 = math.floor(math.max(right - n * cw, x + cw, clearLeft(ty, ty + th, tcutW, tcutH, s)))
     local tw = right - tx0
     local tcw = tw / n
-    HUD.Frame(tx0, ty, tw, th, { alpha = alpha, ticks = false })
-    fill(S.header, alpha, tx0 + 1, ty + 1, tw - 2, hh)
+    -- The tab's left edge at a height (inside the cut it slopes).
+    local function leftAt(yy)
+        local d = yy - ty
+        if d >= tcutH then return tx0 end
+        return tx0 + tcutW * (1 - d / tcutH)
+    end
+    HUD.Frame(tx0, ty, tw, th, { alpha = alpha, ticks = false, bg = COL_PLATE, cut = tcutW, cutH = tcutH, cutLeft = true })
+
+    -- Header band, cut to the same slope.
+    local hv = headerVerts
+    hv[1].x, hv[1].y = leftAt(ty + 1), ty + 1
+    hv[2].x, hv[2].y = right - 1, ty + 1
+    hv[3].x, hv[3].y = right - 1, ty + hh
+    hv[4].x, hv[4].y = leftAt(ty + hh), ty + hh
+    surface.SetDrawColor(COL_HEADER.r, COL_HEADER.g, COL_HEADER.b, COL_HEADER.a * alpha / 255)
+    draw.NoTexture()
+    surface.DrawPoly(hv)
 
     -- Header labels, each with a rule under its group.
     local others = over and 1 or 0
+    local ruleX = math.floor(leftAt(ty + hh))
+    local labelY = ty + 1 + hh * 0.5
+    local pad = math.floor(6 * s)
     if over then
-        fill(S.tick, alpha * 0.6, tx0 + 1, ty + hh, math.floor(tcw) - 2, 1)
-        txt("OTHER", 10, 700, tx0 + math.floor(8 * s), ty + 1 + hh * 0.5, COL_HEAD_TEXT, nil, nil, alpha)
+        fill(S.tick, alpha * 0.6, ruleX + 1, ty + hh, math.floor(tx0 + tcw) - ruleX - 2, 1)
+        txt("OTHER", 10, 700, math.max(tx0, leftAt(labelY)) + pad, labelY, COL_HEAD_TEXT, nil, nil, alpha)
     end
     if packs > 0 then
         local px = math.floor(tx0 + others * tcw)
-        fill(C.accent, alpha * 0.7, px + 1, ty + hh, right - px - 2, 1)
-        txt("BACKPACK", 10, 700, px + math.floor(8 * s), ty + 1 + hh * 0.5, COL_HEAD_TEXT, nil, nil, alpha)
+        local rx = math.max(px, ruleX)
+        fill(C.accent, alpha * 0.7, rx + 1, ty + hh, right - rx - 2, 1)
+        txt("BACKPACK", 10, 700, math.max(px, leftAt(labelY)) + pad, labelY, COL_HEAD_TEXT, nil, nil, alpha)
     end
 
     local cy = ty + hh + (th - hh) * 0.5
     for k, e in ipairs(tabItems) do
         local bx = math.floor(tx0 + (k - 1) * tcw)
         local bw = math.floor(tx0 + k * tcw) - bx
-        if k > 1 then fill(COL_DIVIDER, alpha, bx, ty + hh + math.floor(4 * s), 1, th - hh - math.floor(8 * s)) end
+        if k > 1 then fill(COL_DIVIDER, alpha, bx, ty + hh + math.floor(3 * s), 1, th - hh - math.floor(6 * s)) end
         local isActive = e.wep ~= nil and e.wep == active
         if e.overflow then
             for _, wp in ipairs(e.overflow) do
@@ -360,7 +411,7 @@ local function drawConsole(active, alpha, s)
         end
         local a = isActive and math.min(255, alpha * 2) or alpha
         if isActive then fill(C.accent, a, bx + 2, ty + th - 3, bw - 4, 2) end
-        local lx = bx + math.floor(8 * s)
+        local lx = math.floor(math.max(bx, leftAt(cy - 6 * s))) + math.floor(8 * s)
         local kw = txt(tostring(e.key), 11, 700, lx, cy, isActive and C.accent or C.dim, nil, nil, a)
         local nx = lx + kw + math.floor(6 * s)
         local extra = e.overflow and #e.overflow > 1 and ("+" .. (#e.overflow - 1)) or nil
@@ -405,9 +456,17 @@ Rhylib.Hook.Add("HUDPaint", "hud.hotbar", function()
         alpha = since < 2.5 and 255 or math.max(90, 255 - (since - 2.5) * 400)
     end
 
-    if visor and inventory() and HUD.VisorAmmoRect then
-        drawConsole(active, alpha, s)
-        return
+    if visor and inventory() then
+        -- Visor layouts (picked by an admin with rhylib_hud_layout).
+        local layout = HUD.VisorLayout and HUD.VisorLayout() or "console"
+        if layout ~= "console" and HUD.DrawVisorLayout then
+            HUD.DrawVisorLayout(layout, entries, active, alpha, s)
+            return
+        end
+        if HUD.VisorAmmoRect then
+            drawConsole(active, alpha, s)
+            return
+        end
     end
 
     -- One rect per entry: rects[i] = { x, y, w, h }.

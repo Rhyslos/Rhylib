@@ -236,6 +236,16 @@ function HUD.VisorCheekX(y, side)
     return side < 0 and fx * W or (1 - fx) * W
 end
 
+-- Screen y of the cheek edge at screen x. side -1 = left cheek, 1 = right.
+-- Past the chin end of the curve: the bottom of the screen.
+function HUD.VisorCheekY(x, side)
+    local W, H = ScrW(), ScrH()
+    local fx = side < 0 and x / W or (W - x) / W
+    if fx <= 0 then return CHEEK_TOP * H end
+    if fx >= 0.5 - CHIN_HALF then return H end
+    return cheekY(fx) * H
+end
+
 --[[
     A strip along a cheek edge, as quads, from width share fx0 to fx1,
     offset into the cheek along the edge's normal (so it keeps its
@@ -298,6 +308,7 @@ function HUD.VisorStrip(side, fx0, fx1, offset, thick, steps)
 end
 
 -- Where the armour/health bars end, so others can carry on from there.
+HUD.VISOR_BAR_FROM = BAR_FROM
 HUD.VISOR_BAR_TO = BAR_TO
 HUD.VISOR_BAR_OFFSET = BAR_OFFSET
 HUD.VISOR_BAR_THICK = BAR_THICK

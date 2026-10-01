@@ -54,6 +54,8 @@ end
       title   caps text in a header band along the top
       rule    colour of the line under the header (default accent)
       cut     px cut off the top-right corner (like the chat)
+      cutH    height of the cut, if it isn't square (default cut)
+      bg      plate colour (default HUD.Style.bg)
       cutLeft true: cut the top-left corner instead (things on the right)
       ticks   false to leave out the corner ticks
     Returns the y where content below the header starts.
@@ -64,10 +66,11 @@ function HUD.Frame(x, y, w, h, opts)
     local S = HUD.Style
     local s = HUD.Scale()
     local cut = opts.cut or 0
+    local cutH = opts.cutH or cut
     local x1, y1 = x + w, y + h
 
     draw.NoTexture()
-    setCol(S.bg, a)
+    setCol(opts.bg or S.bg, a)
     local left = opts.cutLeft
     if cut > 0 then
         local v = cutVerts
@@ -76,11 +79,11 @@ function HUD.Frame(x, y, w, h, opts)
             v[2].x, v[2].y = x1, y
             v[3].x, v[3].y = x1, y1
             v[4].x, v[4].y = x, y1
-            v[5].x, v[5].y = x, y + cut
+            v[5].x, v[5].y = x, y + cutH
         else
             v[1].x, v[1].y = x, y
             v[2].x, v[2].y = x1 - cut, y
-            v[3].x, v[3].y = x1, y + cut
+            v[3].x, v[3].y = x1, y + cutH
             v[4].x, v[4].y = x1, y1
             v[5].x, v[5].y = x, y1
         end
@@ -109,12 +112,12 @@ function HUD.Frame(x, y, w, h, opts)
         surface.DrawLine(x + cut, y, x1 - 1, y)
         surface.DrawLine(x1 - 1, y, x1 - 1, y1 - 1)
         surface.DrawLine(x1 - 1, y1 - 1, x, y1 - 1)
-        surface.DrawLine(x, y1 - 1, x, y + cut)
-        surface.DrawLine(x, y + cut, x + cut, y)
+        surface.DrawLine(x, y1 - 1, x, y + cutH)
+        surface.DrawLine(x, y + cutH, x + cut, y)
     elseif cut > 0 then
         surface.DrawLine(x, y, x1 - cut, y)
-        surface.DrawLine(x1 - cut, y, x1 - 1, y + cut)
-        surface.DrawLine(x1 - 1, y + cut, x1 - 1, y1 - 1)
+        surface.DrawLine(x1 - cut, y, x1 - 1, y + cutH)
+        surface.DrawLine(x1 - 1, y + cutH, x1 - 1, y1 - 1)
         surface.DrawLine(x1 - 1, y1 - 1, x, y1 - 1)
         surface.DrawLine(x, y1 - 1, x, y)
     else
