@@ -273,6 +273,7 @@ end
 
 -- Your item -> the storage (dragged onto it at x, y).
 function Inv.Deposit(ply, uid, x, y, rot, single)
+    if Inv.Locked and Inv.Locked(ply) then return end
     local st, storage = openStorage(ply)
     if not st then return end
     local inst = st.byUid[uid]
@@ -330,6 +331,7 @@ end
 
 -- Storage item -> your container cid at x, y.
 function Inv.Take(ply, suid, cid, x, y, rot, single)
+    if Inv.Locked and Inv.Locked(ply) then return end
     local st, storage = openStorage(ply)
     if not st or cid == EXT then return end
     local so = storage.items[suid]

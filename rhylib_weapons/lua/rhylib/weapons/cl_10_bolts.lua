@@ -21,6 +21,7 @@ local STYLES = {
     [3] = { color = Color(80, 255, 120), length = 70, width = 5, glow = 14, life = 1.2 },   -- green
     [4] = { color = Color(255, 170, 80), length = 140, width = 9, glow = 40, life = 6, rocket = true },  -- rocket
     [5] = { color = Color(14, 14, 14), length = 0, width = 1.8, glow = 0, life = 0.6, hook = true },    -- grapple hook
+    [6] = { color = Color(120, 200, 255), length = 0, width = 0, glow = 22, life = 1.2, ring = 26 },     -- stun ring
 }
 local COL_HOOK = Color(58, 60, 62)
 local HOOK_MINS, HOOK_MAXS = Vector(-6.75, -1.5, -1.5), Vector(2.25, 1.5, 1.5)
@@ -29,6 +30,7 @@ local BLEND_TIME = 0.08
 
 local matBeam = Material("trails/laser")
 local matGlow = Material("sprites/light_glow02_add")
+local matRing = Material("effects/select_ring")
 
 local function muzzlePos(shooter, fallback)
     if not IsValid(shooter) then return fallback end
@@ -114,6 +116,13 @@ local function impact(b)
     local style = b.style
     if style.rocket or style.hook then return end  -- the server handles these
     local ed = EffectData()
+    if style.ring then
+        -- Stun: a blue spark, no scorch mark.
+        ed:SetOrigin(b.hitPos)
+        ed:SetNormal(b.hitNormal)
+        util.Effect("StunstickImpact", ed)
+        return
+    end
     ed:SetOrigin(b.hitPos)
     ed:SetNormal(b.hitNormal)
     util.Effect("AR2Impact", ed)
@@ -177,7 +186,7 @@ Rhylib.Hook.Add("PostDrawTranslucentRenderables", "weapons.bolts", function(dept
             render.DrawBeam(from, b.pos, st.width, 0, 1, st.color)
             render.DrawBox(b.pos, b.dir:Angle(), HOOK_MINS, HOOK_MAXS, COL_HOOK)
             render.SetMaterial(matBeam)
-        elseif st then
+        elseif st and st.length > 0 then
             local blend = math.max(0, 1 - (now - b.born) / BLEND_TIME)
             local p, o, d = b.pos, b.offset, b.dir
             head:SetUnpacked(p.x + o.x * blend, p.y + o.y * blend, p.z + o.z * blend)
@@ -195,6 +204,19 @@ Rhylib.Hook.Add("PostDrawTranslucentRenderables", "weapons.bolts", function(dept
             local p, o = b.pos, b.offset
             head:SetUnpacked(p.x + o.x * blend, p.y + o.y * blend, p.z + o.z * blend)
             render.DrawSprite(head, st.glow, st.glow, st.color)
+        end
+    end
+    -- Stun rings: a circle facing the camera, pulsing a little.
+    render.SetMaterial(matRing)
+    for i = 1, #list do
+        local b = list[i]
+        local st = b.style
+        if st and st.ring then
+            local blend = math.max(0, 1 - (now - b.born) / BLEND_TIME)
+            local p, o = b.pos, b.offset
+            head:SetUnpacked(p.x + o.x * blend, p.y + o.y * blend, p.z + o.z * blend)
+            local r = st.ring * (1 + 0.15 * math.sin(now * 30))
+            render.DrawSprite(head, r, r, st.color)
         end
     end
 end)

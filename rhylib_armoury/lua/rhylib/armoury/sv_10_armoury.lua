@@ -127,7 +127,8 @@ function A.Use(ent, ply)
             net.Send(ply)
             return
         end
-        if sid ~= ply:SteamID64() and ent:GetLocked() then
+        -- Military police can search locked lockers (rhylib_mp answers the hook).
+        if sid ~= ply:SteamID64() and ent:GetLocked() and hook.Run("Rhylib.CanSearchLocker", ply, ent) ~= true then
             ply:PrintMessage(HUD_PRINTCENTER, "Locked. This is " .. ent:GetOwnerName() .. "'s locker")
             return
         end

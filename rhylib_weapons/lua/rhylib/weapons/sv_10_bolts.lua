@@ -90,6 +90,11 @@ local function applyHit(bolt, tr)
     end
     local ent = tr.Entity
     if not IsValid(ent) then return end
+    -- Stun bolts (SWEP.Stun): no damage; rhylib_mp decides what a hit does.
+    if bolt.stun then
+        if ent:IsPlayer() then hook.Run("Rhylib.StunHit", ent, bolt.owner, bolt.weapon) end
+        return
+    end
 
     local mult = 1
     if tr.HitGroup == HITGROUP_HEAD then
@@ -108,7 +113,10 @@ local function applyHit(bolt, tr)
     dmg:SetDamageType(DMG_BULLET)
     dmg:SetDamagePosition(tr.HitPos)
     dmg:SetDamageForce(bolt.dir * bolt.damage * 60)
+    -- Which body part was hit (rhylib_medical reads it during the hit).
+    if ent:IsPlayer() then ent.rhylibHitGroup = tr.HitGroup end
     ent:TakeDamageInfo(dmg)
+    if ent:IsPlayer() then ent.rhylibHitGroup = nil end
 
     if IsValid(owner) and owner:IsPlayer() and (ent:IsPlayer() or ent:IsNPC() or ent:IsNextBot()) then
         hitBatch:Send(owner, { head = tr.HitGroup == HITGROUP_HEAD })
@@ -200,6 +208,7 @@ function Bolts.Fire(owner, weapon, origin, dir, damage, opts)
         damage = damage or weapon.Damage,
         die = CurTime() + (opts and opts.life or weapon.BoltLife or Config.Get("weapons", "boltLife")),
         explosive = weapon.Explosive,
+        stun = weapon.Stun,
         onHit = opts and opts.onHit,
         onExpire = opts and opts.onExpire,
     }

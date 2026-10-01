@@ -647,7 +647,9 @@ function SWEP:Think()
         end
     end
 
+    local Med = Rhylib.Medical
     local want = owner:KeyDown(IN_ATTACK2) and not self:IsReloading() and not self:IsLowered()
+        and not (Med and Med.CanAim and not Med.CanAim(owner))  -- hurt arms can't aim
     if want ~= self:GetAiming() then
         self:SetAiming(want)
     end

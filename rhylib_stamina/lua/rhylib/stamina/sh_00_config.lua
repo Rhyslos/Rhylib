@@ -54,14 +54,31 @@ local function cfg(key)
     return Config.Get("stamina", key)
 end
 
+-- Most stamina this player can have (a hurt torso lowers it, rhylib_medical).
+function S.Max(ply)
+    local Med = Rhylib.Medical
+    local cap = Med and Med.StaminaCap and Med.StaminaCap(ply) or 1
+    return cfg("max") * cap
+end
+
 -- Stamina at time t (default now).
 function S.Get(ply, t)
     local v = ply:GetDTFloat(S.DT_STAMINA) + ply:GetDTFloat(S.DT_RATE) * math.max(0, (t or CurTime()) - ply:GetDTFloat(S.DT_FROM))
-    return math.Clamp(v, 0, cfg("max"))
+    return math.Clamp(v, 0, S.Max(ply))
 end
 
 function S.Frac(ply)
     return S.Get(ply) / cfg("max")
+end
+
+-- Take stamina away now (server; e.g. a torso hit). The line keeps its slope.
+function S.Drain(ply, amount)
+    if not SERVER or amount <= 0 then return end
+    local now = CurTime()
+    local st = math.max(0, S.Get(ply, now) - amount)
+    local rate = ply:GetDTFloat(S.DT_RATE)
+    ply:SetDTFloat(S.DT_STAMINA, st)
+    ply:SetDTFloat(S.DT_FROM, rate < 0 and now or math.max(now, ply:GetDTFloat(S.DT_FROM)))
 end
 
 function S.Exhausted(ply)

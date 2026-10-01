@@ -89,6 +89,11 @@ function Spread.Offsets(wep, t)
     if S and IsValid(owner) and owner:IsPlayer() then
         tired = S.SpreadPenalty(owner, Spread.BaseCone(wep))
     end
+    -- Hurt arms and burns (rhylib_medical).
+    local Med = Rhylib.Medical
+    if Med and Med.SpreadPenalty and IsValid(owner) and owner:IsPlayer() then
+        tired = tired + Med.SpreadPenalty(owner, Spread.BaseCone(wep))
+    end
     return (bloom + k1) * m + tired, (bloom + k2) * m + tired, (bloom + k3) * m + tired
 end
 

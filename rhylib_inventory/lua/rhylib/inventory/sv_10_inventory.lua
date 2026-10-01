@@ -771,6 +771,12 @@ end
 -- Client requests
 --------------------------------------------------------------------------
 
+-- Cuffed, stunned or jailed players (rhylib_mp) can't drop, use or hand
+-- over items. Other addons answer the Rhylib.InventoryLocked hook.
+function Inv.Locked(ply)
+    return hook.Run("Rhylib.InventoryLocked", ply) == true
+end
+
 Rhylib.Net.Receive("inv.req", function(ply)
     Inv.SendFull(ply)
 end, { rate = 1, burst = 2 })
@@ -800,10 +806,13 @@ end, { rate = 2, burst = 2 })
 
 Rhylib.Net.Receive("inv.drop", function(ply)
     local uid = net.ReadUInt(Items.UID_BITS)
-    Inv.Drop(ply, uid, net.ReadBool())
+    local single = net.ReadBool()
+    if Inv.Locked(ply) then return end
+    Inv.Drop(ply, uid, single)
 end, { rate = 8, burst = 8 })
 
 Rhylib.Net.Receive("inv.use", function(ply)
+    if Inv.Locked(ply) then return end
     local inst = Inv.Get(ply).byUid[net.ReadUInt(Items.UID_BITS)]
     local def = inst and Items.defs[inst.id]
     if def and def.weapon and ply:HasWeapon(def.weapon) then

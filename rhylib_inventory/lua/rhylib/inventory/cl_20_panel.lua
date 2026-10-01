@@ -823,6 +823,7 @@ function Inv.Toggle()
         return
     end
     if not LocalPlayer():Alive() then return end
+    if hook.Run("Rhylib.InventoryLocked", LocalPlayer()) == true then return end  -- cuffed, stunned (rhylib_mp)
     local p = vgui.Create("RhylibInventory")
     p:Center()
     p:MakePopup()
