@@ -22,16 +22,22 @@ local function inv()
     return Items and Rhylib.Inventory and Rhylib.Inventory.Get and Rhylib.Inventory or nil
 end
 
-local function holdingBaton(ply)
+-- Reach of the search tool in hand: the baton, or another tool that answers
+-- Rhylib.MPSearchTool with true (baton reach) or its own reach (the datapad).
+local function toolRange(ply)
     local w = ply:GetActiveWeapon()
-    return IsValid(w) and w:GetClass() == "rhylib_stunbaton"
+    if not IsValid(w) then return nil end
+    if w:GetClass() == "rhylib_stunbaton" then return MP.Cfg("searchRange") end
+    local r = hook.Run("Rhylib.MPSearchTool", ply, w)
+    if r == true then return MP.Cfg("searchRange") end
+    return tonumber(r)
 end
 
 local function canSearch(mp, target)
     if not (IsValid(mp) and IsValid(target) and mp:Alive() and target:Alive()) then return false end
     if mp == target or not MP.IsMP(mp) or MP.IsCuffed(mp) or mp.rhylibDown then return false end
-    if not holdingBaton(mp) then return false end
-    local r = MP.Cfg("searchRange")
+    local r = toolRange(mp)
+    if not r then return false end
     if mp:GetPos():DistToSqr(target:GetPos()) > r * r then return false end
     local tr = util.TraceLine({ start = mp:EyePos(), endpos = target:WorldSpaceCenter(), filter = { mp, target }, mask = MASK_SOLID })
     return not tr.Hit

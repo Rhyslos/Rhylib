@@ -17,6 +17,10 @@
         Inv.CreateStorage(ent, { kind = "depot", title = "Armoury", stock = { "rhylib_dc15s", ... } })
         Inv.OpenStorage(ply, ent)
 
+    variant = function(storage, ply) return sub end   -- optional: a different
+        storage per player (role armouries). Make subs with Inv.NewStorage
+        and keep them in storage.subs[key]; they share the entity.
+
     One open storage per player, shown as container Items.EXT (4) in the
     inventory window. Everyone looking into the same storage sees changes.
     Storages close when you walk away, die, or the entity is removed.
@@ -92,7 +96,8 @@ local function layoutDepot(storage)
     storage.h = math.max(used, 1)
 end
 
-function Inv.CreateStorage(ent, opts)
+-- A storage that isn't registered on the entity (a variant's sub-storage).
+function Inv.NewStorage(ent, opts)
     local storage = {
         ent = ent,
         kind = opts.kind or "grid",
@@ -105,10 +110,23 @@ function Inv.CreateStorage(ent, opts)
         viewers = {},
         onChanged = opts.onChanged,
         controls = opts.controls,
+        variant = opts.variant,
+        subs = {},
     }
     if storage.kind == "depot" then layoutDepot(storage) end
+    return storage
+end
+
+function Inv.CreateStorage(ent, opts)
+    local storage = Inv.NewStorage(ent, opts)
     Inv.storages[ent] = storage
     return storage
+end
+
+-- The storage itself and its variants.
+local function eachStorage(storage, fn)
+    fn(storage)
+    for _, sub in pairs(storage.subs) do fn(sub) end
 end
 
 function Inv.GetStorage(ent)
@@ -200,6 +218,10 @@ end
 function Inv.OpenStorage(ply, ent)
     local storage = Inv.storages[ent]
     if not storage then return end
+    if storage.variant then
+        storage = storage.variant(storage, ply)
+        if not storage then return end
+    end
     Inv.CloseStorage(ply, true)
     Inv.Get(ply).ext = storage
     storage.viewers[ply] = true
@@ -210,9 +232,11 @@ end
 function Inv.RefreshStorage(ent)
     local storage = Inv.storages[ent]
     if not storage then return end
-    for ply in pairs(storage.viewers) do
-        if IsValid(ply) then sendOpen(ply, storage) end
-    end
+    eachStorage(storage, function(s)
+        for ply in pairs(s.viewers) do
+            if IsValid(ply) then sendOpen(ply, s) end
+        end
+    end)
 end
 
 -- quiet: don't tell the client (it closed the window itself, or another opens).
@@ -232,9 +256,11 @@ end
 function Inv.RemoveStorage(ent)
     local storage = Inv.storages[ent]
     if not storage then return end
-    for ply in pairs(storage.viewers) do
-        if IsValid(ply) then Inv.CloseStorage(ply) end
-    end
+    eachStorage(storage, function(s)
+        for ply in pairs(s.viewers) do
+            if IsValid(ply) then Inv.CloseStorage(ply) end
+        end
+    end)
     Inv.storages[ent] = nil
 end
 
@@ -243,13 +269,15 @@ timer.Create("Rhylib.Inventory.StorageRange", 0.5, 0, function()
     for ent, storage in pairs(Inv.storages) do
         if not IsValid(ent) then
             Inv.RemoveStorage(ent)
-        elseif next(storage.viewers) ~= nil then
+        else
             local pos = ent:GetPos()
-            for ply in pairs(storage.viewers) do
-                if not IsValid(ply) or not ply:Alive() or ply:GetPos():DistToSqr(pos) > MAX_DIST * MAX_DIST then
-                    if IsValid(ply) then Inv.CloseStorage(ply) else storage.viewers[ply] = nil end
+            eachStorage(storage, function(s)
+                for ply in pairs(s.viewers) do
+                    if not IsValid(ply) or not ply:Alive() or ply:GetPos():DistToSqr(pos) > MAX_DIST * MAX_DIST then
+                        if IsValid(ply) then Inv.CloseStorage(ply) else s.viewers[ply] = nil end
+                    end
                 end
-            end
+            end)
         end
     end
 end)

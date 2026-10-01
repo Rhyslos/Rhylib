@@ -105,6 +105,38 @@ local function confiscate(ply)
     return evidence
 end
 
+--------------------------------------------------------------------------
+-- Records (looked up on the datapad): Data "mp_rec"/SteamID64 = list of
+-- arrests; Data "mp_idx"/"all" = { ["s" .. sid] = name } of everyone on
+-- file (prefixed: JSON would turn a bare SteamID64 key into a rounded number).
+--------------------------------------------------------------------------
+
+MP.REC_MAX = 50
+
+function MP.IndexPlayer(sid, name)
+    if not sid or sid == "" or sid == "0" then return end
+    local idx = Data.Get("mp_idx", "all")
+    if not istable(idx) then idx = {} end
+    if idx["s" .. sid] == name then return end
+    idx["s" .. sid] = name
+    Data.Set("mp_idx", "all", idx)
+end
+
+function MP.GetRecord(sid)
+    local r = Data.Get("mp_rec", sid)
+    return istable(r) and r or {}
+end
+
+local function addRecord(ply, by, minutes, why)
+    local id = ply:SteamID64()
+    if not id then return end
+    local r = MP.GetRecord(id)
+    table.insert(r, 1, { t = os.time(), by = by, min = minutes, why = why })
+    while #r > MP.REC_MAX do table.remove(r) end
+    Data.Set("mp_rec", id, r)
+    MP.IndexPlayer(id, ply:Nick())
+end
+
 function MP.Jail(ply, by, minutes, why)
     if not IsValid(ply) or jailed[ply] then return false end
     local cell = freeCell()
@@ -123,6 +155,7 @@ function MP.Jail(ply, by, minutes, why)
     putInCell(ply)
     setState(ply)
     save(ply)
+    addRecord(ply, rec.by, minutes, rec.why)
     ply:ChatPrint(string.format("Jailed by %s for %d min: %s", rec.by, minutes, rec.why))
     hook.Run("Rhylib.PlayerJailed", ply, by, minutes, rec.why)
     return true

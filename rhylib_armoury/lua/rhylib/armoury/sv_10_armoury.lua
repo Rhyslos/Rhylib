@@ -28,9 +28,19 @@ local function weaponStock()
     if istable(list) and #list > 0 then return list end
     local Items = Rhylib.Items
     Items.EnsureReady()
+    -- Role gear lives in the specialist armouries.
+    local roleItem = {}
+    local roles = Config.Get("armoury", "roles")
+    if istable(roles) then
+        for _, r in pairs(roles) do
+            for _, kind in ipairs({ "weapons", "gear" }) do
+                if istable(r[kind]) then for _, id in ipairs(r[kind]) do roleItem[id] = true end end
+            end
+        end
+    end
     local out = {}
     for id, def in pairs(Items.defs) do
-        if def.weapon then
+        if def.weapon and not roleItem[id] then
             local swep = weapons.Get(def.weapon)
             if swep and swep.IsRhylib and swep.Spawnable then out[#out + 1] = id end
         end
@@ -53,7 +63,51 @@ end
 
 function A.FillCrate(ent, storage)
     storage.items = {}
-    Inv().StorageAdd(storage, ent.CrateMag, 999, { fill = 1 })
+    if ent.CrateMag then
+        Inv().StorageAdd(storage, ent.CrateMag, 999, { fill = 1 })
+        return
+    end
+    local list = ent.CrateStock and Config.Get("armoury", ent.CrateStock)
+    if not istable(list) then return end
+    Rhylib.Items.EnsureReady()
+    for _, row in ipairs(list) do
+        local def = istable(row) and Rhylib.Items.defs[row[1]]
+        if def then Inv().StorageAdd(storage, row[1], tonumber(row[2]) or 1, def.fill and { fill = 1 } or {}) end
+    end
+end
+
+-- Specialist stock for a set of roles (only items that exist).
+local function roleStock(roles, kind)
+    local cfg = Config.Get("armoury", "roles")
+    local out, seen = {}, {}
+    if not istable(cfg) then return out end
+    Rhylib.Items.EnsureReady()
+    for _, r in ipairs(roles) do
+        local list = istable(cfg[r]) and cfg[r][kind]
+        if istable(list) then
+            for _, id in ipairs(list) do
+                if not seen[id] and Rhylib.Items.defs[id] then seen[id] = true out[#out + 1] = id end
+            end
+        end
+    end
+    return out
+end
+
+-- One depot per set of roles, made when someone with that set opens it.
+local function specVariant(storage, ply)
+    local roles = A.Roles(ply)
+    local key = table.concat(roles, "+")
+    local sub = storage.subs[key]
+    if not sub then
+        local stock = roleStock(roles, storage.specKind)
+        if #stock == 0 then
+            ply:PrintMessage(HUD_PRINTCENTER, "Nothing here for your role")
+            return nil
+        end
+        sub = Inv().NewStorage(storage.ent, { kind = "depot", w = 6, title = storage.title, stock = stock })
+        storage.subs[key] = sub
+    end
+    return sub
 end
 
 local function lockerTitle(ent)
@@ -86,6 +140,10 @@ function A.Setup(ent)
         return I.CreateStorage(ent, { kind = "depot", w = 6, title = "Weapons armoury", stock = weaponStock() })
     elseif kind == "ammo" then
         return I.CreateStorage(ent, { kind = "depot", w = 6, title = "Ammo cabinet", stock = ammoStock() })
+    elseif kind == "spec" then
+        storage = I.CreateStorage(ent, { kind = "grid", w = 1, h = 1, title = ent.PrintName, variant = specVariant })
+        storage.specKind = ent.SpecKind
+        return storage
     elseif kind == "crate" then
         storage = I.CreateStorage(ent, {
             kind = "grid", title = ent.PrintName,
@@ -187,6 +245,14 @@ function A.Unclaim(ent)
     ent:SetLocked(false)
     A.UpdatePlacement(ent)
 end
+
+-- A new job can mean a different role: close a specialist armoury left open.
+Rhylib.Hook.Add("OnPlayerChangedTeam", "armoury.roles", function(ply)
+    local I = Inv()
+    local st = I and I.states and I.states[ply]
+    local storage = st and st.ext
+    if storage and IsValid(storage.ent) and storage.ent.ArmouryKind == "spec" then I.CloseStorage(ply) end
+end)
 
 Rhylib.Net.Receive("armoury.claim", function(ply)
     A.Claim(ply, net.ReadEntity())
@@ -301,11 +367,12 @@ end)
 adminCommand("rhylib_crate_refill", function(ply, args)
     local list = {}
     if args[1] == "all" then
-        for _, class in ipairs({ "rhylib_crate_small", "rhylib_crate_medium", "rhylib_crate_large" }) do
+        for _, class in ipairs(A.CRATES) do
             for _, e in ipairs(ents.FindByClass(class)) do list[#list + 1] = e end
         end
     else
-        list[1] = lookedAt(ply, "rhylib_crate_")
+        local e = lookedAt(ply)
+        if e and table.HasValue(A.CRATES, e:GetClass()) then list[1] = e end
     end
     local n = 0
     for _, ent in ipairs(list) do
@@ -316,7 +383,7 @@ adminCommand("rhylib_crate_refill", function(ply, args)
             n = n + 1
         end
     end
-    reply(ply, "Refilled " .. n .. " supply crate" .. (n == 1 and "" or "s"))
+    reply(ply, "Refilled " .. n .. " crate" .. (n == 1 and "" or "s"))
 end)
 
 adminCommand("rhylib_locker_unclaim", function(ply)
