@@ -335,8 +335,104 @@ local function arrestTab()
     if not any then label(sp, "Nobody cuffed nearby. Cuff them first, or escort them here.") end
 end
 
+--------------------------------------------------------------------------
+-- Battalion: what was last downloaded from the battalion computer
+--------------------------------------------------------------------------
+
+D.sync = D.sync or nil      -- { bn, v, at, logs, posts } (kept until you leave)
+D.latest = D.latest or {}   -- [battalion] = newest version the server told us about
+local dl                    -- a download in progress: { start, dur, data }
+
+local function latestVer()
+    local st = D.state
+    if not st or st.bn == "" then return 0 end
+    return math.max(D.latest[st.bn] or 0, st.ver or 0)
+end
+
+local function hasNew()
+    local st = D.state
+    if not st or st.bn == "" then return false end
+    local mine = (D.sync and D.sync.bn == st.bn) and D.sync.v or 0
+    return latestVer() > mine
+end
+
+local function startDownload()
+    if dl or not D.state or D.state.bn == "" then return end
+    dl = { start = RealTime(), dur = math.Rand(3, 15) }
+    send("dp.dl")
+    surface.PlaySound("buttons/button24.wav")
+end
+
+local function countdown(at)
+    local d = at - os.time()
+    if d <= 0 then return "now" end
+    if d < 3600 then return "in " .. math.ceil(d / 60) .. " min" end
+    if d < 86400 then return string.format("in %d h %d min", math.floor(d / 3600), math.floor(d % 3600 / 60)) end
+    return string.format("in %d d %d h", math.floor(d / 86400), math.floor(d % 86400 / 3600))
+end
+
+local function battalionTab()
+    local k = K()
+    local st = D.state
+    local sy = D.sync
+    if view.read then
+        local r = view.read
+        reader(r.title, r.by, r.body or "Loading…", function() view.read = nil buildTab() end)
+        return
+    end
+    heading(st.bn .. " computer (downloaded)")
+    if not sy or sy.bn ~= st.bn then
+        label(content, "Nothing downloaded yet. Press the refresh light at the top right to download the battalion's board and logs. Uploading still happens at the computer.")
+        return
+    end
+    label(content, "Downloaded " .. os.date("%d %b %H:%M", sy.at) .. (hasNew() and "  ·  the computer has newer changes" or "  ·  up to date"),
+        hasNew() and k.C.good or nil)
+    local sp = k.Scroll(content)
+    sp:Dock(FILL)
+    local function sub(text)
+        local h = k.Heading(sp, text)
+        h:Dock(TOP)
+        h:DockMargin(0, k.S(6), k.S(8), k.S(4))
+    end
+    local function open(kind, id, title, by)
+        view.read = { kind = kind, id = id, title = title, by = by }
+        send("dp.dread", function()
+            net.WriteUInt(kind, 1)
+            net.WriteUInt(id, 20)
+        end)
+        buildTab()
+    end
+    -- Board: pinned, upcoming sessions, plans, info.
+    local now = os.time()
+    local groups = { { "Pinned", {} }, { "Upcoming sessions", {} }, { "Plans", {} }, { "Info", {} } }
+    for _, p in ipairs(sy.posts) do
+        local g
+        if p.pin then g = 1
+        elseif p.sec == 3 then g = p.at > now - 3600 and 2 or nil
+        elseif p.sec == 2 then g = 3
+        else g = 4 end
+        if g then table.insert(groups[g][2], p) end
+    end
+    table.sort(groups[2][2], function(a, b) return a.at < b.at end)
+    for _, g in ipairs(groups) do
+        if #g[2] > 0 then
+            sub(g[1])
+            for _, p in ipairs(g[2]) do
+                local right = p.sec == 3 and (when(p.at) .. "  (" .. countdown(p.at) .. ")") or when(p.t)
+                row(sp, p.title, right, function() open(1, p.id, p.title, "By " .. p.author .. " · " .. right) end, p.sec == 3 and "SES" or nil)
+            end
+        end
+    end
+    sub("Logs (" .. #sy.logs .. ")")
+    if #sy.logs == 0 then label(sp, "No logs.") end
+    for _, e in ipairs(sy.logs) do
+        row(sp, e.title .. "  ·  " .. e.author, when(e.t), function() open(0, e.id, e.title, "By " .. e.author .. " · " .. when(e.t)) end, e.mp and "MP" or nil)
+    end
+end
+
 local TABS = {
     { id = "notes", name = "Notes", build = notesTab },
+    { id = "battalion", name = "Battalion", build = battalionTab, bn = true },
     { id = "records", name = "Records", build = recordsTab, mp = true },
     { id = "ologs", name = "Officer logs", build = ologsTab, mp = true },
     { id = "arrest", name = "Arrest", build = arrestTab, mp = true },
@@ -366,12 +462,76 @@ local function openWindow()
     panel:DockPadding(s(14), s(52), s(14), s(14))
     function panel:Paint(w, h)
         local st = D.state
-        k.Plate(0, 0, w, h, { title = "Datapad", sub = st and st.bn ~= "" and st.bn or nil, ticks = "all", header = s(38) })
+        k.Plate(0, 0, w, h, { title = "Datapad", ticks = "all", header = s(38) })
+        local right = w - s(54)
+        if dl then
+            -- Download progress, left of the refresh light.
+            local f = math.Clamp((RealTime() - dl.start) / dl.dur, 0, dl.data and 1 or 0.97)
+            local bw = s(200)
+            local bx, by = right - bw, s(15)
+            k.SetCol(k.C.row)
+            surface.DrawRect(bx, by, bw, s(8))
+            k.SetCol(k.C.good)
+            surface.DrawRect(bx, by, bw * f, s(8))
+            draw.SimpleText("Downloading " .. math.floor(f * 100) .. "%", k.Font(11), bx - s(8), by + s(4), k.C.textDim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+        elseif st and st.bn ~= "" then
+            draw.SimpleText(st.bn, k.Font(13), right, s(19), k.C.textDim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+        end
     end
     function panel:Think()
         local ply = LocalPlayer()
-        if not ply:Alive() or not D.Holding(ply) then self:Remove() end
+        if not ply:Alive() or not D.Holding(ply) then self:Remove() return end
+        -- Download finished: show it.
+        if dl and dl.data and RealTime() - dl.start >= dl.dur then
+            D.sync = dl.data
+            D.sync.at = os.time()
+            dl = nil
+            surface.PlaySound("buttons/button14.wav")
+            if tab == "battalion" then buildTab() end
+        end
     end
+    function panel:OnRemove() dl = nil end   -- closing the pad cancels a download
+
+    -- The refresh light: blinks green when the computer has something new.
+    local refresh = vgui.Create("DButton", panel)
+    refresh:SetText("")
+    refresh:SetSize(s(30), s(30))
+    refresh:SetPos(s(960) - s(14) - s(30), s(4))
+    refresh:SetTooltip("Download from the battalion computer")
+    function refresh:Paint(w, h)
+        local st = D.state
+        if not st or st.bn == "" then return true end
+        local cx, cy, r = w * 0.5, h * 0.5, s(9)
+        local new = hasNew()
+        local col = (dl and k.C.textDim) or (new and k.C.good) or k.C.text
+        if new and not dl and math.floor(RealTime() * 2.5) % 2 == 0 then
+            surface.SetDrawColor(k.C.good.r, k.C.good.g, k.C.good.b, 60)
+            draw.NoTexture()
+            surface.DrawRect(0, 0, w, h)
+        end
+        -- A circular arrow: most of a ring, and an arrowhead at its end.
+        surface.SetDrawColor(col)
+        local a0 = dl and (RealTime() * 6) or 0.7
+        local steps = 14
+        for i = 0, steps - 1 do
+            local t0 = a0 + (i / steps) * 5.2
+            local t1 = a0 + ((i + 1) / steps) * 5.2
+            surface.DrawLine(cx + math.cos(t0) * r, cy + math.sin(t0) * r, cx + math.cos(t1) * r, cy + math.sin(t1) * r)
+            surface.DrawLine(cx + math.cos(t0) * (r - 1), cy + math.sin(t0) * (r - 1), cx + math.cos(t1) * (r - 1), cy + math.sin(t1) * (r - 1))
+        end
+        local te = a0 + 5.2
+        local ex, ey = cx + math.cos(te) * r, cy + math.sin(te) * r
+        local tx, ty = -math.sin(te), math.cos(te)   -- along the ring
+        local nx, ny = math.cos(te), math.sin(te)    -- outward
+        draw.NoTexture()
+        surface.DrawPoly({
+            { x = ex + tx * s(5), y = ey + ty * s(5) },
+            { x = ex + nx * s(4), y = ey + ny * s(4) },
+            { x = ex - nx * s(4), y = ey - ny * s(4) },
+        })
+        return true
+    end
+    function refresh:DoClick() startDownload() end
     if Rhylib.Menus.RegisterCloser then
         Rhylib.Menus.RegisterCloser("datapad", function()
             if IsValid(panel) then panel:Remove() return true end
@@ -383,8 +543,9 @@ local function openWindow()
     nav:SetWide(s(170))
     nav:DockMargin(0, 0, s(14), 0)
     nav.Paint = nil
+    local function allowed(t) return (not t.mp or D.state.mp) and (not t.bn or D.state.bn ~= "") end
     for _, t in ipairs(TABS) do
-        if not t.mp or D.state.mp then
+        if allowed(t) then
             local b = k.Button(nav, t.name, function()
                 tab = t.id
                 view = {}
@@ -399,7 +560,11 @@ local function openWindow()
     content = vgui.Create("DPanel", panel)
     content:Dock(FILL)
     content.Paint = nil
-    if tab ~= "notes" and not D.state.mp then tab = "notes" end
+    local ok = false
+    for _, t in ipairs(TABS) do
+        if t.id == tab and allowed(t) then ok = true end
+    end
+    if not ok then tab = "notes" end
     view = {}
     buildTab()
 end
@@ -428,6 +593,7 @@ Rhylib.Net.Receive("dp.state", function()
     st.medic = net.ReadBool()
     st.banned = net.ReadBool()
     st.limit = net.ReadUInt(8)
+    st.ver = net.ReadUInt(32)
     for i = 1, net.ReadUInt(8) do
         st.notes[i] = { id = net.ReadUInt(16), kind = net.ReadUInt(1), title = net.ReadString(), pn = net.ReadString(), t = net.ReadUInt(32) }
     end
@@ -485,4 +651,33 @@ Rhylib.Net.Receive("dp.lbody", function()
     if not IsValid(panel) then return end
     local back = view.readBack or buildTab
     reader(title, "By " .. author .. " · " .. when(t), body, back)
+end)
+
+Rhylib.Net.Receive("dp.ver", function()
+    local bn, v = net.ReadString(), net.ReadUInt(32)
+    D.latest[bn] = v
+end)
+
+Rhylib.Net.Receive("dp.dldata", function()
+    local d = { logs = {}, posts = {} }
+    d.bn = net.ReadString()
+    d.v = net.ReadUInt(32)
+    for i = 1, net.ReadUInt(8) do
+        d.logs[i] = { id = net.ReadUInt(20), author = net.ReadString(), title = net.ReadString(), t = net.ReadUInt(32), mp = net.ReadBool() }
+    end
+    for i = 1, net.ReadUInt(7) do
+        d.posts[i] = { id = net.ReadUInt(16), sec = net.ReadUInt(2), title = net.ReadString(), author = net.ReadString(),
+            t = net.ReadUInt(32), at = net.ReadUInt(32), pin = net.ReadBool() }
+    end
+    D.latest[d.bn] = math.max(D.latest[d.bn] or 0, d.v)
+    if dl then dl.data = d end   -- shown when the progress bar is done
+end)
+
+Rhylib.Net.Receive("dp.dbody", function()
+    local kind, id, body = net.ReadUInt(1), net.ReadUInt(20), net.ReadString()
+    local r = view.read
+    if r and r.kind == kind and r.id == id then
+        r.body = body ~= "" and body or "(empty)"
+        if IsValid(panel) and tab == "battalion" then buildTab() end
+    end
 end)

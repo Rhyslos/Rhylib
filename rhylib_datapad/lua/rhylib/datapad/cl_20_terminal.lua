@@ -14,6 +14,7 @@
 local D = Rhylib.Datapad
 
 local function K() return Rhylib.Menus and Rhylib.Menus.Kit end
+local OPAQUE = Color(14, 16, 15, 255)
 local function when(t) return t and t > 0 and os.date("%d %b %Y %H:%M", t) or "" end
 
 local panel
@@ -676,7 +677,8 @@ local function open()
         function panel:Paint(w, h)
             if not term then return end
             local title = term.med and "Medical holotable" or (term.bn ~= "" and (term.bn .. " computer") or "Battalion computer")
-            k.Plate(0, 0, w, h, { title = title, sub = term.med and "Medical records" or "Battalion", ticks = "all", header = s(38) })
+            -- Fully opaque: the text must stay readable whatever is behind the screen.
+            k.Plate(0, 0, w, h, { title = title, sub = term.med and "Medical records" or "Battalion", ticks = "all", header = s(38), bg = OPAQUE })
         end
         function panel:Think()
             local r = D.Cfg("useRange") + 20

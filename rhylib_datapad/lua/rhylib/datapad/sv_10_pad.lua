@@ -115,6 +115,7 @@ function D.SendState(ply)
     net.WriteBool(D.IsMedic(ply))
     net.WriteBool(bn ~= "" and D.Banned(bn, sid(ply)))
     net.WriteUInt(D.Limit(ply), 8)
+    net.WriteUInt(bn ~= "" and D.Version and D.Version(bn) or 0, 32)   -- newest change on the battalion computer
     net.WriteUInt(math.min(#pad, 255), 8)
     for i = 1, math.min(#pad, 255) do
         local n = pad[i]
@@ -138,6 +139,8 @@ local function recv(name, fn, limits, mpOnly)
         fn(ply, len)
     end, limits or { rate = 4, burst = 6 })
 end
+
+D.PadRecv = recv   -- (sv_50_sync.lua)
 
 recv("dp.open", function(ply) D.SendState(ply) end, { rate = 2, burst = 3 })
 

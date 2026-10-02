@@ -40,7 +40,7 @@ local function open()
     numRow:Dock(TOP)
     numRow:DockMargin(0, 0, 0, s(6))
     numRow.right:SetWide(s(140))
-    local num = k.TextEntry(numRow.right, "No 00 in a row")
+    local num = k.TextEntry(numRow.right, "1234")
     num:Dock(FILL)
     num:SetNumeric(true)
 
