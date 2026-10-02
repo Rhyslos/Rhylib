@@ -44,16 +44,23 @@ function ENT:Initialize()
     self:SetMoveType(MOVETYPE_NONE)
     self:DrawShadow(false)
 
-    if not player.CreateNextBot then
+    -- Bots need a multiplayer game (a local game with 2+ player slots).
+    if game.SinglePlayer() or not player.CreateNextBot then
+        for _, p in ipairs(player.GetHumans()) do
+            if p:IsAdmin() then p:ChatPrint("Test dummy: needs a multiplayer game. Start your local game with 2 or more player slots.") end
+        end
         self:Remove()
         return
     end
     count = count + 1
-    local bot = player.CreateNextBot("Test dummy " .. count)
-    if not IsValid(bot) then
-        -- No free player slot.
+    -- (pcall: the engine errors instead of returning nil in some setups)
+    local ok, bot = pcall(player.CreateNextBot, "Test dummy " .. count)
+    if not ok or not IsValid(bot) then
+        local why = (not ok and string.find(tostring(bot), "singleplayer", 1, true))
+            and "needs a multiplayer game. Start your local game with 2 or more player slots."
+            or "no free player slot"
         for _, p in ipairs(player.GetHumans()) do
-            if p:IsAdmin() then p:ChatPrint("Test dummy: no free player slot") end
+            if p:IsAdmin() then p:ChatPrint("Test dummy: " .. why) end
         end
         self:Remove()
         return

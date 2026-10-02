@@ -1423,8 +1423,10 @@ if CLIENT then
     local wmEditor
     concommand.Add("rhylib_wm_editor", function()
         if IsValid(wmEditor) then wmEditor:Remove() return end
-        local w = held()
-        if not w then return end
+        -- Any weapon with a third-person prop (guns, grenades).
+        local w = LocalPlayer():GetActiveWeapon()
+        if not IsValid(w) or not w.PropModel or not w.PropWMPos then print("Hold a Rhylib weapon or grenade first") return end
+        w.PropScale = w.PropScale or 1
         w.PropWMPos = Vector(w.PropWMPos:Unpack())
         w.PropWMAng = Angle(w.PropWMAng:Unpack())
         local f, label, field = editorFrame("Third person: " .. w:GetClass(), 360, w)

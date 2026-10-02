@@ -874,13 +874,17 @@ Rhylib.Hook.Add("PlayerCanPickupWeapon", "inventory.pickup", function(ply, wep)
     local loadout = ply.rhylibSpawnTick and engine.TickCount() - ply.rhylibSpawnTick <= 2
     wep.rhylibClaimed = true
     timer.Simple(0, function()
-        if not IsValid(ply) or not IsValid(wep) then return end
+        if not IsValid(ply) then return end
+        -- ply:Give (spawn menu, admin mods) removes a weapon whose pickup
+        -- was refused, so it may be gone already; nobody else could take
+        -- it (claimed), so it still goes into the inventory.
+        local gone = not IsValid(wep)
         -- Add first; the weapon only leaves the ground if it really went in
         -- (the inventory may have filled up during this tick).
         if Inv.AddItem(ply, class, 1, loadout and { issued = true, loadout = true } or {}) == 0 then
-            wep:Remove()
+            if not gone then wep:Remove() end
             hook.Run("Rhylib.InventoryWeaponPickup", ply, class)
-        else
+        elseif not gone then
             wep.rhylibClaimed = nil
         end
     end)
