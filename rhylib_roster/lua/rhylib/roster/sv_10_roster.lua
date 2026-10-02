@@ -66,6 +66,18 @@ local function setMember(bn, id, on)
     Data.Set("roster", bn, t)
 end
 
+-- Members of a battalion: list of { id = sid, c = character }.
+function R.Members(bn)
+    local out = {}
+    if bn == "" then return out end
+    for key in pairs(members(bn)) do
+        local id = string.sub(tostring(key), 2)
+        local c = R.Char(id)
+        if c and c.bn == bn then out[#out + 1] = { id = id, c = c } end
+    end
+    return out
+end
+
 function R.Log(bn, txt)
     if bn == "" then return end
     local t = Data.Get("roster_log", bn)
@@ -87,6 +99,14 @@ function R.Publish(ply)
     ply:SetNW2Bool("rhylib_trained", c and c.trained or false)
     ply:SetNW2String("rhylib_bn", c and c.bn or "")
     ply:SetNW2Int("rhylib_rank", c and c.r or 0)
+    local q = {}
+    if c and istable(c.q) then
+        for id, on in pairs(c.q) do
+            if on then q[#q + 1] = tostring(id) end
+        end
+    end
+    table.sort(q)
+    ply:SetNW2String("rhylib_quals", #q > 0 and ("," .. table.concat(q, ",") .. ",") or "")
 end
 
 -- PREFIX-NUMBER Nickname as the DarkRP name.
@@ -97,17 +117,46 @@ function R.ApplyName(ply)
 end
 
 -- After a rank or membership change: if the current job isn't allowed any
--- more, back to the CT (or cadet) job.
--- Trained players sitting in the cadet job move up to CT too.
+-- more, back to their home job.
+-- Home job: their battalion's job for their rank (the highest minRank they
+-- meet, not medic, with a free slot), else CT (trained) or cadet.
+-- Players sitting in cadet/CT who have something better move there too
+-- (on join, after training, when added to a battalion).
+local function slotFree(t, j)
+    local max = j.max or 0
+    if max <= 0 then return true end
+    if max < 1 then max = math.ceil(max * player.GetCount()) end   -- (DarkRP: a share of the players)
+    return team.NumPlayers(t) < max
+end
+
+local function homeJob(ply)
+    local c = R.Get(ply)
+    if c.bn ~= "" and RPExtraTeams then
+        local best, bestNeed
+        for t, j in pairs(RPExtraTeams) do
+            if j.battalion == c.bn and not j.medic and (t == ply:Team() or slotFree(t, j)) then
+                local ok = true
+                if j.customCheck then ok = j.customCheck(ply) and true or false else ok = R.JobBlock(ply, j) == nil end
+                local need = R.RankIndex(j.minRank) or 0
+                if ok and (not best or need > bestNeed) then best, bestNeed = t, need end
+            end
+        end
+        if best then return best end
+    end
+    return c.trained and TEAM_CT or (TEAM_CADET or GAMEMODE.DefaultTeam)
+end
+
+local function moveTo(ply, t)
+    if not t or ply:Team() == t or not ply.changeTeam then return end
+    ply:changeTeam(t, true)
+    ply.LastJob = nil   -- a move we made doesn't start DarkRP's job-change wait
+end
+
 local function checkJob(ply)
     local j = RPExtraTeams and RPExtraTeams[ply:Team()]
-    local c = R.Get(ply)
     local cadet = TEAM_CADET or GAMEMODE.DefaultTeam
-    if j and R.JobBlock(ply, j) then
-        local t = c.trained and TEAM_CT or cadet
-        if t and ply.changeTeam then ply:changeTeam(t, true) end
-    elseif c.trained and TEAM_CT and ply:Team() == cadet and ply.changeTeam then
-        ply:changeTeam(TEAM_CT, true)
+    if (j and R.JobBlock(ply, j)) or ply:Team() == cadet or (TEAM_CT and ply:Team() == TEAM_CT) then
+        moveTo(ply, homeJob(ply))
     end
     R.ApplyName(ply)
 end
@@ -271,6 +320,41 @@ local function fullName(c)
     return prefix .. "-" .. c.num .. " " .. c.nick
 end
 
+-- Give or take a qualification (by: name for the log). Returns true if it changed.
+function R.SetQual(id, q, on, by)
+    local c = R.Char(id)
+    if not c then return false end
+    c.q = istable(c.q) and c.q or {}
+    if (c.q[q] and true or false) == on then return false end
+    c.q[q] = on or nil
+    R.SaveChar(id, c)
+    R.Log(c.bn or "", by .. (on and " qualified " or " removed the qualification of ") .. fullName(c) .. (on and " as " or ": ") .. R.QualName(q))
+    after(id)
+    return true
+end
+
+R.FullCharName = function(c) return fullName(c) end
+
+-- Put a trained CT into bn as PVT; a member of another battalion is
+-- moved out of it (one whitelist at a time). how: "X added" or "X accepted
+-- the application of" (for the log). Returns true if it happened.
+function R.AddMember(id, bn, how)
+    local c = R.Char(id)
+    if bn == "" or not c or not c.trained or c.bn == bn then return false end
+    local old = c.bn or ""
+    if old ~= "" then
+        setMember(old, id, false)
+        R.Log(old, fullName(c) .. " transferred to the " .. bn)
+    end
+    c.bn, c.r = bn, 1
+    R.SaveChar(id, c)
+    setMember(bn, id, true)
+    R.Log(bn, how .. " " .. fullName(c) .. " (" .. bn .. ")")
+    after(id)
+    hook.Run("Rhylib.RosterJoined", id, bn)
+    return true
+end
+
 Rhylib.Net.Receive("roster.act", function(ply)
     local act = net.ReadUInt(2)
     local id = net.ReadString()
@@ -295,13 +379,11 @@ Rhylib.Net.Receive("roster.act", function(ply)
             -- value: unused for officers (their battalion); admins pass the battalion name via the roster page's bn.
             local bn = me and me.bn or ""
             if admin and ply.rhylibRosterBn and ply.rhylibRosterBn ~= "" then bn = ply.rhylibRosterBn end
-            if bn == "" or not manager or not them.trained or (them.bn or "") ~= "" then return end
+            if bn == "" or not manager then return end
             if not admin and (not me or me.bn ~= bn) then return end
-            them.bn, them.r = bn, 1
-            R.SaveChar(id, them)
-            setMember(bn, id, true)
-            R.Log(bn, by .. " added " .. fullName(them) .. " to the " .. bn)
-            after(id)
+            -- Taking someone from another battalion: only if they rank below you.
+            if not admin and (them.bn or "") ~= "" and (them.r or 0) >= myRank then return end
+            R.AddMember(id, bn, by .. ((them.bn or "") ~= "" and " transferred in" or " added"))
         elseif act == R.ACT_RANK then
             local bn = them.bn or ""
             if bn == "" or value < 1 or value > #R.Ranks() then return end
@@ -361,7 +443,9 @@ function R.SendRoster(ply, want)
             for _, p in ipairs(player.GetHumans()) do
                 local c = R.Char(sid(p))
                 if c and not c.trained then cadets[#cadets + 1] = p
-                elseif c and c.trained and (c.bn or "") == "" then cts[#cts + 1] = p end
+                elseif c and c.trained and bn ~= "" and c.bn ~= bn and (admin or (c.bn or "") == "" or (c.r or 0) < myRank) then
+                    cts[#cts + 1] = p
+                end
             end
         end
         local log = bn ~= "" and Data.Get("roster_log", bn) or {}
@@ -380,11 +464,16 @@ function R.SendRoster(ply, want)
             net.WriteUInt(m.r, 8)
             net.WriteBool(m.on)
             net.WriteUInt(m.seen, 32)
+            net.WriteString(hook.Run("Rhylib.RosterNote", bn, m.id) or "")   -- e.g. leave of absence
         end
         net.WriteUInt(math.min(#cadets, 63), 6)
         for i = 1, math.min(#cadets, 63) do net.WriteString(sid(cadets[i])) net.WriteString(cadets[i]:Nick()) end
         net.WriteUInt(math.min(#cts, 63), 6)
-        for i = 1, math.min(#cts, 63) do net.WriteString(sid(cts[i])) net.WriteString(cts[i]:Nick()) end
+        for i = 1, math.min(#cts, 63) do
+            local c = R.Char(sid(cts[i]))
+            net.WriteString(sid(cts[i]))
+            net.WriteString(cts[i]:Nick() .. ((c and (c.bn or "") ~= "") and ("  ·  " .. c.bn) or ""))
+        end
         local nlog = math.min(#log, 40)
         net.WriteUInt(nlog, 6)
         for i = 1, nlog do

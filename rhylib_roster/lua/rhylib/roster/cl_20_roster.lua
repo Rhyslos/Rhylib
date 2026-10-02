@@ -120,7 +120,7 @@ local function build(page)
         local limit = data.limit   -- you can give ranks below this
         local nRanks = #R.Ranks()
         for _, m in ipairs(data.members) do
-            local r = k.Row(sp, m.name, R.RankName(m.r) .. "  ·  " .. seenText(m))
+            local r = k.Row(sp, m.name, R.RankName(m.r) .. "  ·  " .. seenText(m) .. (m.note ~= "" and ("  ·  " .. m.note) or ""))
             r:Dock(TOP)
             r:DockMargin(0, 0, s(8), s(3))
             local canAct = data.manager and m.r < limit and (data.admin or m.id ~= LocalPlayer():SteamID64())
@@ -159,7 +159,8 @@ local function build(page)
     -- Officers: people waiting.
     if data.manager then
         if data.bn ~= "" and #data.cts > 0 then
-            heading("Clone troopers without a battalion")
+            heading("Clone troopers to add")
+            note("Adding someone from another battalion moves them here as PVT.")
             for _, p in ipairs(data.cts) do
                 local r = k.Row(sp, p.name)
                 r:Dock(TOP)
@@ -218,7 +219,7 @@ Rhylib.Net.Receive("roster.data", function()
     d.manager = net.ReadBool()
     d.limit = net.ReadUInt(8)
     for i = 1, net.ReadUInt(8) do
-        d.members[i] = { id = net.ReadString(), name = net.ReadString(), r = net.ReadUInt(8), on = net.ReadBool(), seen = net.ReadUInt(32) }
+        d.members[i] = { id = net.ReadString(), name = net.ReadString(), r = net.ReadUInt(8), on = net.ReadBool(), seen = net.ReadUInt(32), note = net.ReadString() }
     end
     for i = 1, net.ReadUInt(6) do d.cadets[i] = { id = net.ReadString(), name = net.ReadString() } end
     for i = 1, net.ReadUInt(6) do d.cts[i] = { id = net.ReadString(), name = net.ReadString() } end

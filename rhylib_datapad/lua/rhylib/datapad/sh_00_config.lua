@@ -34,6 +34,8 @@ Config.Register("datapad", "logCap", 250, "Logs kept per battalion computer, max
 Config.Register("datapad", "medCap", 250, "Medical records kept on the medical holotable, max 255")
 Config.Register("datapad", "arrestRange", 250, "MPs can jail cuffed players this close with the datapad")
 Config.Register("datapad", "useRange", 160, "How close you must stay to a computer to use it")
+Config.Register("datapad", "strikeDays", 30, "Days a strike stays active")
+Config.Register("datapad", "strikeWarn", 3, "Active strikes at which the battalion's officers are told")
 
 D.MODELS = {
     battalion = "models/ace/sw/rh/cgi_holotable_bottom.mdl",

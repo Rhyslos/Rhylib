@@ -5,14 +5,16 @@
       dp.tfind   entity, text, days (0 = any time) -> dp.tfound: matching ids
                  (title, text, author or patient contain the text)
 
-    Board (battalion computers only): posts in sections Info, Plans and
-    Sessions. A session has a time (os.time, shown in each player's own
+    Board (battalion computers only): posts in sections Info, Plans,
+    Sessions and AAR (after-action reports, with an outcome: 1 success,
+    2 partial, 3 failure, and the session they report on). Managers (SGT+)
+    may write AARs and edit or delete their own. A session has a time (os.time, shown in each player's own
     time zone); past sessions are listed as an archive. Posts can be pinned.
     Who may post: admins and the battalion's commander for now, or anyone
     the Rhylib.CanPostBoard(ply, battalion) hook allows (the rank system).
       dp.bopen   entity -> dp.board: canPost, posts (no text)
       dp.bget    entity, id -> dp.bbody
-      dp.bsave   entity, id (0 = new), section, title, text, time
+      dp.bsave   entity, id (0 = new), section, title, text, time, outcome, session id
       dp.bdel    entity, id
       dp.bpin    entity, id
 
@@ -25,7 +27,7 @@ Rhylib.Net.Register("dp.tfound")
 Rhylib.Net.Register("dp.board")
 Rhylib.Net.Register("dp.bbody")
 
-D.SEC_INFO, D.SEC_PLANS, D.SEC_SESSION = 1, 2, 3
+D.SEC_INFO, D.SEC_PLANS, D.SEC_SESSION, D.SEC_AAR = 1, 2, 3, 4
 local BOARD_CAP = 120
 
 --------------------------------------------------------------------------
@@ -70,23 +72,39 @@ function D.CanPost(ply, bn, admin)
     return D.Battalion(ply) == bn and D.IsCommander(ply)
 end
 
+-- AARs: managers too.
+local function canAAR(ply, bn, admin)
+    return D.CanPost(ply, bn, admin) or (D.IsUnitManager and D.IsUnitManager(ply, bn, admin) and D.Battalion(ply) == bn) or false
+end
+
+-- May ply edit or delete this post?
+local function canChange(ply, bn, admin, p)
+    if D.CanPost(ply, bn, admin) then return true end
+    return p.sec == D.SEC_AAR and p.s == ply:SteamID64() and canAAR(ply, bn, admin)
+end
+
 local function sendBoard(ply, ent, a)
     local bn = ent:GetBattalion()
     local list = bn ~= "" and a.view and D.Board(bn).list or {}
+    local me = ply:SteamID64()
     Rhylib.Net.Start("dp.board")
     net.WriteEntity(ent)
     net.WriteBool(bn ~= "" and D.CanPost(ply, bn, a.admin))
+    net.WriteBool(bn ~= "" and canAAR(ply, bn, a.admin))
     local n = math.min(#list, 255)
     net.WriteUInt(n, 8)
     for i = 1, n do
         local p = list[i]
         net.WriteUInt(p.id, 16)
-        net.WriteUInt(p.sec or 1, 2)
+        net.WriteUInt(p.sec or 1, 3)
         net.WriteString(p.ti or "")
         net.WriteString(p.a or "?")
         net.WriteUInt(p.t or 0, 32)
         net.WriteUInt(p.at or 0, 32)
         net.WriteBool(p.pin or false)
+        net.WriteUInt(p.oc or 0, 2)
+        net.WriteUInt(p.ses or 0, 16)
+        net.WriteBool(p.s ~= nil and p.s == me)
     end
     net.Send(ply)
 end
@@ -105,47 +123,81 @@ D.TermRecv("dp.bopen", {
     end,
 }, { rate = 3, burst = 4 })
 
+-- A post's text, plus sign-ups and check-ins for sessions:
+-- id, text, n x (name, choice 1-3), my choice, n x checked-in name, me checked in.
+function D.SendPost(ply, p)
+    local me = "s" .. (ply:SteamID64() or "")
+    Rhylib.Net.Start("dp.bbody")
+    net.WriteUInt(p.id, 16)
+    net.WriteString(p.b or "")
+    local rv = {}
+    for k, v in pairs(p.rv or {}) do
+        if istable(v) then rv[#rv + 1] = v end
+    end
+    table.sort(rv, function(x, y) return (x.s or 0) < (y.s or 0) end)
+    local n = math.min(#rv, 255)
+    net.WriteUInt(n, 8)
+    for i = 1, n do
+        net.WriteString(rv[i].n or "?")
+        net.WriteUInt(rv[i].s or 1, 2)
+    end
+    local mine = p.rv and p.rv[me]
+    net.WriteUInt(istable(mine) and mine.s or 0, 2)
+    local ci = {}
+    for _, name in pairs(p.ci or {}) do ci[#ci + 1] = tostring(name) end
+    table.sort(ci)
+    n = math.min(#ci, 255)
+    net.WriteUInt(n, 8)
+    for i = 1, n do net.WriteString(ci[i]) end
+    net.WriteBool(p.ci and p.ci[me] ~= nil or false)
+    net.Send(ply)
+end
+
 D.TermRecv("dp.bget", {
     read = function() return net.ReadUInt(16) end,
     run = function(ply, ent, a, id)
         if not boardTerm(ent) or not a.view then return end
         local p = findPost(D.Board(ent:GetBattalion()), id)
         if not p then return end
-        Rhylib.Net.Start("dp.bbody")
-        net.WriteUInt(p.id, 16)
-        net.WriteString(p.b or "")
-        net.Send(ply)
+        D.SendPost(ply, p)
     end,
 })
 
 D.TermRecv("dp.bsave", {
     read = function()
         return {
-            id = net.ReadUInt(16), sec = net.ReadUInt(2),
+            id = net.ReadUInt(16), sec = net.ReadUInt(3),
             ti = D.Clip(net.ReadString(), D.Cfg("titleMax")),
-            b = D.Clip(net.ReadString(), D.Cfg("bodyMax"), true),
+            b = D.Clip(net.ReadString(), D.Cfg("bodyMax") * 2, true),
             at = net.ReadUInt(32),
+            oc = net.ReadUInt(2), ses = net.ReadUInt(16),
         }
     end,
     run = function(ply, ent, a, arg)
         if not boardTerm(ent) then return end
         local bn = ent:GetBattalion()
-        if not D.CanPost(ply, bn, a.admin) then return end
-        if arg.sec < D.SEC_INFO or arg.sec > D.SEC_SESSION then return end
+        if arg.sec < D.SEC_INFO or arg.sec > D.SEC_AAR then return end
+        local full = D.CanPost(ply, bn, a.admin)
+        -- Without full rights: AARs only.
+        if not full and not (arg.sec == D.SEC_AAR and canAAR(ply, bn, a.admin)) then return end
         if arg.ti == "" then arg.ti = "Untitled" end
         local at = arg.sec == D.SEC_SESSION and arg.at or 0
+        local aar = arg.sec == D.SEC_AAR
+        local oc = aar and arg.oc or 0
+        local ses = aar and arg.ses or 0
+        if arg.sec ~= D.SEC_AAR then arg.b = D.Clip(arg.b, D.Cfg("bodyMax"), true) end
         local board = D.Board(bn)
         if arg.id == 0 then
             table.insert(board.list, 1, {
-                id = board.next, sec = arg.sec, ti = arg.ti, b = arg.b, at = at,
+                id = board.next, sec = arg.sec, ti = arg.ti, b = arg.b, at = at, oc = oc, ses = ses,
                 a = ply:Nick(), s = ply:SteamID64(), t = os.time(),
             })
             board.next = board.next % 65535 + 1
             while #board.list > BOARD_CAP do table.remove(board.list) end
         else
             local p = findPost(board, arg.id)
-            if not p then return end
-            p.sec, p.ti, p.b, p.at = arg.sec, arg.ti, arg.b, at
+            if not p or not canChange(ply, bn, a.admin, p) then return end
+            p.sec, p.ti, p.b, p.at, p.oc, p.ses = arg.sec, arg.ti, arg.b, at, oc, ses
         end
         D.Store("dp_board", bn, board)
         sendBoard(ply, ent, a)
@@ -157,10 +209,9 @@ D.TermRecv("dp.bdel", {
     run = function(ply, ent, a, id)
         if not boardTerm(ent) then return end
         local bn = ent:GetBattalion()
-        if not D.CanPost(ply, bn, a.admin) then return end
         local board = D.Board(bn)
-        local _, i = findPost(board, id)
-        if not i then return end
+        local p, i = findPost(board, id)
+        if not i or not canChange(ply, bn, a.admin, p) then return end
         table.remove(board.list, i)
         D.Store("dp_board", bn, board)
         sendBoard(ply, ent, a)

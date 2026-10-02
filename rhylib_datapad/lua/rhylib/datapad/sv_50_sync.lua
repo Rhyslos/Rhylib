@@ -7,7 +7,7 @@
     the battalion's online members (dp.ver), so their datapad can show
     that there's something new.
 
-      dp.dl     datapad: download -> dp.dldata (version, log list, board list)
+      dp.dl     datapad: download -> dp.dldata (version, log list, board list, orders)
       dp.dread  datapad: kind (0 log, 1 post), id -> dp.dbody
 ]]
 
@@ -34,8 +34,10 @@ function D.Touch(bn)
     net.Send(list)
 end
 
--- Every save of a battalion's logs or board counts as a change.
+-- Every save of a battalion's logs or board counts as a change
+-- (D.StoreQuiet saves without that: sign-ups, check-ins).
 local store = D.Store
+D.StoreQuiet = store
 function D.Store(ns, key, v)
     store(ns, key, v)
     if (ns == "dp_log" or ns == "dp_board") and string.sub(key, 1, 2) ~= "__" then D.Touch(key) end
@@ -64,13 +66,18 @@ D.PadRecv("dp.dl", function(ply)
     for i = 1, n do
         local p = posts[i]
         net.WriteUInt(p.id, 16)
-        net.WriteUInt(p.sec or 1, 2)
+        net.WriteUInt(p.sec or 1, 3)
         net.WriteString(p.ti or "")
         net.WriteString(p.a or "?")
         net.WriteUInt(p.t or 0, 32)
         net.WriteUInt(p.at or 0, 32)
         net.WriteBool(p.pin or false)
+        net.WriteUInt(p.oc or 0, 2)
     end
+    local o = D.Load("dp_orders", bn, {})
+    net.WriteString(o.txt or "")
+    net.WriteString(o.by or "")
+    net.WriteUInt(o.t or 0, 32)
     net.Send(ply)
 end, { rate = 1, burst = 2 })
 

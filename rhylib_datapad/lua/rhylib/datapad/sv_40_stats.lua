@@ -5,6 +5,7 @@
       kd droid/NPC kills   kp player kills (not your own battalion)
       de deaths            rv revives given     he heals given (rhylib_medical)
       ar arrests (rhylib_mp)   mi minutes played   mo money earned (DarkRP)
+      at sessions attended (checked in at the computer)
 
     Each battalion keeps buckets: all time, today, this and last week, this
     month (older day/week/month buckets are dropped). Each bucket has the
@@ -21,7 +22,7 @@ local D = Rhylib.Datapad
 
 Rhylib.Net.Register("dp.statsr")
 
-D.STAT_KEYS = { "kd", "kp", "de", "rv", "he", "ar", "mi", "mo" }
+D.STAT_KEYS = { "kd", "kp", "de", "rv", "he", "ar", "mi", "mo", "at" }
 D.PERIODS = { "today", "week", "lastweek", "month", "all" }   -- index sent on the network
 
 local dirty = {}   -- [battalion] = true

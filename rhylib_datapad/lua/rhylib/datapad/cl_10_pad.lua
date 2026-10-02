@@ -402,13 +402,24 @@ local function battalionTab()
         end)
         buildTab()
     end
+    -- Current orders first.
+    local o = sy.orders
+    if o and o.txt ~= "" then
+        sub("Orders")
+        local by = label(sp, "From " .. o.by .. " · " .. when(o.t))
+        by:DockMargin(0, 0, k.S(8), k.S(4))
+        local ot = k.Label(sp, o.txt, 14, 400, k.C.text)
+        ot:Dock(TOP)
+        ot:DockMargin(0, 0, k.S(8), k.S(6))
+    end
     -- Board: pinned, upcoming sessions, plans, info.
     local now = os.time()
-    local groups = { { "Pinned", {} }, { "Upcoming sessions", {} }, { "Plans", {} }, { "Info", {} } }
+    local groups = { { "Pinned", {} }, { "Upcoming sessions", {} }, { "Plans", {} }, { "Info", {} }, { "After-action reports", {} } }
     for _, p in ipairs(sy.posts) do
         local g
         if p.pin then g = 1
         elseif p.sec == 3 then g = p.at > now - 3600 and 2 or nil
+        elseif p.sec == 4 then g = 5
         elseif p.sec == 2 then g = 3
         else g = 4 end
         if g then table.insert(groups[g][2], p) end
@@ -419,7 +430,8 @@ local function battalionTab()
             sub(g[1])
             for _, p in ipairs(g[2]) do
                 local right = p.sec == 3 and (when(p.at) .. "  (" .. countdown(p.at) .. ")") or when(p.t)
-                row(sp, p.title, right, function() open(1, p.id, p.title, "By " .. p.author .. " · " .. right) end, p.sec == 3 and "SES" or nil)
+                local tag = p.sec == 3 and "SES" or (p.sec == 4 and ({ "WIN", "MIX", "FAIL" })[p.oc] or (p.sec == 4 and "AAR")) or nil
+                row(sp, p.title, right, function() open(1, p.id, p.title, "By " .. p.author .. " · " .. right) end, tag)
             end
         end
     end
@@ -666,9 +678,10 @@ Rhylib.Net.Receive("dp.dldata", function()
         d.logs[i] = { id = net.ReadUInt(20), author = net.ReadString(), title = net.ReadString(), t = net.ReadUInt(32), mp = net.ReadBool() }
     end
     for i = 1, net.ReadUInt(7) do
-        d.posts[i] = { id = net.ReadUInt(16), sec = net.ReadUInt(2), title = net.ReadString(), author = net.ReadString(),
-            t = net.ReadUInt(32), at = net.ReadUInt(32), pin = net.ReadBool() }
+        d.posts[i] = { id = net.ReadUInt(16), sec = net.ReadUInt(3), title = net.ReadString(), author = net.ReadString(),
+            t = net.ReadUInt(32), at = net.ReadUInt(32), pin = net.ReadBool(), oc = net.ReadUInt(2) }
     end
+    d.orders = { txt = net.ReadString(), by = net.ReadString(), t = net.ReadUInt(32) }
     D.latest[d.bn] = math.max(D.latest[d.bn] or 0, d.v)
     if dl then dl.data = d end   -- shown when the progress bar is done
 end)

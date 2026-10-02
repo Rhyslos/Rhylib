@@ -16,6 +16,7 @@
         needsTraining = true          passed basic training (CT)
         battalion = "501st"           a member of that battalion ...
         minRank = "SGT"               ... with at least this rank
+        qual = "pilot"                a qualification (config "quals")
     Unavailable jobs show the reason in the job list.
 
     Promoting: within your own battalion, members ranked below you, up to
@@ -23,7 +24,12 @@
     manageRank or higher. Admins (rhylib.roster.admin) can do anything.
 
     Player NW2 (set on change): rhylib_char (bool), rhylib_num, rhylib_nick,
-    rhylib_trained (bool), rhylib_bn, rhylib_rank (index, 0 = none).
+    rhylib_trained (bool), rhylib_bn, rhylib_rank (index, 0 = none),
+    rhylib_quals (",heavy,pilot,").
+
+    Qualifications (config "quals"): given at the battalion computer
+    (Personnel). They stay with the character, unlock jobs (job qual = id)
+    and are armoury roles (armoury config "roles": heavy = { weapons = ... }).
 ]]
 
 Rhylib.Roster = Rhylib.Roster or {}
@@ -39,6 +45,10 @@ Config.Register("roster", "manageRank", "SGT", "Lowest rank that can add members
 Config.Register("roster", "boardRank", "LT", "Lowest rank that can post on the battalion board")
 Config.Register("roster", "blockedNumbers", { "1337", "6969", "0420", "6767", "6967", "6769" }, "Clone numbers nobody can take")
 Config.Register("roster", "nickMax", 20, "Longest nickname")
+Config.Register("roster", "quals", {
+    { "heavy", "Heavy weapons" }, { "marksman", "Marksman" }, { "demo", "Demolitions" },
+    { "jump", "Jump trooper" }, { "pilot", "Pilot" }, { "engineer", "Engineer" },
+}, "Qualifications: { id, name }. The id is also an armoury role and a job's qual = id")
 
 function R.Cfg(k) return Config.Get("roster", k) end
 
@@ -81,6 +91,25 @@ function R.ValidNick(nick)
     return true
 end
 
+-- Qualifications.
+function R.Quals() return R.Cfg("quals") or {} end
+function R.QualName(id)
+    for _, q in ipairs(R.Quals()) do
+        if q[1] == id then return q[2] end
+    end
+    return id
+end
+function R.HasQual(ply, id)
+    return string.find(ply:GetNW2String("rhylib_quals", ""), "," .. id .. ",", 1, true) ~= nil
+end
+
+-- Qualifications are armoury roles too.
+Rhylib.Hook.Add("Rhylib.PlayerRoles", "roster.quals", function(ply)
+    local out = {}
+    for id in string.gmatch(ply:GetNW2String("rhylib_quals", ""), "[^,]+") do out[#out + 1] = id end
+    if #out > 0 then return out end
+end)
+
 -- What a player is, from their networked state.
 function R.Get(ply)
     return {
@@ -120,6 +149,7 @@ function R.JobBlock(ply, j)
         local need = R.RankIndex(j.minRank)
         if need and c.rank < need then return "Needs rank " .. R.RankName(need) .. " or higher" end
     end
+    if j.qual and not R.HasQual(ply, j.qual) then return "Needs the " .. R.QualName(j.qual) .. " qualification" end
     return nil
 end
 
@@ -128,7 +158,7 @@ end
 local function wrapJobs()
     if not RPExtraTeams then return end
     for _, j in pairs(RPExtraTeams) do
-        if (j.needsTraining or j.battalion) and not j.rhylibWrapped then
+        if (j.needsTraining or j.battalion or j.qual) and not j.rhylibWrapped then
             j.rhylibWrapped = true
             local oldCheck, oldMsg = j.customCheck, j.CustomCheckFailMsg
             j.customCheck = function(ply)
