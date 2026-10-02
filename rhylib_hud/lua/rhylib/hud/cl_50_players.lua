@@ -47,7 +47,8 @@ Rhylib.Hook.Add("HUDPaint", "hud.target", function()
     local range = Config.Get("hud", "targetRange")
 
     local ent = me:GetEyeTrace().Entity
-    if IsValid(ent) and ent:IsPlayer() and ent:Alive() and ent:GetPos():DistToSqr(me:GetPos()) < range * range then
+    -- (invisible staff, rhylib_admin: no name card)
+    if IsValid(ent) and ent:IsPlayer() and ent:Alive() and not ent:GetNW2Bool("rhylib_cloak") and ent:GetPos():DistToSqr(me:GetPos()) < range * range then
         target, seenAt = ent, RealTime()
     end
 
@@ -135,7 +136,7 @@ Rhylib.Hook.Add("PostDrawTranslucentRenderables", "hud.icons", function(depth, s
     local t = RealTime()
 
     for _, ply in ipairs(player.GetAll()) do
-        if ply:Alive() and not ply:IsDormant() and (ply ~= me or me:ShouldDrawLocalPlayer()) then
+        if ply:Alive() and not ply:IsDormant() and (ply ~= me or me:ShouldDrawLocalPlayer()) and not ply:GetNW2Bool("rhylib_cloak") then
             local speaking, typing = ply:IsSpeaking(), ply:IsTyping() or ply:GetNW2Bool("rhylib_typing")  -- (the second: rhylib_chat)
             if (speaking or typing) and ply:GetPos():DistToSqr(eye) < rangeSqr then
                 local pos = headPos(ply) + UP28

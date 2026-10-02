@@ -110,6 +110,12 @@ Rhylib.Net.Receive("chat.send", function(ply)
     local text = string.Trim(net.ReadString())
     if not ch or text == "" then return end
     if not ch.private then target = nil end  -- only private messages have a target
+    -- rhylib_admin (mutes) and others can stop it.
+    local can, why = hook.Run("Rhylib.CanChat", ply, ch.id, text)
+    if can == false then
+        note(ply, why or "You can't chat right now")
+        return
+    end
     text = string.sub(text, 1, Config.Get("chat", "maxLength"))
 
     local fn = route[ch.id]

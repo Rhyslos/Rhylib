@@ -355,6 +355,62 @@ function R.AddMember(id, bn, how)
     return true
 end
 
+-- For rhylib_admin (no rank checks here; the caller checks). by: a name for
+-- the log. Each returns true if something changed.
+function R.SetRank(id, value, by)
+    local c = R.Char(id)
+    local bn = c and c.bn or ""
+    if bn == "" or value < 1 or value > #R.Ranks() or value == c.r then return false end
+    local old = c.r
+    c.r = value
+    R.SaveChar(id, c)
+    R.Log(bn, by .. (value > old and " promoted " or " demoted ") .. fullName(c) .. " (" .. R.RankName(old) .. " → " .. R.RankName(value) .. ")")
+    after(id)
+    return true
+end
+
+function R.RemoveMember(id, by)
+    local c = R.Char(id)
+    local bn = c and c.bn or ""
+    if bn == "" then return false end
+    R.Log(bn, by .. " removed " .. fullName(c) .. " from the " .. bn)
+    c.bn, c.r = "", 0
+    R.SaveChar(id, c)
+    setMember(bn, id, false)
+    after(id)
+    return true
+end
+
+function R.Train(id, by)
+    local c = R.Char(id)
+    if not c or c.trained then return false end
+    c.trained = true
+    R.SaveChar(id, c)
+    R.Log(c.bn or "", by .. " passed " .. fullName(c) .. " through basic training")
+    after(id)
+    return true
+end
+
+-- The player picks a new number and nickname.
+function R.ResetChar(id)
+    local c = R.Char(id)
+    if not c then return false end
+    local nums = numbers()
+    nums["n" .. c.num] = nil
+    Data.Set("char_nums", "all", nums)
+    setMember(c.bn or "", id, false)
+    chars[id] = false
+    Data.Delete("char", id)
+    local target = online(id)
+    if IsValid(target) then
+        R.Publish(target)
+        checkJob(target)
+        if target.setDarkRPVar then target:setDarkRPVar("rpname", "New recruit") end
+        needCharacter(target)
+    end
+    return true
+end
+
 Rhylib.Net.Receive("roster.act", function(ply)
     local act = net.ReadUInt(2)
     local id = net.ReadString()

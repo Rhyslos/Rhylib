@@ -2,8 +2,9 @@
     Permissions through CAMI.
 
     CAMI is the shared permission standard that ULX, SAM, sAdmin and others
-    support. If no admin mod with CAMI is installed, Rhylib falls back to
-    GMod's own admin and superadmin flags.
+    support. With rhylib_admin installed its staff ranks answer directly
+    (Rhylib.Admin.Has). Otherwise CAMI, and without an admin mod GMod's own
+    admin and superadmin flags.
 
         Rhylib.Perms.Register("rhylib.admin.teleport", "admin", "Teleport players")
 
@@ -48,7 +49,10 @@ function Perms.Check(ply, name, callback)
         return
     end
 
-    if CAMI then
+    local Admin = Rhylib.Admin
+    if Admin and Admin.Has then
+        callback(Admin.Has(ply, name, p.minAccess))
+    elseif CAMI then
         CAMI.PlayerHasAccess(ply, name, function(allowed)
             callback(allowed and true or false)
         end)

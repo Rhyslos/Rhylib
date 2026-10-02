@@ -1,9 +1,11 @@
 --[[
-    Commands page (admins). Two halves:
-      Players: pick a player, then an action. Actions run the admin mod's
-               own commands (ULX or SAM, whichever is installed), which
-               check your rights on the server.
-      Server:  Rhylib's console commands, which check rights themselves.
+    Commands page (staff). Tabs:
+      Players: pick a player, then an action. With rhylib_admin the actions
+               are its commands (only those your rank has; arguments are
+               asked for), else the admin mod's own (ULX or SAM).
+      Bans / Log (rhylib_admin): current bans (unban) and the admin log.
+      Server:  Rhylib's console commands, which check rights themselves
+               (plus map change, announcement and cleanup with rhylib_admin).
     Add more with:
         Rhylib.Menus.AddCommand("Server", {
             id = "x", title = "Do X", desc = "...", order = 50,
@@ -21,6 +23,8 @@ local C = K.C
 --------------------------------------------------------------------------
 
 local MODS = {
+    { id = "rhylib", name = "Rhylib Admin",
+      detect = function() return Rhylib.Admin ~= nil and Rhylib.Admin.Run ~= nil end },
     { id = "ulx", name = "ULX",
       detect = function() return ulx ~= nil and ULib ~= nil end,
       target = function(p) return "$" .. p:SteamID() end,
@@ -151,6 +155,7 @@ Menus.AddCommand("Server", {
 local function isStaff()
     local ply = LocalPlayer()
     if not IsValid(ply) then return false end
+    if Rhylib.Admin and Rhylib.Admin.Level then return Rhylib.Admin.Level(ply) > 0 end
     if ply:IsAdmin() then return true end
     if ULib and ULib.ucl and ULib.ucl.query then return ULib.ucl.query(ply, "ulx kick") and true or false end
     if sam and ply.HasPermission then return ply:HasPermission("kick") and true or false end
@@ -198,7 +203,8 @@ local function buildPlayers(parent)
         local p = box.selected
         if not IsValid(p) then return end
         draw.SimpleText(p:Nick(), K.Font(18, 700), 0, s(14), C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-        draw.SimpleText(p:SteamID() .. "  ·  " .. p:GetUserGroup() .. "  ·  " .. team.GetName(p:Team()) .. "  ·  " .. p:Ping() .. " ms",
+        local group = Rhylib.Admin and Rhylib.Admin.Rank and Rhylib.Admin.Rank(p).name or p:GetUserGroup()
+        draw.SimpleText(p:SteamID() .. "  ·  " .. group .. "  ·  " .. team.GetName(p:Team()) .. "  ·  " .. p:Ping() .. " ms",
             K.Font(12), 0, s(36), C.textDim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
     end
 
@@ -214,9 +220,32 @@ local function buildPlayers(parent)
             { "Copy SteamID", function(p) SetClipboardText(p:SteamID()) end },
             { "Steam profile", function(p) p:ShowProfile() end },
         }
-        for _, act in ipairs(ACTIONS) do
-            local b = K.Button(grid, act[1], function() runAction(mod, act, box.selected) end, { small = true, danger = act.danger })
-            b:SetSize(s(150), s(30))
+        if mod.id == "rhylib" then
+            -- rhylib_admin: the commands your rank has for this player.
+            local Admin = Rhylib.Admin
+            local me = LocalPlayer()
+            local sel = box.selected
+            local DANGER = { kick = true, ban = true, slay = true, charreset = true }
+            for _, cmd in ipairs(Admin.COMMANDS) do
+                local full = Admin.Has(me, cmd.perm)
+                local allowed = cmd.target and (full or (sel == me and Admin.Has(me, cmd.perm .. ".self")))
+                if allowed and IsValid(sel) and (sel == me or Admin.CanTarget(me, sel)) then
+                    local b = K.Button(grid, cmd.name, function()
+                        local p = box.selected
+                        if not IsValid(p) then return end
+                        Admin.AskArgs(cmd, function(words)
+                            table.insert(words, 1, Admin.TargetWord(p))
+                            Admin.Run(cmd.id, words)
+                        end)
+                    end, { small = true, danger = DANGER[cmd.id] })
+                    b:SetSize(s(150), s(30))
+                end
+            end
+        else
+            for _, act in ipairs(ACTIONS) do
+                local b = K.Button(grid, act[1], function() runAction(mod, act, box.selected) end, { small = true, danger = act.danger })
+                b:SetSize(s(150), s(30))
+            end
         end
         for _, e in ipairs(extra) do
             local b = K.Button(grid, e[1], function() if IsValid(box.selected) then e[2](box.selected) end end, { small = true })
@@ -255,6 +284,7 @@ local function buildPlayers(parent)
                 function b:DoClick()
                     box.selected = p
                     grid:SetVisible(mod ~= nil)
+                    if mod and mod.id == "rhylib" then fillGrid() end   -- (depends on who it is)
                 end
             end
         end
@@ -265,8 +295,62 @@ local function buildPlayers(parent)
     return box
 end
 
+-- rhylib_admin's server commands (only those your rank has).
+local function adminRows(sp)
+    local Admin = Rhylib.Admin
+    if not (Admin and Admin.Run) then return end
+    for _, cmd in ipairs(Admin.COMMANDS) do
+        if (not cmd.target or cmd.target == "opt") and Admin.Has(LocalPlayer(), cmd.perm) then
+            local row = K.Row(sp, cmd.name, cmd.desc)
+            row:Dock(TOP)
+            row:DockMargin(0, 0, K.S(10), K.S(4))
+            local b = K.Button(row.right, "Run", function()
+                Admin.AskArgs(cmd, function(words)
+                    if cmd.target == "opt" then words = {} end   -- (no target: everyone's)
+                    Admin.Run(cmd.id, words)
+                end)
+            end, { small = true, accent = true })
+            b:Dock(RIGHT)
+            b:SetWide(K.S(90))
+        end
+    end
+end
+
+-- A list from rhylib_admin (bans or the log) with an optional action per row.
+local function buildList(parent, which, columns, action)
+    local Admin = Rhylib.Admin
+    local sp = K.Scroll(parent)
+    sp:Dock(FILL)
+    local function load()
+        sp:Clear()
+        Admin.RequestList(which, "", function(rows)
+            if not IsValid(sp) then return end
+            sp:Clear()
+            if #rows == 0 then
+                local l = K.Label(sp, which == 1 and "Nobody is banned." or "Nothing logged yet.", 14)
+                l:Dock(TOP)
+                return
+            end
+            for _, r in ipairs(rows) do
+                local title, desc = columns(r)
+                local row = K.Row(sp, title, desc)
+                row:Dock(TOP)
+                row:DockMargin(0, 0, K.S(10), K.S(4))
+                if action then
+                    local b = K.Button(row.right, action[1], function() action[2](r) timer.Simple(0.5, load) end, { small = true, danger = action.danger })
+                    b:Dock(RIGHT)
+                    b:SetWide(K.S(90))
+                end
+            end
+        end)
+    end
+    load()
+    return sp
+end
+
 -- Rows straight into a scroll panel.
 local function buildServer(sp)
+    adminRows(sp)
     local groups = {}
     for g in pairs(Menus.commands) do groups[#groups + 1] = g end
     table.sort(groups)
@@ -309,18 +393,31 @@ Menus.AddPage("commands", {
         body.Paint = nil
 
         local current
+        local Admin = Rhylib.Admin
         local function show(which)
             current = which
             body:Clear()
             if which == "players" then
                 buildPlayers(body):Dock(FILL)
+            elseif which == "bans" then
+                buildList(body, 1, function(r) return r[2] .. "  ·  " .. r[1], r[3] .. "  ·  by " .. r[4] .. "  ·  " .. r[5] end,
+                    { "Unban", function(r) Admin.Run("unban", { r[1] }) end, danger = false })
+            elseif which == "log" then
+                buildList(body, 2, function(r) return r[2], os.date("%d %b %H:%M", tonumber(r[1]) or 0) end)
             else
                 local sp = K.Scroll(body)
                 sp:Dock(FILL)
                 buildServer(sp)
             end
         end
-        for _, t in ipairs({ { "players", "Players" }, { "server", "Server" } }) do
+        local tabList = { { "players", "Players" } }
+        if mod and mod.id == "rhylib" then
+            local me = LocalPlayer()
+            if Admin.Has(me, "bans") or Admin.Has(me, "ban") then tabList[#tabList + 1] = { "bans", "Bans" } end
+            if Admin.Has(me, "logs") then tabList[#tabList + 1] = { "log", "Log" } end
+        end
+        tabList[#tabList + 1] = { "server", "Server" }
+        for _, t in ipairs(tabList) do
             local b = K.Button(tabs, t[2], function() show(t[1]) end, { small = true, selected = function() return current == t[1] end })
             b:Dock(LEFT)
             b:SetWide(K.S(140))

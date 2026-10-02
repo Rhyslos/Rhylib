@@ -148,7 +148,7 @@ local function clear(ply)
     ply:SetSurroundingBoundsType(BOUNDS_HITBOXES)
     ply:SetCollisionGroup(ply.rhylibCollision or COLLISION_GROUP_PLAYER)
     ply.rhylibCollision = nil
-    ply:RemoveFlags(FL_NOTARGET)
+    if not ply.rhylibAdminNoTarget then ply:RemoveFlags(FL_NOTARGET) end   -- (rhylib_admin's no target stays)
     if Rhylib.Lying then Rhylib.Lying.End(ply) end
     return true
 end

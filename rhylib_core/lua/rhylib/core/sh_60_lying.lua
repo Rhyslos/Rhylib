@@ -87,6 +87,7 @@ end
 local function showPlayer(ply, show)
     if show and not ply.rhylibLieHidden then return end
     ply.rhylibLieHidden = not show or nil
+    if show and ply.rhylibCloak then return end   -- (rhylib_admin invisible: stay hidden)
     ply:SetNoDraw(not show)
     ply:DrawShadow(show)
     ply:DrawWorldModel(show)
