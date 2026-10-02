@@ -1,6 +1,8 @@
 Rhylib.Weapons = Rhylib.Weapons or {}
 
 local Config = Rhylib.Config
+Config.Register("weapons", "handsModel", "models/aussiwozzi/cgi/base/trooper_arms.mdl",
+    "First-person arms for everyone (a c_arms model; a DarkRP job's handsModel overrides it; \"\" = the player model's own)")
 Config.Register("weapons", "lagCompMax", 0.35, "Max seconds (ping + interpolation) covered by lag compensation on a bolt's first leg")
 Config.Register("weapons", "boltSpeedMult", 1.3, "Multiplies every gun's bolt speed (faster = less leading)")
 Config.Register("weapons", "recoilMult", 1, "Multiplies every gun's view recoil (SWEP.Recoil)")

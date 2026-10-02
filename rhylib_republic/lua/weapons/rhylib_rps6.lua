@@ -4,9 +4,9 @@
     Reload with R after each shot.
     Too heavy to fire while flying.
 
-    Uses a prop model (models/jajoff/sps/cgiweapons/tc13j/rps.mdl), so it
-    has no arms in first person. The model's addon must be installed.
-    Tune the Prop* offsets below; saving this file updates them in game.
+    Uses a prop model (models/jajoff/sps/cgiweapons/tc13j/rps.mdl), held in
+    first person by the trooper hands on the HL2 launcher (CarrierVM). The model's addon must be
+    installed. Tune with rhylib_vm_editor, then paste its lines below.
     All numbers are first guesses for tuning.
 ]]
 
@@ -18,10 +18,19 @@ SWEP.Category = "Rhylib: Republic"
 SWEP.Spawnable = true
 SWEP.AdminOnly = false
 
--- The placeholder viewmodel is hidden; ReloadTime sets the reload length.
+-- Placeholder viewmodel (the carrier model is HL2's, so it's always there); ReloadTime sets the reload length.
 SWEP.ViewModel = "models/weapons/c_rpg.mdl"
 SWEP.WorldModel = "models/jajoff/sps/cgiweapons/tc13j/rps.mdl"
 SWEP.UseHands = false
+-- First person: the trooper hands hold the prop on GMod's own HL2 rocket
+-- launcher viewmodel (shoulder hold); its launcher bone "base" is hidden.
+SWEP.CarrierVM = "models/weapons/c_rpg.mdl"
+SWEP.CarrierBone = "base"
+SWEP.PropBonePos = Vector(1.3, 6.8, 0)
+SWEP.PropBoneAng = Angle(90, -90, 0)
+SWEP.PropBoneScale = 1
+SWEP.VMOffset = Vector(-5, -5.4, 3)
+SWEP.CarrierFOV = 54
 SWEP.HoldType = "rpg"
 SWEP.Slot = 4
 
@@ -76,5 +85,5 @@ SWEP.Spread = {
     aimOffsetMult = 0.6,
 }
 
-SWEP.AimPos = Vector(-2, 0, 1)
+SWEP.AimPos = Vector(-3.5, 0, 0.5)
 SWEP.AimFov = 0.75

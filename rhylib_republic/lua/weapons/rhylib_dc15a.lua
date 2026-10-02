@@ -2,9 +2,9 @@
     DC-15A blaster rifle. Uses a magazine and a power cell.
     Semi-auto by default (full auto comes from the Autorifleman skill later).
 
-    Uses a prop model (models/jajoff/sps/cgiweapons/tc13j/dc15a.mdl), so it
-    has no arms in first person. The model's addon must be installed.
-    Tune the Prop* offsets below; saving this file updates them in game.
+    Uses a prop model (models/jajoff/sps/cgiweapons/tc13j/dc15a.mdl), held in first person by
+    the trooper hands (CarrierVM). The model's addon must be installed.
+    Tune with rhylib_vm_editor, then paste its lines below.
     All numbers are first guesses for tuning.
 ]]
 
@@ -16,10 +16,30 @@ SWEP.Category = "Rhylib: Republic"
 SWEP.Spawnable = true
 SWEP.AdminOnly = false
 
--- The placeholder viewmodel is hidden but still drives the reload timing.
+-- Placeholder viewmodel, used only if the carrier model is missing.
 SWEP.ViewModel = "models/weapons/c_irifle.mdl"
+
 SWEP.WorldModel = "models/jajoff/sps/cgiweapons/tc13j/dc15a.mdl"
 SWEP.UseHands = false
+-- First person: the trooper hands hold the prop on a Battlefront viewmodel
+-- (Reworked Assets, a Workshop dependency); its gun bone is hidden.
+SWEP.CarrierVM = "models/weapons/synbf3/c_dlt19.mdl"
+SWEP.CarrierBone = "v_dlt19_reference001"
+SWEP.PropBonePos = Vector(0.7, -10, 0)
+SWEP.PropBoneAng = Angle(1.2, -89, 0)
+SWEP.PropBoneScale = 1
+SWEP.VMOffset = Vector(1.3, 0, -0.6)
+SWEP.CarrierFOV = 54
+-- On safety / sprinting: blends to this pose.
+SWEP.SafePose = {
+    PropBonePos = Vector(-17.9021, 1.67832, 10.0699),
+    PropBoneAng = Angle(0, -45.3147, -17.6224),
+    PropBoneScale = 1.27622,
+    VMOffset = Vector(1, -6, -4),
+    CarrierFOV = 75,
+}
+SWEP.SafeBlendTime = 0.35     -- seconds to lower / raise
+SWEP.ReloadTime = 2.0       -- seconds, whatever the viewmodel's animation length
 SWEP.HoldType = "ar2"
 SWEP.Slot = 2
 

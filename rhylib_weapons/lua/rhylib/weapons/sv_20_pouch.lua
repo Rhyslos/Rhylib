@@ -168,3 +168,23 @@ Rhylib.Net.Receive("wep.reload", function(ply)
         wep:StartReload(1, m and m.id or nil)
     end
 end, { rate = 4, burst = 3 })
+
+-- rhylib_infammo (admins): toggles test ammo for yourself. Firing uses
+-- nothing and reloading always works and loads a full magazine / cell.
+Rhylib.Perms.Register("rhylib.weapons.infammo", "admin", "Infinite test ammo (rhylib_infammo)")
+
+concommand.Add("rhylib_infammo", function(ply)
+    if not IsValid(ply) then return end
+    Rhylib.Perms.Check(ply, "rhylib.weapons.infammo", function(ok)
+        if not IsValid(ply) then return end
+        if not ok then ply:ChatPrint("You don't have permission for rhylib_infammo") return end
+        local on = not ply:GetNW2Bool("rhylib_infammo")
+        ply:SetNW2Bool("rhylib_infammo", on)
+        local wep = ply:GetActiveWeapon()
+        if on and IsValid(wep) and wep.IsRhylib and wep.GetMagSize then
+            wep:SetClip1(wep:GetMagSize())
+            if wep.UsesCell then wep:SetCell(1) end
+        end
+        ply:ChatPrint("Infinite test ammo " .. (on and "on" or "off"))
+    end)
+end)

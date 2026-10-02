@@ -1,9 +1,9 @@
 --[[
     DC-17 blaster pistol. Small magazines only, no power cell.
 
-    Uses a prop model (models/jajoff/sps/cgiweapons/tc13j/dc17.mdl), so it
-    has no arms in first person. The model's addon must be installed.
-    Tune the Prop* offsets below; saving this file updates them in game.
+    Uses a prop model (models/jajoff/sps/cgiweapons/tc13j/dc17.mdl), held in first person by
+    the trooper hands (CarrierVM). The model's addon must be installed.
+    Tune with rhylib_vm_editor, then paste its lines below.
     All numbers are first guesses for tuning.
 ]]
 
@@ -15,10 +15,20 @@ SWEP.Category = "Rhylib: Republic"
 SWEP.Spawnable = true
 SWEP.AdminOnly = false
 
--- The placeholder viewmodel is hidden but still drives the reload timing.
+-- Placeholder viewmodel, used only if the carrier model is missing.
 SWEP.ViewModel = "models/weapons/c_pistol.mdl"
+
 SWEP.WorldModel = "models/jajoff/sps/cgiweapons/tc13j/dc17.mdl"
 SWEP.UseHands = false
+-- First person: the trooper hands hold the prop on a Battlefront viewmodel
+-- (Reworked Assets, a Workshop dependency); its gun bone is hidden.
+SWEP.CarrierVM = "models/bf2017/c_scoutblaster.mdl"
+SWEP.CarrierBone = "v_scoutblaster_reference001"
+SWEP.CarrierBoneMove = Vector(0, -0.3, 0)
+SWEP.PropBonePos = Vector(-1.8, 12.6, 0.5)
+SWEP.PropBoneAng = Angle(0, 90, 0)
+SWEP.PropBoneScale = 1
+SWEP.ReloadTime = 1.6       -- seconds, whatever the viewmodel's animation length
 SWEP.HoldType = "pistol"
 SWEP.Slot = 1
 

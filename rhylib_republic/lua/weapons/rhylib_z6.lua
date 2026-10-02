@@ -3,9 +3,9 @@
     Hold fire to spin the barrels up (SpinUp seconds) before it fires;
     you walk slower while it spins. Too heavy to fire while flying.
 
-    Uses a prop model (models/jajoff/sps/cgiweapons/tc13j/z6.mdl), so it
-    has no arms in first person. The model's addon must be installed.
-    Tune the Prop* offsets below; saving this file updates them in game.
+    Uses a prop model (models/jajoff/sps/cgiweapons/tc13j/z6.mdl), held in first person by
+    the trooper hands (CarrierVM). The model's addon must be installed.
+    Tune with rhylib_vm_editor, then paste its lines below.
     All numbers are first guesses for tuning.
 ]]
 
@@ -17,19 +17,28 @@ SWEP.Category = "Rhylib: Republic"
 SWEP.Spawnable = true
 SWEP.AdminOnly = false
 
--- The placeholder viewmodel is hidden but still drives the reload timing.
+-- Placeholder viewmodel, used only if the carrier model is missing.
 SWEP.ViewModel = "models/weapons/c_shotgun.mdl"
 SWEP.WorldModel = "models/jajoff/sps/cgiweapons/tc13j/z6.mdl"
 SWEP.UseHands = false
+-- First person: the trooper hands hold the prop on a Battlefront viewmodel
+-- (Reworked Assets, a Workshop dependency); its gun bone is hidden.
+SWEP.CarrierVM = "models/weapons/synbf3/c_t21.mdl"
+SWEP.CarrierBone = "v_t21_reference001"
+SWEP.PropBonePos = Vector(-2, -5, -6.5)
+SWEP.PropBoneAng = Angle(0, -90, 0)
+SWEP.PropBoneScale = 1.15
+SWEP.VMOffset = Vector(5, -20, -7)
+SWEP.CarrierFOV = 75
 SWEP.HoldType = "shotgun"
 SWEP.Slot = 3
 
 SWEP.PropModel = "models/jajoff/sps/cgiweapons/tc13j/z6.mdl"
-SWEP.PropScale = 1
+SWEP.PropScale = 1.05
 SWEP.PropVMPos = Vector(20, 8, -10)    -- forward, right, up (first person)
 SWEP.PropVMAng = Angle(0, 0, 0)        -- pitch, yaw, roll
-SWEP.PropWMPos = Vector(6, 1, -3)      -- forward, right, up from the right hand
-SWEP.PropWMAng = Angle(-10, 0, 180)
+SWEP.PropWMPos = Vector(-4, 2.1, 1)      -- forward, right, up from the right hand
+SWEP.PropWMAng = Angle(-14, 4, 175)
 SWEP.PropMuzzle = Vector(36, 0, 0)     -- muzzle in the prop's own coordinates
 
 SWEP.Primary = {

@@ -58,7 +58,7 @@ end
 
 -- Belt line ---------------------------------------------------------------
 
-local COL_ROPE = Color(58, 60, 62)  -- same dark grey as the rope
+local COL_ROPE = Color(14, 14, 14)  -- same black as the rope
 local pelvisBone = {}
 
 Rhylib.Hook.Add("PostPlayerDraw", "weapons.grapple", function(ply)
@@ -76,5 +76,5 @@ Rhylib.Hook.Add("PostPlayerDraw", "weapons.grapple", function(ply)
     local belt = bone and ply:GetBonePosition(bone) or ply:GetPos() + Vector(0, 0, 38)
 
     render.SetColorMaterial()
-    render.DrawBeam(belt, G.PosAt(d, ply:GetDTFloat(G.DT_S), false), 1.2, 0, 1, COL_ROPE)
+    render.DrawBeam(belt, G.PosAt(d, ply:GetDTFloat(G.DT_S), false), 1.8, 0, 1, COL_ROPE)
 end)

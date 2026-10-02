@@ -125,12 +125,22 @@ SWEP.Spread = {
 
 SWEP.AimPos = Vector(-2, 0, 1)      -- viewmodel offset when aiming (right, forward, up)
 SWEP.AimFov = 0.85                  -- FOV multiplier when aiming
+SWEP.Scope = nil                    -- true: aiming looks through a scope (gun hidden, AimFov zoom, scope overlay)
+SWEP.ClipCap = nil                  -- most rounds loaded from one magazine (the rest stays in it)
+SWEP.Pellets = nil                  -- bolts per shot (shotguns), each uses one round
+SWEP.PelletCone = 0                 -- extra spread of the pellets, degrees
+SWEP.PropBodygroups = nil           -- { [index] = value } set on the prop model
 
 --[[
     Prop models: a plain prop (no arms, no animations) can be used as the
-    gun. It floats in first person and is attached to the right hand in
-    third person. Tune the offsets in the weapon file; saving the file
-    updates them live.
+    gun. Third person: attached to the right hand (PropWMPos / PropWMAng).
+    First person with a carrier (SWEP.CarrierVM, a c_ viewmodel with its
+    gun on one bone, e.g. the Battlefront ones from Reworked Assets): that
+    model plays its animations with the player's hands (UseHands), its gun
+    bone (CarrierBone) is shrunk away and the prop is drawn on that bone at
+    PropBonePos / PropBoneAng / PropBoneScale (the SCK/TFA technique).
+    Without a carrier (or if its model is missing) the prop floats
+    (PropVMPos / PropVMAng). Tune in game with rhylib_vm_editor.
 ]]
 SWEP.PropModel = nil
 SWEP.PropScale = 1
@@ -139,6 +149,23 @@ SWEP.PropVMAng = Angle(0, 0, 0)     -- first person: pitch, yaw, roll
 SWEP.PropWMPos = Vector(0, 0, 0)    -- third person: forward, right, up from the right hand
 SWEP.PropWMAng = Angle(0, 0, 0)
 SWEP.PropMuzzle = Vector(0, 0, 0)   -- muzzle point in the prop's own coordinates
+SWEP.PropFirstPerson = true         -- false: first person shows SWEP.ViewModel as it is (a real v_/c_ model); the prop is third person only
+SWEP.ReloadAct = ACT_VM_RELOAD       -- the viewmodel's reload animation (some models only have ACT_VM_RELOAD_EMPTY)
+SWEP.CarrierVM = nil                -- c_ viewmodel whose hands hold the prop in first person
+SWEP.CarrierBone = nil              -- its gun bone: shrunk, the prop sits on it
+SWEP.CarrierBoneMove = nil          -- optional Vector: ManipulateBonePosition for that bone
+SWEP.PropBonePos = Vector(0, 0, 0)  -- prop from the carrier bone: forward, right, up
+SWEP.PropBoneAng = nil               -- (nil = worked out on an idle frame so the prop points
+                                    -- like the floating gun did, PropVMAng; printed to the console)
+SWEP.PropBoneScale = nil            -- first-person prop scale (nil = PropScale)
+SWEP.CarrierFOV = nil               -- viewmodel FOV with the carrier (nil = ViewModelFOV)
+SWEP.SafePose = nil                 -- carrier: pose while lowered (safety, sprint), blended in:
+                                    -- { PropBonePos, PropBoneAng, PropBoneScale, VMOffset, CarrierFOV },
+                                    -- any left out = the normal value
+SWEP.SafeBlendTime = 0.2            -- seconds to lower / raise the gun
+SWEP.VMOffset = nil                 -- viewmodel offset with the carrier: right, forward, up
+                                    -- (nil = worked out on first idle frame so the prop sits at
+                                    -- PropVMPos, where the floating gun was; printed to the console)
 
 local RELOAD_NONE, RELOAD_MAG, RELOAD_CELL = 0, 1, 2
 
@@ -179,7 +206,26 @@ function SWEP:OnLoweredChanged(name, _, on)
     self:SetHoldType((safety or lowered) and "passive" or self.HoldType)
 end
 
+-- Test mode (rhylib_infammo, admins): firing uses nothing, reloads are free.
+function SWEP:InfiniteAmmo()
+    local o = self:GetOwner()
+    return IsValid(o) and o:IsPlayer() and o:GetNW2Bool("rhylib_infammo") or false
+end
+
+-- Is the carrier viewmodel in use? (set in Initialize)
+function SWEP:UsesCarrier()
+    return self.rhylibCarrier == true
+end
+
 function SWEP:Initialize()
+    local c = self.CarrierVM
+    if c and self.CarrierBone and self.PropModel and self.PropFirstPerson ~= false and util.IsValidModel(c) then
+        self.ViewModel = c
+        self.UseHands = true
+        if self.CarrierFOV then self.ViewModelFOV = self.CarrierFOV end
+        self.CarrierFOV = self.ViewModelFOV
+        self.rhylibCarrier = true
+    end
     self:SetHoldType(self:IsLowered() and "passive" or self.HoldType)
     if self.UsesCell then self:SetCell(1) end
     if self:GetFireMode() == 0 then self:SetFireMode(1) end
@@ -218,7 +264,9 @@ end
 -- Shots the loaded magazine holds when full.
 function SWEP:GetMagSize()
     local m = self:GetMag()
-    return m and m.rounds or self.Primary.ClipSize
+    local n = m and m.rounds or self.Primary.ClipSize
+    if self.ClipCap then n = math.min(n, self.ClipCap) end
+    return n
 end
 
 function SWEP:Deploy()
@@ -356,8 +404,13 @@ function SWEP:FireShot()
     Spread.AddShot(self, Spread.NearestArc(a), now)
 
     local damage = self.Damage * self:GetCellDamageMult()
-    self:TakePrimaryAmmo(1)
-    if self.UsesCell then
+    -- Shotguns: Pellets bolts, one round each (fewer when the clip is low).
+    local pellets = self.Pellets or 1
+    if not self:InfiniteAmmo() then
+        pellets = math.max(1, math.min(pellets, self:Clip1()))
+        self:TakePrimaryAmmo(pellets)
+    end
+    if self.UsesCell and not self:InfiniteAmmo() then
         self:SetCell(math.max(0, self:GetCell() - 1 / self.CellShots))
     end
 
@@ -376,10 +429,21 @@ function SWEP:FireShot()
     end
 
     local origin = owner:GetShootPos()
-    if SERVER then
-        Rhylib.Weapons.Bolts.Fire(owner, self, origin, dir, damage)
-    elseif IsFirstTimePredicted() then
-        Rhylib.Weapons.Bolts.FireLocal(owner, self, origin, dir)
+    for i = 1, pellets do
+        local d = dir
+        if self.Pellets then
+            -- Around the shot's own direction (the cone shown when firing).
+            local pa = util.SharedRandom("rhylib.pellet.a", 0, 2 * math.pi, i)
+            local off = math.tan(math.rad(self.PelletCone or 0) * math.sqrt(util.SharedRandom("rhylib.pellet.r", 0, 1, i)))
+            local da = d:Angle()
+            d = da:Forward() + da:Right() * (math.cos(pa) * off) - da:Up() * (math.sin(pa) * off)
+            d:Normalize()
+        end
+        if SERVER then
+            Rhylib.Weapons.Bolts.Fire(owner, self, origin, d, damage)
+        elseif IsFirstTimePredicted() then
+            Rhylib.Weapons.Bolts.FireLocal(owner, self, origin, d)
+        end
     end
 end
 
@@ -475,6 +539,10 @@ if SERVER then
         local W = Rhylib.Weapons
         local Pouch = W.Pouch
         local cur = self:GetMag()
+        if self:InfiniteAmmo() then
+            if magId and self:TakesMag(magId) then return W.MagTypes[magId] end
+            return cur or W.MagTypes[self.Mags[1]]
+        end
         local full = self:Clip1() >= self:GetMagSize()
 
         local function usable(id)
@@ -501,12 +569,12 @@ if SERVER then
             if not m then return end
             self:SetReloadMag(m.index)
         elseif kind == RELOAD_CELL then
-            if not self.UsesCell or W.Pouch.Count(owner, W.CELL) == 0 then return end
+            if not self.UsesCell or (W.Pouch.Count(owner, W.CELL) == 0 and not self:InfiniteAmmo()) then return end
         else
             return
         end
 
-        self:SendWeaponAnim(ACT_VM_RELOAD)
+        self:SendWeaponAnim(self.ReloadAct or ACT_VM_RELOAD)
         local vm = owner:GetViewModel()
         local animTime = IsValid(vm) and vm:SequenceDuration() or 2
         local duration = self.ReloadTime or animTime
@@ -536,21 +604,48 @@ if SERVER then
 
         local vm = owner:GetViewModel()
         if IsValid(vm) then vm:SetPlaybackRate(1) end
+        self:SendWeaponAnim(ACT_VM_IDLE)   -- (the reload may outlast its animation)
+
+        if self:InfiniteAmmo() then
+            local m = W.MagByIndex[self:GetReloadMag()]
+            if kind == RELOAD_MAG and m then
+                self:SetMagType(m.index)
+                self:SetClip1(self:GetMagSize())
+            elseif kind == RELOAD_CELL then
+                self:SetCell(1)
+            end
+            return
+        end
 
         if kind == RELOAD_MAG then
             local m = W.MagByIndex[self:GetReloadMag()]
             local best, issued = nil, nil
             if m then best, issued = Pouch.TakeBest(owner, m.id) end
             if not best then return end
-            -- The old magazine goes back into the inventory with what's left
-            -- in it (still issued if it came from an armoury).
             local old = self:GetMag()
-            if old and self:Clip1() > 0 then
-                Pouch.Add(owner, old.id, self:Clip1() / old.rounds, true, self.magIssued)
-            end
+            local clip = math.max(self:Clip1(), 0)
+            local rounds = math.floor(best * m.rounds + 0.5)
+            local oldIssued = self.magIssued
             self.magIssued = issued
             self:SetMagType(m.index)
-            self:SetClip1(math.floor(best * m.rounds + 0.5))
+            local cap = self:GetMagSize()
+            if self.ClipCap and old and old.id == m.id then
+                -- ClipCap, same type: top up from the magazine; what's left
+                -- goes back as one magazine.
+                local total = clip + rounds
+                local load = math.min(total, cap)
+                if total > load then Pouch.Add(owner, m.id, (total - load) / m.rounds, true, issued or oldIssued) end
+                self:SetClip1(load)
+            else
+                -- ClipCap: what doesn't fit stays in the new magazine (back
+                -- first, it frees the room it came from).
+                local load = math.min(rounds, cap)
+                if rounds > load then Pouch.Add(owner, m.id, (rounds - load) / m.rounds, true, issued) end
+                -- The old magazine goes back with what's left in it (still
+                -- issued if it came from an armoury).
+                if old and clip > 0 then Pouch.Add(owner, old.id, clip / old.rounds, true, oldIssued) end
+                self:SetClip1(load)
+            end
         elseif kind == RELOAD_CELL then
             local best, issued = Pouch.TakeBest(owner, W.CELL)
             if not best then return end
@@ -672,6 +767,102 @@ end
 --------------------------------------------------------------------------
 
 if CLIENT then
+    -- Looking through the scope (most of the way aimed in)?
+    local function thirdPerson()
+        local tp = Rhylib.ThirdPerson
+        return tp and tp.Active and tp.Active() or false
+    end
+
+    function SWEP:Scoped()
+        return self.Scope == true and (self.aimFrac or 0) >= 0.8 and not thirdPerson()
+    end
+
+    -- Aim zoom; a scope only zooms in first person.
+    function SWEP:EffectiveAimFov()
+        if self.Scope and thirdPerson() then return 0.85 end
+        return self.AimFov
+    end
+
+    -- Scope overlay: black outside a circle, a soft dark edge, a light
+    -- lens tint, the reticle and a range readout.
+    local SEG = 96
+    local ringCache = {}
+    local function ring(cx, cy, r1, r2, col)
+        surface.SetDrawColor(col)
+        draw.NoTexture()
+        local key = cx .. ":" .. cy .. ":" .. r1 .. ":" .. r2
+        local polys = ringCache[key]
+        if not polys then
+            polys = {}
+            for i = 0, SEG - 1 do
+                local a0, a1 = i / SEG * math.pi * 2, (i + 1) / SEG * math.pi * 2
+                local c0, s0, c1, s1 = math.cos(a0), math.sin(a0), math.cos(a1), math.sin(a1)
+                polys[#polys + 1] = {
+                    { x = cx + c0 * r1, y = cy + s0 * r1 },
+                    { x = cx + c0 * r2, y = cy + s0 * r2 },
+                    { x = cx + c1 * r2, y = cy + s1 * r2 },
+                    { x = cx + c1 * r1, y = cy + s1 * r1 },
+                }
+            end
+            if table.Count(ringCache) > 32 then ringCache = {} end
+            ringCache[key] = polys
+        end
+        for i = 1, #polys do surface.DrawPoly(polys[i]) end
+    end
+
+    local BLACK = Color(0, 0, 0, 255)
+    function SWEP:DrawScope()
+        local w, h = ScrW(), ScrH()
+        local cx, cy = math.floor(w * 0.5), math.floor(h * 0.5)
+        local r = math.floor(h * 0.45)
+        local accent = (Rhylib.UI and Rhylib.UI.Colors and Rhylib.UI.Colors.accent) or Color(90, 200, 255)
+
+        -- Lens tint, then everything outside the lens black.
+        surface.SetDrawColor(40, 90, 130, 22)
+        surface.DrawRect(cx - r, cy - r, r * 2, r * 2)
+        surface.SetDrawColor(BLACK)
+        surface.DrawRect(0, 0, cx - r + 1, h)
+        surface.DrawRect(cx + r - 1, 0, w - cx - r + 1, h)
+        surface.DrawRect(cx - r, 0, r * 2, cy - r + 1)
+        surface.DrawRect(cx - r, cy + r - 1, r * 2, h - cy - r + 1)
+        ring(cx, cy, r, r * 1.5, BLACK)
+        -- Soft dark edge inside the lens.
+        for i = 1, 6 do
+            ring(cx, cy, r - i * r * 0.018, r - (i - 1) * r * 0.018, Color(0, 0, 0, 150 - i * 22))
+        end
+
+        -- Reticle: thick posts from the edge, thin lines to a gap, a dot.
+        local thin, thick, gap = math.max(1, math.floor(h / 900)), math.max(3, math.floor(h / 260)), r * 0.06
+        surface.SetDrawColor(0, 0, 0, 230)
+        surface.DrawRect(cx - r, cy - thick / 2, r * 0.55, thick)
+        surface.DrawRect(cx + r * 0.45, cy - thick / 2, r * 0.55, thick)
+        surface.DrawRect(cx - thick / 2, cy + r * 0.45, thick, r * 0.55)
+        surface.DrawRect(cx - r * 0.45, cy - thin / 2, r * 0.45 - gap, thin)
+        surface.DrawRect(cx + gap, cy - thin / 2, r * 0.45 - gap, thin)
+        surface.DrawRect(cx - thin / 2, cy + gap, thin, r * 0.45 - gap)
+        surface.DrawRect(cx - thin / 2, cy - r, thin, r - gap)
+        -- Mil ticks on the lower and side lines (drop and lead marks).
+        for i = 1, 4 do
+            local d = gap + i * r * 0.08
+            local len = (i % 2 == 0) and r * 0.035 or r * 0.02
+            surface.DrawRect(cx - len / 2, cy + d, len, thin)
+            surface.DrawRect(cx + d, cy - len / 2, thin, len)
+            surface.DrawRect(cx - d, cy - len / 2, thin, len)
+        end
+        surface.SetDrawColor(accent.r, accent.g, accent.b, 255)
+        surface.DrawRect(cx - thick / 2, cy - thick / 2, thick, thick)
+
+        -- Range to whatever is under the reticle, in metres.
+        local o = self:GetOwner()
+        if IsValid(o) then
+            local tr = util.TraceLine({ start = o:EyePos(), endpos = o:EyePos() + o:EyeAngles():Forward() * 32768, filter = o, mask = MASK_SHOT })
+            local m = tr.Hit and math.floor(tr.HitPos:Distance(tr.StartPos) * 0.01905 + 0.5) or nil
+            local font = Rhylib.UI and Rhylib.UI.Font and Rhylib.UI.Font(math.floor(18 * h / 1080)) or "DermaDefault"
+            draw.SimpleText(m and (m .. " m") or "---", font, cx + r * 0.62, cy + r * 0.62, Color(accent.r, accent.g, accent.b, 220), TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+            draw.SimpleText(string.format("x%.1f", 1 / (self.AimFov or 1)), font, cx - r * 0.62, cy + r * 0.62, Color(accent.r, accent.g, accent.b, 220), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        end
+    end
+
     -- Smooth 0..1 value for the aim animation, client only.
     function SWEP:GetAimFrac()
         return self.aimFrac or 0
@@ -681,8 +872,12 @@ if CLIENT then
 
     function SWEP:GetViewModelPosition(pos, ang)
         local ft = FrameTime()
-        self.aimFrac = math.Approach(self.aimFrac or 0, self:GetAiming() and 1 or 0, ft * 6)
-        self.safeFrac = math.Approach(self.safeFrac or 0, self:IsLowered() and 1 or 0, ft * 5)
+        self.aimFrac = math.Approach(self.aimFrac or 0, (self:GetAiming() or self.rhylibAimPreview) and 1 or 0, ft * 6)
+        self.safeFrac = math.Approach(self.safeFrac or 0, self:IsLowered() and 1 or 0, ft / (self.SafeBlendTime or 0.2))
+
+        local o = self.rhylibCarrier and self:CarrierPose("VMOffset")
+        if o then pos = pos + ang:Right() * o.x + ang:Forward() * o.y + ang:Up() * o.z end
+        if self.rhylibCarrier and self.SafePose then self.ViewModelFOV = self:CarrierPose("CarrierFOV") end
 
         local f = ease(self.aimFrac)
         if f > 0 then
@@ -701,18 +896,34 @@ if CLIENT then
         return pos, ang
     end
 
+    -- A carrier pose value, blended towards SafePose while lowered (same
+    -- easing as the lowering). key: PropBonePos, PropBoneAng, PropBoneScale,
+    -- VMOffset or CarrierFOV.
+    local POSE_DEFAULT = { PropBoneScale = function(w) return w.PropScale end }
+    function SWEP:CarrierPose(key)
+        local v = self[key]
+        if v == nil and POSE_DEFAULT[key] then v = POSE_DEFAULT[key](self) end
+        local safe = self.SafePose and self.SafePose[key]
+        local sf = safe ~= nil and ease(self.safeFrac or 0) or 0
+        if sf <= 0 or v == nil then return v end
+        if sf >= 1 then return safe end
+        if isangle(v) then return LerpAngle(sf, v, safe) end
+        if isvector(v) then return LerpVector(sf, v, safe) end
+        return Lerp(sf, v, safe)
+    end
+
     function SWEP:TranslateFOV(fov)
-        return fov * Lerp(self:GetAimFrac(), 1, self.AimFov)
+        return fov * Lerp(self:GetAimFrac(), 1, self:EffectiveAimFov())
     end
 
     function SWEP:AdjustMouseSensitivity()
         if self:GetAimFrac() > 0 then
-            return Lerp(self:GetAimFrac(), 1, self.AimFov)
+            return Lerp(self:GetAimFrac(), 1, self:EffectiveAimFov())
         end
     end
 
     function SWEP:DoDrawCrosshair(x, y)
-        if self:IsLowered() then return true end  -- no crosshair on safety or while sprinting
+        if self:IsLowered() or self:Scoped() then return true end  -- no crosshair on safety or while sprinting
         -- In Rhylib third person, rhylib_thirdperson draws it instead.
         local tp = Rhylib.ThirdPerson
         if not (tp and tp.Active and tp.Active()) then
@@ -729,6 +940,7 @@ if CLIENT then
     function SWEP:DrawHUD()
         local UI = Rhylib.UI
         local s = ScrH() / 1080
+        if self:Scoped() then self:DrawScope() end
 
         -- rhylib_hud shows the cell in its ammo counter; this is the fallback.
         if self.UsesCell and not Rhylib.HUD then
@@ -763,14 +975,20 @@ if CLIENT then
         return p, a
     end
 
-    function SWEP:GetPropEntity(key)
+    function SWEP:GetPropEntity(key, scale)
+        scale = scale or self.PropScale
         local ent = self[key]
-        if IsValid(ent) and ent:GetModel() == self.PropModel then return ent end
+        if IsValid(ent) and ent:GetModel() == self.PropModel then
+            if ent.rhylibScale ~= scale then ent:SetModelScale(scale, 0) ent.rhylibScale = scale end
+            return ent
+        end
         if IsValid(ent) then ent:Remove() end
         ent = ClientsideModel(self.PropModel, RENDERGROUP_OPAQUE)
         if not IsValid(ent) then return nil end
         ent:SetNoDraw(true)
-        ent:SetModelScale(self.PropScale, 0)
+        ent:SetModelScale(scale, 0)
+        ent.rhylibScale = scale
+        for k, v in pairs(self.PropBodygroups or {}) do ent:SetBodygroup(k, v) end
         self[key] = ent
         return ent
     end
@@ -778,25 +996,453 @@ if CLIENT then
     -- Where bolts should appear to leave the gun. Used by cl_10_bolts.lua.
     function SWEP:GetPropMuzzle(firstPerson)
         if not self.PropModel then return nil end
+        if firstPerson and self.PropFirstPerson == false then return nil end   -- (the viewmodel's attachment)
+        if firstPerson and self:Scoped() then
+            local o = self:GetOwner()
+            if IsValid(o) then
+                local a = o:EyeAngles()
+                return o:EyePos() + a:Forward() * 12 - a:Up() * 3
+            end
+        end
         return firstPerson and self.propMuzzleVM or self.propMuzzleWM
     end
 
-    -- Prop weapons: skip drawing the placeholder viewmodel and draw the
-    -- prop in its place. This runs inside the viewmodel render pass, so
-    -- the prop gets the viewmodel's FOV, bob, sway and aim offset.
-    function SWEP:PreDrawViewModel(vm)
-        if not self.PropModel then return end
-        local ent = self:GetPropEntity("propVM")
-        if ent then
-            local pos, ang = offsetTransform(vm:GetPos(), vm:GetAngles(), self.PropVMPos, self.PropVMAng)
-            ent:SetPos(pos)
-            ent:SetAngles(ang)
-            ent:SetupBones()
-            ent:DrawModel()
-            self.propMuzzleVM = ent:LocalToWorld(self.PropMuzzle)
+    -- Carrier viewmodel: its gun bone is shrunk (and moved, CarrierBoneMove)
+    -- every frame while a carrier weapon is drawn (the server's bone state
+    -- overwrites client changes), and restored for anything else.
+    local SHRINK, ONE, ZERO = Vector(0.009, 0.009, 0.009), Vector(1, 1, 1), Vector(0, 0, 0)
+
+    local function carrierBone(self, vm)
+        local b = vm:LookupBone(self.CarrierBone or "")
+        return b
+    end
+
+    local function unshrink(vm)
+        local i = vm.rhylibShrunk
+        if not i then return end
+        if i < (vm:GetBoneCount() or 0) then
+            vm:ManipulateBoneScale(i, ONE)
+            vm:ManipulateBonePosition(i, ZERO)
         end
+        vm.rhylibShrunk = nil
+    end
+
+    local function shrink(self, vm)
+        local b = carrierBone(self, vm)
+        if vm.rhylibShrunk and vm.rhylibShrunk ~= b then unshrink(vm) end
+        if not b then return end
+        vm:ManipulateBoneScale(b, SHRINK)
+        vm:ManipulateBonePosition(b, self.CarrierBoneMove or ZERO)
+        vm.rhylibShrunk = b
+    end
+
+    Rhylib.Hook.Add("PreDrawViewModel", "weapons.vmreset", function(vm, ply, wep)
+        if IsValid(vm) and vm.rhylibShrunk and not (IsValid(wep) and wep.UsesCarrier and wep:UsesCarrier()) then
+            unshrink(vm)
+        end
+    end)
+
+    local function drawProp(self, pos, ang, scale)
+        local ent = self:GetPropEntity("propVM", scale)
+        if not ent then return end
+        ent:SetPos(pos)
+        ent:SetAngles(ang)
+        ent:SetupBones()
+        ent:DrawModel()
+        self.propMuzzleVM = ent:LocalToWorld(self.PropMuzzle * (scale or self.PropScale) / self.PropScale)
+    end
+
+    -- First person. Carrier: it draws (gun bone shrunk) and the prop goes
+    -- on that bone in PostDrawViewModel. Otherwise the placeholder isn't
+    -- drawn and the prop floats in its place. Both inside the viewmodel
+    -- pass (viewmodel FOV, bob, sway, aim offset).
+    function SWEP:PreDrawViewModel(vm)
+        if self:Scoped() then return true end   -- looking through the scope: no gun, no hands
+        if not self.PropModel or self.PropFirstPerson == false then return end
+        if self:UsesCarrier() then
+            shrink(self, vm)
+            self:HoldReloadFrame(vm)
+            return
+        end
+        drawProp(self, offsetTransform(vm:GetPos(), vm:GetAngles(), self.PropVMPos, self.PropVMAng))
         return true
     end
+
+    function SWEP:PostDrawViewModel(vm)
+        if not self.PropModel or not self:UsesCarrier() then return end
+        local b = carrierBone(self, vm)
+        local m = b and vm:GetBoneMatrix(b)
+        local pos, ang
+        if m and (self.PropBoneAng == nil or self.rhylibRealign) then self:AlignPropAngle(vm, m:GetAngles()) end
+        if m and self.PropBoneAng then
+            pos, ang = offsetTransform(m:GetTranslation(), m:GetAngles(), self:CarrierPose("PropBonePos"), self:CarrierPose("PropBoneAng"))
+        else
+            pos, ang = offsetTransform(vm:GetPos(), vm:GetAngles(), self.PropVMPos, self.PropVMAng)
+        end
+        drawProp(self, pos, ang, self:CarrierPose("PropBoneScale"))
+        if m and (self.VMOffset == nil or self.rhylibRematch) then self:MatchFloatOffset(vm, pos) end
+    end
+
+    -- PropBoneAng that points the held prop like the floating prop
+    -- (PropVMAng from the view), measured on an idle frame.
+    local function idleFrame(self, vm)
+        if self:IsReloading() or (self.aimFrac or 0) > 0 or (self.safeFrac or 0) > 0 then return false end
+        return vm:GetSequenceActivity(vm:GetSequence()) == ACT_VM_IDLE
+    end
+
+    function SWEP:AlignPropAngle(vm, boneAng)
+        if not idleFrame(self, vm) then return end
+        local _, want = offsetTransform(vector_origin, vm:GetAngles(), vector_origin, self.PropVMAng)
+        local _, l = WorldToLocal(vector_origin, want, vector_origin, boneAng)
+        -- offsetTransform's rotation order may differ from WorldToLocal's
+        -- in sign: keep the candidate that lands closest.
+        local best, bestErr
+        for _, c in ipairs({ l, Angle(-l.p, l.y, l.r), Angle(l.p, l.y, -l.r), Angle(-l.p, l.y, -l.r), Angle(l.p, -l.y, l.r), Angle(-l.p, -l.y, -l.r) }) do
+            local _, a = offsetTransform(vector_origin, boneAng, vector_origin, c)
+            local err = (1 - a:Forward():Dot(want:Forward())) + (1 - a:Up():Dot(want:Up()))
+            if not bestErr or err < bestErr then best, bestErr = c, err end
+        end
+        best = Angle(math.Round(best.p, 2), math.Round(best.y, 2), math.Round(best.r, 2))
+        self.PropBoneAng = best
+        self.rhylibRealign = nil
+        local st = weapons.GetStored(self:GetClass())
+        if st then st.PropBoneAng = Angle(best) end
+        print(string.format("[Rhylib] %s: SWEP.PropBoneAng = Angle(%g, %g, %g)", self:GetClass(), best.p, best.y, best.r))
+    end
+
+    -- VMOffset that puts the held prop where the floating prop was
+    -- (PropVMPos from the view), measured on an idle frame. Stored on the
+    -- weapon class for the rest of the session.
+    function SWEP:MatchFloatOffset(vm, propPos)
+        if not idleFrame(self, vm) then return end
+        local o, a = vm:GetPos(), vm:GetAngles()
+        local d = propPos - o
+        local want = self.PropVMPos
+        local v = Vector(want.y - d:Dot(a:Right()), want.x - d:Dot(a:Forward()), want.z - d:Dot(a:Up()))
+        v = Vector(math.Round(v.x, 2), math.Round(v.y, 2), math.Round(v.z, 2))
+        self.VMOffset = v
+        self.rhylibRematch = nil
+        local st = weapons.GetStored(self:GetClass())
+        if st then st.VMOffset = Vector(v) end
+        print(string.format("[Rhylib] %s: SWEP.VMOffset = Vector(%g, %g, %g)", self:GetClass(), v.x, v.y, v.z))
+    end
+
+    -- A reload longer than its animation holds the last frame instead of
+    -- replaying it; FinishReload sends the idle animation.
+    local HOLD = 0.96
+    function SWEP:HoldReloadFrame(vm)
+        local act = self.ReloadAct or ACT_VM_RELOAD
+        if self:IsReloading() and vm:GetSequenceActivity(vm:GetSequence()) == act then
+            if self.rhylibHold or vm:GetCycle() >= HOLD then
+                self.rhylibHold = true
+                vm:SetCycle(HOLD)
+                vm:SetPlaybackRate(0)
+            end
+        elseif self.rhylibHold then
+            self.rhylibHold = nil
+            vm:SetPlaybackRate(1)
+        end
+    end
+
+    -- The carrier's own muzzle flashes, shells and sounds stay off.
+    function SWEP:FireAnimationEvent()
+        if self:UsesCarrier() then return true end
+    end
+
+    -- Console helpers ----------------------------------------------------
+
+    local function held()
+        local w = LocalPlayer():GetActiveWeapon()
+        if not IsValid(w) or not w.IsRhylib or not w.PropModel then print("Hold a Rhylib prop weapon first") return nil end
+        return w, LocalPlayer():GetViewModel()
+    end
+
+    concommand.Add("rhylib_vm_info", function()
+        local w, vm = held()
+        if not w or not IsValid(vm) then return end
+        print("Viewmodel: " .. tostring(vm:GetModel()) .. (w:UsesCarrier() and "  (carrier)" or ""))
+        local cb = w:UsesCarrier() and carrierBone(w, vm)
+        print("Bones (index: name):")
+        for i = 0, (vm:GetBoneCount() or 0) - 1 do
+            print(string.format("  %d: %s%s", i, vm:GetBoneName(i) or "?", cb == i and "   [gun bone: hidden, prop on it]" or ""))
+        end
+    end)
+
+    -- rhylib_vm_aim right forward up: the aim-down-sights offset (SWEP.AimPos)
+    concommand.Add("rhylib_vm_aim", function(_, _, args)
+        local w = LocalPlayer():GetActiveWeapon()
+        if not IsValid(w) or not w.AimPos then print("Hold a Rhylib weapon first") return end
+        local x, y, z = tonumber(args[1]) or 0, tonumber(args[2]) or 0, tonumber(args[3]) or 0
+        w.AimPos = Vector(x, y, z)
+        print(string.format("SWEP.AimPos = Vector(%g, %g, %g)", x, y, z))
+    end)
+
+    -- rhylib_vm_fov n: the viewmodel FOV (SWEP.ViewModelFOV)
+    concommand.Add("rhylib_vm_fov", function(_, _, args)
+        local w = LocalPlayer():GetActiveWeapon()
+        if not IsValid(w) then return end
+        w.ViewModelFOV = tonumber(args[1]) or w.ViewModelFOV
+        print("SWEP.ViewModelFOV = " .. tostring(w.ViewModelFOV))
+    end)
+
+    -- Live tuning of the floating gun: rhylib_vm_tune x y z pitch yaw roll
+    -- (forward, right, up from the view; prints the lines for the weapon file).
+    concommand.Add("rhylib_vm_tune", function(_, _, args)
+        local w = held()
+        if not w then return end
+        local n = {}
+        for i = 1, 6 do n[i] = tonumber(args[i]) or 0 end
+        w.PropVMPos, w.PropVMAng = Vector(n[1], n[2], n[3]), Angle(n[4], n[5], n[6])
+        print(string.format("SWEP.PropVMPos = Vector(%g, %g, %g)\nSWEP.PropVMAng = Angle(%g, %g, %g)", n[1], n[2], n[3], n[4], n[5], n[6]))
+    end)
+
+    -- rhylib_vm_editor: sliders for the held gun (prop in hand or floating,
+    -- aim offset, viewmodel FOV). Changes last until the weapon is removed;
+    -- Copy puts the lines for the weapon file on the clipboard.
+    local editor
+
+    local function editorLines(w, safe)
+        local out = {}
+        if safe then
+            out[1] = "SWEP.SafePose = {"
+            out[2] = string.format("    PropBonePos = Vector(%g, %g, %g),", safe.PropBonePos:Unpack())
+            out[3] = string.format("    PropBoneAng = Angle(%g, %g, %g),", safe.PropBoneAng:Unpack())
+            out[4] = string.format("    PropBoneScale = %g,", safe.PropBoneScale)
+            out[5] = string.format("    VMOffset = Vector(%g, %g, %g),", safe.VMOffset:Unpack())
+            out[6] = string.format("    CarrierFOV = %g,", safe.CarrierFOV)
+            out[7] = "}"
+            return table.concat(out, "\n")
+        end
+        local function v(name, x) out[#out + 1] = string.format("SWEP.%s = Vector(%g, %g, %g)", name, x.x, x.y, x.z) end
+        local function a(name, x) out[#out + 1] = string.format("SWEP.%s = Angle(%g, %g, %g)", name, x.p, x.y, x.r) end
+        if w:UsesCarrier() then
+            v("PropBonePos", w.PropBonePos)
+            a("PropBoneAng", w.PropBoneAng)
+            out[#out + 1] = string.format("SWEP.PropBoneScale = %g", w.PropBoneScale or w.PropScale)
+            v("VMOffset", w.VMOffset)
+        else
+            v("PropVMPos", w.PropVMPos)
+            a("PropVMAng", w.PropVMAng)
+        end
+        v("AimPos", w.AimPos)
+        out[#out + 1] = w:UsesCarrier() and ("SWEP.CarrierFOV = " .. tostring(w.CarrierFOV)) or ("SWEP.ViewModelFOV = " .. tostring(w.ViewModelFOV))
+        return table.concat(out, "\n")
+    end
+
+    -- Editor window: typed values with - / + buttons (Enter or leaving the
+    -- box applies). Returns frame (with .list), label(text), field(...), rows.
+    local function editorFrame(title, tall, w)
+        local f = vgui.Create("DFrame")
+        f:SetTitle(title)
+        f:SetSize(340, tall)
+        f:SetPos(20, ScrH() * 0.5 - tall * 0.5)
+        f:MakePopup()   -- (keyboard goes to the window, so number keys don't switch weapons)
+
+        local list = vgui.Create("DScrollPanel", f)
+        list:Dock(FILL)
+        f.list = list
+        local rows = {}
+
+        local function label(text)
+            local l = list:Add("DLabel")
+            l:SetText(text)
+            l:Dock(TOP)
+            l:DockMargin(4, 10, 4, 2)
+        end
+
+        local function field(text, step, lo, hi, get, set)
+            local row = list:Add("DPanel")
+            row:SetTall(24)
+            row:Dock(TOP)
+            row:DockMargin(4, 1, 4, 1)
+            row:SetPaintBackground(false)
+            local l = vgui.Create("DLabel", row)
+            l:SetText(text)
+            l:SetWide(90)
+            l:Dock(LEFT)
+            local plus = vgui.Create("DButton", row)
+            plus:SetText("+")
+            plus:SetWide(26)
+            plus:Dock(RIGHT)
+            local minus = vgui.Create("DButton", row)
+            minus:SetText("-")
+            minus:SetWide(26)
+            minus:Dock(RIGHT)
+            local e = vgui.Create("DTextEntry", row)
+            e:Dock(FILL)
+            e:DockMargin(0, 0, 4, 0)
+            e:SetNumeric(true)
+            local function show() e:SetText(tostring(math.Round(get(), 3))) end
+            local function apply(v)
+                if not IsValid(w) or not v then return end
+                set(math.Clamp(v, lo, hi))
+                show()
+            end
+            e.OnEnter = function() apply(tonumber(e:GetValue())) end
+            local base = baseclass.Get("DTextEntry")
+            e.OnLoseFocus = function(self)
+                apply(tonumber(self:GetValue()))
+                if base and base.OnLoseFocus then base.OnLoseFocus(self) end
+            end
+            minus.DoClick = function() apply(get() - step) end
+            plus.DoClick = function() apply(get() + step) end
+            show()
+            rows[#rows + 1] = show
+        end
+
+        local function copyButton(getText)
+            local copy = list:Add("DButton")
+            copy:SetText("Copy lines for the weapon file")
+            copy:SetTall(28)
+            copy:Dock(TOP)
+            copy:DockMargin(4, 10, 4, 4)
+            copy.DoClick = function()
+                if not IsValid(w) then return end
+                local text = getText()
+                SetClipboardText(text)
+                print(text)
+                chat.AddText(Color(120, 200, 255), "Copied (also printed in the console).")
+            end
+        end
+        f.copyButton = copyButton
+
+        return f, label, field, rows
+    end
+
+    concommand.Add("rhylib_vm_editor", function()
+        if IsValid(editor) then editor:Remove() return end
+        local w = held()
+        if not w then return end
+        local carrier = w:UsesCarrier()
+        local posKey, angKey = carrier and "PropBonePos" or "PropVMPos", carrier and "PropBoneAng" or "PropVMAng"
+        -- Own copies, so the edits don't change the shared weapon table.
+        w[posKey] = Vector(w[posKey]:Unpack())
+        local hadAng = w.PropBoneAng ~= nil
+        if carrier and not hadAng then w.rhylibRealign = true end
+        w[angKey] = Angle((w[angKey] or Angle(0, 0, 0)):Unpack())
+        w.AimPos = Vector(w.AimPos:Unpack())
+        if carrier and w.VMOffset == nil then w.rhylibRematch = true end
+        w.VMOffset = Vector((w.VMOffset or Vector(0, 0, 0)):Unpack())
+        -- Opened while lowered (safety or sprint): edit the safety pose.
+        local safe
+        if carrier and hadAng and w:IsLowered() then
+            local sp = w.SafePose or {}
+            safe = {
+                PropBonePos = Vector((sp.PropBonePos or w.PropBonePos):Unpack()),
+                PropBoneAng = Angle((sp.PropBoneAng or w.PropBoneAng):Unpack()),
+                PropBoneScale = sp.PropBoneScale or w.PropBoneScale or w.PropScale,
+                VMOffset = Vector((sp.VMOffset or w.VMOffset):Unpack()),
+                CarrierFOV = sp.CarrierFOV or w.CarrierFOV,
+            }
+            w.SafePose = safe
+        end
+        local t = safe or w
+
+        local f, label, field, rows = editorFrame("Viewmodel: " .. w:GetClass() .. (safe and " (safety pose)" or carrier and " (in hands)" or " (floating)"), 640, w)
+        editor = f
+        local list = f.list
+        f.OnRemove = function() if IsValid(w) then w.rhylibAimPreview = nil end end
+
+        local R = 30
+        label(carrier and "Gun on the hands' gun bone" or "Floating gun from the view")
+        field("Forward", 0.1, -R, R, function() return t[posKey].x end, function(v) t[posKey].x = v end)
+        field("Right", 0.1, -R, R, function() return t[posKey].y end, function(v) t[posKey].y = v end)
+        field("Up", 0.1, -R, R, function() return t[posKey].z end, function(v) t[posKey].z = v end)
+        field("Pitch", 1, -180, 180, function() return t[angKey].p end, function(v) t[angKey].p = v end)
+        field("Yaw", 1, -180, 180, function() return t[angKey].y end, function(v) t[angKey].y = v end)
+        field("Roll", 1, -180, 180, function() return t[angKey].r end, function(v) t[angKey].r = v end)
+        if carrier then
+            field("Size", 0.05, 0.1, 3, function() return t.PropBoneScale or w.PropScale end, function(v) t.PropBoneScale = v end)
+            label("Hands and gun on screen")
+            field("Right", 0.1, -R, R, function() return t.VMOffset.x end, function(v) t.VMOffset.x = v end)
+            field("Forward", 0.1, -R, R, function() return t.VMOffset.y end, function(v) t.VMOffset.y = v end)
+            field("Up", 0.1, -R, R, function() return t.VMOffset.z end, function(v) t.VMOffset.z = v end)
+            if not safe then
+            local align = list:Add("DButton")
+            align:SetText("Point the gun straight ahead")
+            align:SetTall(24)
+            align:Dock(TOP)
+            align:DockMargin(4, 4, 4, 0)
+            align.DoClick = function()
+                if not IsValid(w) then return end
+                w.rhylibRealign = true
+                timer.Simple(0.3, function()
+                    if not IsValid(w) or not IsValid(f) then return end
+                    for _, show in ipairs(rows) do show() end
+                end)
+            end
+            local match = list:Add("DButton")
+            match:SetText("Move to the old floating gun position")
+            match:SetTall(24)
+            match:Dock(TOP)
+            match:DockMargin(4, 4, 4, 0)
+            match.DoClick = function()
+                if not IsValid(w) then return end
+                w.rhylibRematch = true   -- worked out again on the next idle frame
+                timer.Simple(0.3, function()
+                    if not IsValid(w) or not IsValid(f) then return end
+                    for _, show in ipairs(rows) do show() end
+                end)
+            end
+            end
+        end
+        label("Aiming (tick Preview aim to see it)")
+        field("Right", 0.1, -R, R, function() return w.AimPos.x end, function(v) w.AimPos.x = v end)
+        field("Forward", 0.1, -R, R, function() return w.AimPos.y end, function(v) w.AimPos.y = v end)
+        field("Up", 0.1, -R, R, function() return w.AimPos.z end, function(v) w.AimPos.z = v end)
+        label("Viewmodel")
+        field("FOV", 1, 30, 110, function() return safe and safe.CarrierFOV or w.ViewModelFOV end, function(v)
+            if safe then safe.CarrierFOV = v return end
+            w.ViewModelFOV = v
+            if carrier then w.CarrierFOV = v end
+        end)
+
+        local aim = list:Add("DCheckBoxLabel")
+        aim:SetText("Preview aim")
+        aim:Dock(TOP)
+        aim:DockMargin(4, 10, 4, 0)
+        aim.OnChange = function(_, on) if IsValid(w) then w.rhylibAimPreview = on or nil end end
+
+        local copy = list:Add("DButton")
+        copy:SetText("Copy lines for the weapon file")
+        copy:SetTall(28)
+        copy:Dock(TOP)
+        copy:DockMargin(4, 10, 4, 4)
+        copy.DoClick = function()
+            if not IsValid(w) then return end
+            local text = editorLines(w, safe)
+            SetClipboardText(text)
+            print(text)
+            chat.AddText(Color(120, 200, 255), "Copied (also printed in the console).")
+        end
+    end)
+
+    -- rhylib_wm_editor: the third-person gun (PropWMPos / PropWMAng /
+    -- PropScale, from the right hand). Only your own view changes; look at
+    -- yourself in third person while tuning.
+    local wmEditor
+    concommand.Add("rhylib_wm_editor", function()
+        if IsValid(wmEditor) then wmEditor:Remove() return end
+        local w = held()
+        if not w then return end
+        w.PropWMPos = Vector(w.PropWMPos:Unpack())
+        w.PropWMAng = Angle(w.PropWMAng:Unpack())
+        local f, label, field = editorFrame("Third person: " .. w:GetClass(), 360, w)
+        wmEditor = f
+        local R = 30
+        label("Gun from the right hand")
+        field("Forward", 0.1, -R, R, function() return w.PropWMPos.x end, function(v) w.PropWMPos.x = v end)
+        field("Right", 0.1, -R, R, function() return w.PropWMPos.y end, function(v) w.PropWMPos.y = v end)
+        field("Up", 0.1, -R, R, function() return w.PropWMPos.z end, function(v) w.PropWMPos.z = v end)
+        field("Pitch", 1, -180, 180, function() return w.PropWMAng.p end, function(v) w.PropWMAng.p = v end)
+        field("Yaw", 1, -180, 180, function() return w.PropWMAng.y end, function(v) w.PropWMAng.y = v end)
+        field("Roll", 1, -180, 180, function() return w.PropWMAng.r end, function(v) w.PropWMAng.r = v end)
+        field("Size", 0.05, 0.1, 3, function() return w.PropScale end, function(v) w.PropScale = v end)
+        f.copyButton(function()
+            return string.format("SWEP.PropScale = %g\nSWEP.PropWMPos = Vector(%g, %g, %g)\nSWEP.PropWMAng = Angle(%g, %g, %g)",
+                w.PropScale, w.PropWMPos.x, w.PropWMPos.y, w.PropWMPos.z, w.PropWMAng.p, w.PropWMAng.y, w.PropWMAng.r)
+        end)
+    end)
 
     local handBone = {}
 
