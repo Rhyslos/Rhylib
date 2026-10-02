@@ -1,5 +1,6 @@
 --[[
-    F4 menu (DarkRP). Replaces DarkRP's own F4 menu. Tabs:
+    F4 menu (DarkRP), as pages of the pause menu: F4 opens the pause menu
+    on Jobs (a fresh F4 press closes it). Replaces DarkRP's own F4 menu.
       Jobs       jobs by category; pick one to see its model, description
                  and weapons, then become it (or start a vote).
       Shop       entities, shipments, single weapons, ammo and vehicles you
@@ -475,100 +476,47 @@ end
 -- The window
 --------------------------------------------------------------------------
 
-local TABS = {
-    { id = "jobs", title = "Jobs", build = buildJobs },
-    { id = "shop", title = "Shop", build = buildShop },
-    { id = "character", title = "Character", build = buildCharacter },
-}
+-- The F4 menu lives in the pause menu: Jobs, Shop and Character pages.
+-- F4 opens it on Jobs (or closes it); Esc opens it where you left off.
 
-local PANEL = {}
+-- The tab builders close "the frame" after choosing a job; here that's the pause menu.
+local frame = { Remove = function() Menus.ClosePause() end }
 
-function PANEL:Init()
-    local s = K.S
-    self:SetSize(math.min(ScrW() - s(60), s(1240)), math.min(ScrH() - s(60), s(780)))
-    self:Center()
-    self:DockPadding(s(14), s(52), s(14), s(14))
-
-    local tabs = vgui.Create("DPanel", self)
-    tabs:Dock(TOP)
-    tabs:SetTall(s(34))
-    tabs:DockMargin(0, 0, 0, s(12))
-    tabs.Paint = nil
-    local close = K.Button(tabs, "Close  (F4)", function() self:Remove() end, { small = true })
-    close:Dock(RIGHT)
-    close:SetWide(s(130))
-
-    self.body = vgui.Create("DPanel", self)
-    self.body:Dock(FILL)
-    self.body.Paint = nil
-
-    for _, t in ipairs(TABS) do
-        local b = K.Button(tabs, t.title, function() self:ShowTab(t.id) end, { selected = function() return self.tab == t.id end })
-        b:Dock(LEFT)
-        b:SetWide(s(160))
-        b:DockMargin(0, 0, s(6), 0)
-    end
-    self:ShowTab(Menus.lastF4Tab or "jobs")
-end
-
-function PANEL:ShowTab(id)
-    for _, t in ipairs(TABS) do
-        if t.id == id then
-            self.tab = id
-            Menus.lastF4Tab = id
-            self.body:Clear()
-            local ok, err = pcall(t.build, self.body, self)
-            if not ok then Rhylib.Error("menus", "F4 %s: %s", id, tostring(err)) end
-            return
-        end
-    end
-end
-
-function PANEL:Paint(w, h)
-    local s = K.S
-    K.Plate(0, 0, w, h, { ticks = "all" })
-    K.SetCol(C.header)
-    surface.DrawRect(1, 1, w - 2, s(40))
-    K.SetCol(C.accent, 170)
-    surface.DrawRect(0, s(40), w, 1)
-    draw.SimpleText("MENU", K.Font(17, 700), s(14), s(20), C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+local function sub()
     local ply = LocalPlayer()
     local job = (ply.getDarkRPVar and ply:getDarkRPVar("job")) or team.GetName(ply:Team())
-    draw.SimpleText(job .. "   ·   " .. money(myMoney()), K.Font(14, 600), w - s(14), s(20), C.text, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+    return job .. "   ·   " .. money(myMoney())
 end
 
--- F4 closes it, but only a fresh press: the key must have been let go
--- since the menu opened (holding F4 never closes it).
-function PANEL:Think()
-    local down = input.IsKeyDown(KEY_F4)
-    if not down then
-        self.f4Released = true
-    elseif self.f4Released and not self.f4WasDown then
-        self:Remove()
-        return
-    end
-    self.f4WasDown = down
+local function page(id, title, order, fn)
+    Menus.AddPage(id, {
+        title = title,
+        order = order,
+        visible = isDarkRP,
+        build = function(p)
+            Menus.pages[id].sub = sub()
+            fn(p, frame)
+        end,
+    })
 end
-
-vgui.Register("RhylibF4", PANEL, "EditablePanel")
+page("jobs", "Jobs", 1, buildJobs)
+page("shop", "Shop", 2, buildShop)
+page("character", "Character", 6, buildCharacter)
 
 function Menus.ToggleF4()
-    if IsValid(Menus.f4) then
-        Menus.f4:Remove()
+    if not isDarkRP() then return end
+    if IsValid(Menus.pause) then
+        if Menus.pause.pageId == "jobs" then
+            Menus.ClosePause()
+        else
+            Menus.pause:ShowPage("jobs")
+        end
         return
     end
-    if not isDarkRP() then return end
-    Menus.f4 = vgui.Create("RhylibF4")
-    Menus.f4:MakePopup()
+    Menus.lastPage = "jobs"
+    Menus.OpenPause()
+    Menus.f4Held = true   -- the key that opened it must be let go before it can close it
 end
-
-Menus.RegisterCloser("f4", function()
-    if IsValid(Menus.f4) then
-        Menus.f4:Remove()
-        return true
-    end
-    return false
-end)
 
 -- F4 (gm_showspare2): ours, before DarkRP's runs on the server.
 Rhylib.Hook.Add("PlayerBindPress", "menus.f4", function(_, bind, pressed)
@@ -578,16 +526,30 @@ Rhylib.Hook.Add("PlayerBindPress", "menus.f4", function(_, bind, pressed)
     end
 end)
 
--- In case DarkRP opens its menu another way: it can only open ours.
--- Closing is ours alone (F4 press, Esc, the Close button), so nothing
--- from DarkRP can close it when the key is let go.
+-- While the menu is open it has the keyboard, so binds don't fire: watch
+-- the F4 key itself (a fresh press closes it).
+local f4Down = false
+Rhylib.Hook.Add("Think", "menus.f4key", function()
+    if not IsValid(Menus.pause) then
+        f4Down = false
+        return
+    end
+    local down = input.IsKeyDown(KEY_F4)
+    if not down then Menus.f4Held = false end
+    if down and not f4Down and not Menus.f4Held then Menus.ToggleF4() end
+    f4Down = down
+end)
+
+-- In case DarkRP opens its menu another way: it opens ours.
 local function takeOver()
     if not DarkRP then return end
-    local function open() if not IsValid(Menus.f4) then Menus.ToggleF4() end end
+    local function open()
+        if not (IsValid(Menus.pause) and Menus.pause.pageId == "jobs") then Menus.ToggleF4() end
+    end
     DarkRP.openF4Menu = open
     DarkRP.toggleF4Menu = open
     DarkRP.closeF4Menu = function() end
-    DarkRP.getF4MenuPanel = function() return Menus.f4 end
+    DarkRP.getF4MenuPanel = function() return Menus.pause end
 end
 Rhylib.Hook.Add("InitPostEntity", "menus.f4", takeOver)
 Rhylib.Hook.Add("DarkRPFinishedLoading", "menus.f4", takeOver)

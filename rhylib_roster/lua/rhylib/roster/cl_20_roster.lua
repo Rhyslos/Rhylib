@@ -125,20 +125,30 @@ local function build(page)
             r:DockMargin(0, 0, s(8), s(3))
             local canAct = data.manager and m.r < limit and (data.admin or m.id ~= LocalPlayer():SteamID64())
             if canAct then
-                r.right:SetWide(s(330))
-                local function btn(text, fn, opts)
-                    local b = k.Button(r.right, text, fn, opts or { small = true })
-                    b:Dock(RIGHT)
-                    b:SetWide(s(104))
-                    b:DockMargin(s(4), s(6), 0, s(6))
-                    return b
-                end
-                btn("Remove", function()
-                    Derma_Query("Remove " .. m.name .. " from the " .. data.bn .. "?", "Remove member", "Remove", function() act(ACT_REMOVE, m.id) end, "Cancel")
-                end, { small = true, danger = true })
-                btn("Demote", function() act(ACT_RANK, m.id, m.r - 1) end, { small = true, enabled = m.r > 1 })
-                btn("Promote", function() act(ACT_RANK, m.id, m.r + 1) end,
-                    { small = true, accent = true, enabled = m.r + 1 < limit and m.r < nRanks })
+                -- Manage: a small menu with what you're allowed to do.
+                r.right:SetWide(s(120))
+                local b = k.Button(r.right, "Manage ▾", function()
+                    local menu = k.Menu()
+                    local up, down = m.r + 1, m.r - 1
+                    local o = menu:AddOption("Promote to " .. R.RankName(up), function() act(ACT_RANK, m.id, up) end)
+                    if not (up < limit and up <= nRanks) then o:SetEnabled(false) end
+                    o = menu:AddOption("Demote to " .. (down >= 1 and R.RankName(down) or "—"), function() act(ACT_RANK, m.id, down) end)
+                    if down < 1 then o:SetEnabled(false) end
+                    -- Any rank at once (below yours).
+                    local subMenu = menu:AddSubMenu("Set rank")
+                    for i = 1, nRanks do
+                        if i < limit and i ~= m.r then
+                            subMenu:AddOption(R.RankName(i), function() act(ACT_RANK, m.id, i) end)
+                        end
+                    end
+                    menu:AddSpacer()
+                    menu:AddOption("Remove from the " .. data.bn, function()
+                        Derma_Query("Remove " .. m.name .. " from the " .. data.bn .. "?", "Remove member", "Remove", function() act(ACT_REMOVE, m.id) end, "Cancel")
+                    end)
+                    menu:Open()
+                end, { small = true })
+                b:Dock(FILL)
+                b:DockMargin(0, s(6), 0, s(6))
             else
                 r.right:SetWide(0)
             end

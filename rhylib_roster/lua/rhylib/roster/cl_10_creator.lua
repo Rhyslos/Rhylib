@@ -36,11 +36,11 @@ local function open()
     intro:Dock(TOP)
     intro:DockMargin(0, 0, 0, s(12))
 
-    local numRow = k.Row(frame, "Clone number", "4 digits, never two zeros in a row")
+    local numRow = k.Row(frame, "Clone number", "4 digits, e.g. 0411 or 2187")
     numRow:Dock(TOP)
     numRow:DockMargin(0, 0, 0, s(6))
     numRow.right:SetWide(s(140))
-    local num = k.TextEntry(numRow.right, "1234")
+    local num = k.TextEntry(numRow.right, "No 00 in a row")
     num:Dock(FILL)
     num:SetNumeric(true)
 
