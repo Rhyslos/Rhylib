@@ -86,6 +86,7 @@ function D.SendTerminal(ply, ent)
             net.WriteString(e.ti or "")
             net.WriteString(e.pn or "")
             net.WriteUInt(e.t or 0, 32)
+            net.WriteBool(e.mp or false)
         end
         -- Ban list for moderators.
         local bans = {}
@@ -121,6 +122,9 @@ local function recv(name, h, limits)
         end)
     end, limits or { rate = 4, burst = 6 })
 end
+
+-- For the board, search and stats files.
+D.TermRecv, D.TermAccess, D.TermNear, D.IsMedTerm, D.TermKey = recv, access, near, isMed, keyOf
 
 local function findEntry(book, id)
     for i, e in ipairs(book.list) do

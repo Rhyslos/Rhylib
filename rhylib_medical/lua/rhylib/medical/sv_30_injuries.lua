@@ -300,6 +300,7 @@ Rhylib.Net.Receive("med.treat", function(ply)
         p.dmg, p.bleed, p.frac, p.burn = 0, 0, false, 0
         patient:SetHealth(math.min(patient:GetMaxHealth(), patient:Health() + cfg("firstAidLimbHealth")))
         Med.Note(ply, name .. " treated")
+        hook.Run("Rhylib.PlayerHealed", patient, ply)
     else
         -- Troopers can only stop bleeding; medics also heal damage and burns.
         local canBleed = p.bleed > 0
@@ -320,6 +321,7 @@ Rhylib.Net.Receive("med.treat", function(ply)
             patient:SetHealth(math.min(patient:GetMaxHealth(), patient:Health() + cfg("medkitHeal")))
         end
         Med.Note(ply, name .. (medic and " patched up" or ": bleeding stopped"))
+        hook.Run("Rhylib.PlayerHealed", patient, ply)
     end
     patient:EmitSound("items/medshot4.wav", 60)
     ply.rhylibTreatNext = CurTime() + cfg("treatCooldown")

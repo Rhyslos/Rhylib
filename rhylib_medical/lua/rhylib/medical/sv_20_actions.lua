@@ -199,8 +199,10 @@ local function finishAct(helper, a)
         Med.Revive(t, Med.Cfg("firstAidReviveHealth"), helper)
     elseif a.kind == Med.A_FA_HEAL then
         t:SetHealth(math.max(t:Health(), t:GetMaxHealth()))
+        hook.Run("Rhylib.PlayerHealed", t, helper)
     elseif a.kind == Med.A_MEDKIT then
         t:SetHealth(math.min(t:GetMaxHealth(), t:Health() + Med.Cfg("medkitHeal")))
+        hook.Run("Rhylib.PlayerHealed", t, helper)
     end
 end
 
