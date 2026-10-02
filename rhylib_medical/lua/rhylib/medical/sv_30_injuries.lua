@@ -202,6 +202,18 @@ end, { rate = 4, burst = 4 })
 -- Bleeding and recovery (once a second, injured players only)
 --------------------------------------------------------------------------
 
+-- Health lost per second from bleeding right now.
+function Med.BleedRate(ply)
+    local t = inj[ply]
+    if not t then return 0 end
+    local r = 0
+    for _, l in ipairs(Med.LIMBS) do
+        local b = t[l].bleed
+        if b == 1 then r = r + cfg("lightBleed") elseif b == 2 then r = r + cfg("heavyBleed") end
+    end
+    return r
+end
+
 local function bleedDamage(ply, amount)
     local hp = ply:Health()
     if hp - amount >= 1 then
@@ -238,8 +250,10 @@ timer.Create("Rhylib.Medical.Injuries", 1, 0, function()
                     p.dmg = math.max(0, p.dmg - rec)
                 end
             end
-            -- Bleeding while down is the bleed-out timer's job.
-            if loss > 0 and not ply.rhylibDown then
+            -- (a treatment whose helper is gone no longer counts)
+            if ply.rhylibTreated and not IsValid(ply:GetNW2Entity("rhylib_healBy")) then ply.rhylibTreated = nil end
+            -- Bleeding while down is the bleed-out timer's job; none while being treated.
+            if loss > 0 and not ply.rhylibDown and not ply.rhylibTreated then
                 -- Keep the fraction so slow bleeds still add up.
                 ply.rhylibBleedAcc = (ply.rhylibBleedAcc or 0) + loss
                 local whole = math.floor(ply.rhylibBleedAcc)
@@ -259,7 +273,53 @@ end)
 
 Med.TREAT_FIRSTAID, Med.TREAT_MEDKIT = 0, 1
 
--- treater drags a kit onto patient's body part (patient may be treater).
+local function nothingWrong(p)
+    return not p or (p.dmg <= 0 and p.bleed == 0 and not p.frac and p.burn <= 0)
+end
+
+-- The effect of a part treatment, when its timer ends (sv_20_actions.lua).
+function Med.TreatPart(helper, patient, limb, kit)
+    local t = getState(patient)
+    local p = t[limb]
+    local name = Med.LIMB_NAMES[limb] or "Part"
+    local medic = Med.IsMedic(helper)
+    -- Nothing left to do by now (healed meanwhile): no kit used.
+    local hurtHP = medic and patient:Health() < patient:GetMaxHealth()
+    if nothingWrong(p) and not hurtHP then
+        Med.Note(helper, name .. ": nothing left to treat")
+        Med.MarkInjuries(patient)
+        return
+    end
+    if kit == Med.MEDKIT and p.bleed == 0 and not (medic and (p.dmg > 0 or p.burn > 0 or hurtHP)) then
+        Med.Note(helper, name .. ": nothing left to treat")
+        return
+    end
+    if kit == Med.FIRST_AID then
+        -- Fixes the part completely; heals some health from the charge.
+        local want = math.min(cfg("firstAidLimbHealth"), patient:GetMaxHealth() - patient:Health())
+        local have = Med.KitCharge(helper)
+        local hp = math.max(0, math.min(want, have))
+        Med.SpendCharge(helper, math.min(have, math.max(hp, cfg("firstAidMinCost"))))
+        p.dmg, p.bleed, p.frac, p.burn = 0, 0, false, 0
+        patient:SetHealth(math.min(patient:GetMaxHealth(), patient:Health() + math.floor(hp + 0.5)))
+        Med.Note(helper, name .. " treated")
+    else
+        if not Med.Consume(helper, Med.MEDKIT) then return end
+        p.bleed = 0
+        if medic then
+            local r = cfg("medkitLimbRepair")
+            p.dmg = math.max(0, p.dmg - r)
+            p.burn = math.max(0, p.burn - r)
+            patient:SetHealth(math.min(patient:GetMaxHealth(), patient:Health() + cfg("medkitHealMedic")))
+        end
+        Med.Note(helper, name .. (medic and " patched up" or ": bleeding stopped"))
+    end
+    hook.Run("Rhylib.PlayerHealed", patient, helper)
+    Med.MarkInjuries(patient)
+end
+
+-- treater drags a kit onto patient's body part (patient may be treater):
+-- checks what can be done, then starts a timed treatment.
 Rhylib.Net.Receive("med.treat", function(ply)
     local patient = net.ReadEntity()
     local limb = Med.LIMBS[net.ReadUInt(3)]
@@ -273,57 +333,26 @@ Rhylib.Net.Receive("med.treat", function(ply)
             return
         end
     end
-    if (ply.rhylibTreatNext or 0) > CurTime() then return end
+    if Med.acts[ply] then return end
     local t = inj[patient]
     local p = t and t[limb]
     local name = Med.LIMB_NAMES[limb]
     local medic = Med.IsMedic(ply)
+    local kit = kind == Med.TREAT_FIRSTAID and Med.FIRST_AID or Med.MEDKIT
     -- Missing health can be treated on any part (limbs heal on their own, health doesn't).
     local hurtHP = medic and patient:Health() < patient:GetMaxHealth()
-    if not hurtHP and (not p or (p.dmg <= 0 and p.bleed == 0 and not p.frac and p.burn <= 0)) then
+    if not hurtHP and nothingWrong(p) then
         Med.Note(ply, name .. ": nothing to treat")
         return
     end
-    if not p then
-        p = { dmg = 0, bleed = 0, frac = false, burn = 0 }
-    end
-
-    if kind == Med.TREAT_FIRSTAID then
-        if not medic then
-            Med.Note(ply, "Only medics can use a first aid kit")
-            return
-        end
-        if not Med.Consume(ply, Med.FIRST_AID) then
-            Med.Note(ply, "You have no first aid kit")
-            return
-        end
-        p.dmg, p.bleed, p.frac, p.burn = 0, 0, false, 0
-        patient:SetHealth(math.min(patient:GetMaxHealth(), patient:Health() + cfg("firstAidLimbHealth")))
-        Med.Note(ply, name .. " treated")
-        hook.Run("Rhylib.PlayerHealed", patient, ply)
-    else
+    if kit == Med.MEDKIT then
         -- Troopers can only stop bleeding; medics also heal damage and burns.
-        local canBleed = p.bleed > 0
-        local canHeal = medic and (p.dmg > 0 or p.burn > 0 or hurtHP)
+        local canBleed = p and p.bleed > 0
+        local canHeal = medic and ((p and (p.dmg > 0 or p.burn > 0)) or hurtHP)
         if not canBleed and not canHeal then
             Med.Note(ply, medic and "A medkit can't set bones; use a first aid kit" or "Only medics can treat that (medkits stop bleeding)")
             return
         end
-        if not Med.Consume(ply, Med.MEDKIT) then
-            Med.Note(ply, "You have no medkit")
-            return
-        end
-        p.bleed = 0
-        if medic then
-            local r = cfg("medkitLimbRepair")
-            p.dmg = math.max(0, p.dmg - r)
-            p.burn = math.max(0, p.burn - r)
-            patient:SetHealth(math.min(patient:GetMaxHealth(), patient:Health() + cfg("medkitHeal")))
-        end
-        Med.Note(ply, name .. (medic and " patched up" or ": bleeding stopped"))
-        hook.Run("Rhylib.PlayerHealed", patient, ply)
     end
-    patient:EmitSound("items/medshot4.wav", 60)
-    ply.rhylibTreatNext = CurTime() + cfg("treatCooldown")
-    Med.MarkInjuries(patient)
+    Med.Start(ply, Med.A_TREAT, patient, { kit = kit, limb = limb })
 end, { rate = 4, burst = 4 })

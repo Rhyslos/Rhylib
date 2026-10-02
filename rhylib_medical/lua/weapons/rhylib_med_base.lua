@@ -56,7 +56,7 @@ if CLIENT then
     function SWEP:DrawHUD()
         local s = ScrH() / 1080
         local text = self.Hint
-        if self.GetUses then text = text .. "   ·   " .. self:GetUses() .. " uses left" end
+        if self.ChargeText then text = text .. "   ·   " .. self:ChargeText() end
         draw.SimpleText(text, Rhylib.UI.Font(14, 500), ScrW() * 0.5, ScrH() * 0.5 + 60 * s, Rhylib.UI.Colors.textDim, TEXT_ALIGN_CENTER, TEXT_ALIGN_TOP)
     end
 end

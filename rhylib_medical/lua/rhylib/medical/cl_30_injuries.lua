@@ -99,7 +99,7 @@ end
 -- Which treatment an inventory item is, or nil.
 local function treatKind(inst)
     if not inst then return nil end
-    if inst.id == Med.FIRST_AID then return Med.TREAT_FIRSTAID end
+    if inst.id == Med.FIRST_AID then return Med.IsMedic(LocalPlayer()) and Med.TREAT_FIRSTAID or nil end
     if inst.id == Med.MEDKIT then return Med.TREAT_MEDKIT end
 end
 Med.TREAT_FIRSTAID, Med.TREAT_MEDKIT = 0, 1
@@ -262,7 +262,7 @@ function PANEL:Paint(w, h)
     draw.SimpleText("TREATMENT", font(12, 700), ex, hy, COL_LABEL, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
     draw.SimpleText("Drag a kit from the right onto a body part.", font(13), ex, hy + s(22), UI.Colors.textDim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
     if medic then
-        draw.SimpleText("First aid kit: fixes the part completely.", font(13), ex, hy + s(42), UI.Colors.textDim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        draw.SimpleText("First aid kit: fixes the part completely (uses charge).", font(13), ex, hy + s(42), UI.Colors.textDim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         draw.SimpleText("Medkit: stops bleeding, heals damage and burns, not bones.", font(13), ex, hy + s(62), UI.Colors.textDim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
     else
         draw.SimpleText("Medkit: stops bleeding.", font(13), ex, hy + s(42), UI.Colors.textDim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
@@ -292,7 +292,11 @@ function PANEL:Paint(w, h)
         local sub = inst.count and inst.count > 1 and ("x" .. inst.count) or ""
         if def and def.fill and def.rounds then
             sub = math.floor((inst.data and inst.data.fill or 1) * def.rounds + 0.5) .. " / " .. def.rounds .. " " .. (def.unit or "")
+        elseif def and def.fill then
+            sub = math.ceil((inst.data and inst.data.fill or 1) * 100) .. "% charge"
         end
+        if inst.id == Med.FIRST_AID and not usable then sub = "medics only" end
+        if def and def.desc and not usable then sub = "no effect yet" end
         draw.SimpleText(name, font(14, usable and 600 or 400), lx + s(12), ry + rh * 0.5, usable and UI.Colors.text or UI.Colors.textDim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         draw.SimpleText(sub, font(12), lx + lw - s(10), ry + rh * 0.5, UI.Colors.textDim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
     end

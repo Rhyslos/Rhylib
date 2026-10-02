@@ -140,6 +140,21 @@ local function drawAction(ply, a, t, st, en)
     text("Move or press E to stop", 12, W / 2, y + S(60), C.textDim)
 end
 
+-- Someone is treating you: who, and how long it takes.
+local function drawPatient(ply)
+    local by = ply:GetNW2Entity("rhylib_healBy")
+    if not IsValid(by) or by == ply then return false end
+    local a, t, st, en = Med.Action(by)
+    if a == 0 or t ~= ply then return false end
+    local W, H = ScrW(), ScrH()
+    local w, h = S(320), S(62)
+    local x, y = math.floor((W - w) / 2), math.floor(H * 0.58)
+    plate(x, y, w, h, "You are being treated", C.good)
+    text((Med.ActName[a] or "Treating") .. " · " .. by:Nick(), 15, W / 2, y + S(30), C.text)
+    bar(x + S(16), y + S(44), w - S(32), S(4), (CurTime() - st) / math.max(0.01, en - st), C.good)
+    return true
+end
+
 local function drawPrompt(ply)
     local t = Med.FindDowned(ply, Med.clientDown)
     if not t then return end
@@ -187,6 +202,8 @@ Rhylib.Hook.Add("HUDPaint", "medical.hud", function()
         local a, t, st, en = Med.Action(ply)
         if a ~= 0 then
             drawAction(ply, a, t, st, en)
+        elseif drawPatient(ply) then
+            -- (being treated)
         elseif Med.Dragging(ply) then
             text("Dragging " .. Med.Dragging(ply):Nick() .. " · release to drop", 15, ScrW() / 2, ScrH() * 0.5 + S(50), C.text)
         else
@@ -237,7 +254,7 @@ local function openMenu(ply, t)
             any = true
         end
         if ply:HasWeapon(Med.FIRST_AID) then
-            m:AddOption("Revive · first aid kit (slow)", function() if IsValid(t) then send(Med.A_FA_REVIVE, t) end end)
+            m:AddOption("Revive · first aid kit (slow, uses charge)", function() if IsValid(t) then send(Med.A_FA_REVIVE, t) end end)
             any = true
         end
         if not ply:HasWeapon(Med.REVIVE_KIT) and not ply:HasWeapon(Med.FIRST_AID) then

@@ -17,7 +17,10 @@
 
     Weapons become items automatically if their SWEP table sets InvW/InvH.
     Optional SWEP fields: InvStack (stack size, e.g. medical kits),
-    InvUses (uses when full; stored as fill), InvCategory, InvWeight.
+    InvUses (uses when full; stored as fill), InvCharge (a 0-1 charge
+    shown as %), InvCategory, InvWeight.
+    Per-player stack size: Items.StackFor(def, ply) (hook Rhylib.ItemStack
+    can lower it, e.g. medkits 3 for troopers, 5 for medics).
 
     An item instance:
         { uid, c, id, x, y, rot, count, data }     -- c = container id (see below)
@@ -110,7 +113,7 @@ function Items.RegisterWeapons()
                     large = full.InvLarge,
                     weight = full.InvWeight,
                     stack = full.InvStack,
-                    fill = full.InvUses and true or nil,
+                    fill = (full.InvUses or full.InvCharge) and true or nil,
                     rounds = full.InvUses,
                     unit = full.InvUses and "uses" or nil,
                 })
@@ -233,12 +236,22 @@ function Items.FindSpot(c, id)
     end
 end
 
--- If dropping `inst` with its top-left on x, y should merge into a stack, return that stack.
-function Items.MergeTarget(items, inst, x, y)
+-- Stack size in this player's inventory (def.stack, or less if the
+-- Rhylib.ItemStack hook says so).
+function Items.StackFor(def, ply)
+    if not ply then return def.stack end
+    local r = hook.Run("Rhylib.ItemStack", def, ply)
+    return isnumber(r) and math.Clamp(math.floor(r), 1, def.stack) or def.stack
+end
+
+-- If dropping `inst` with its top-left on x, y should merge into a stack,
+-- return that stack. ply: a player's container (their stack size applies).
+function Items.MergeTarget(items, inst, x, y, ply)
     local def = Items.defs[inst.id]
     if not def or def.stack <= 1 or not Items.IsFull(inst) then return nil end
+    local cap = Items.StackFor(def, ply)
     local target = Items.At(items, x, y, inst.uid)
-    if target and target.id == inst.id and target.count < def.stack and Items.IsFull(target)
+    if target and target.id == inst.id and target.count < cap and Items.IsFull(target)
         and Items.SameIssued(target, inst) then
         return target
     end

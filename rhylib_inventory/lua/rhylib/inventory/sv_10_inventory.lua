@@ -334,9 +334,10 @@ function Inv.CanAdd(ply, id)
     local def = Items.defs[id]
     if not def then return false end
     if Items.Unique(def) and Inv.Has(ply, id) then return false end
-    if def.stack > 1 then
+    local cap = Items.StackFor(def, ply)
+    if cap > 1 then
         for _, o in pairs(st.byUid) do
-            if o.id == id and o.c ~= SLOT_BACK and o.count < def.stack and Items.IsFull(o) then return true end
+            if o.id == id and o.c ~= SLOT_BACK and o.count < cap and Items.IsFull(o) then return true end
         end
     end
     return findSpot(st, id) ~= nil
@@ -351,13 +352,14 @@ function Inv.AddItem(ply, id, count, data)
     data = data or {}
     if Items.Unique(def) and Inv.Has(ply, id) then return count end
 
-    local stackable = def.stack > 1 and (not def.fill or (data.fill or 1) >= 1)
+    local cap = Items.StackFor(def, ply)
+    local stackable = cap > 1 and (not def.fill or (data.fill or 1) >= 1)
     if stackable then
         local probe = { data = data }
         for _, o in pairs(st.byUid) do
             if count <= 0 then break end
-            if o.id == id and o.count < def.stack and Items.IsFull(o) and Items.SameIssued(o, probe) then
-                local add = math.min(def.stack - o.count, count)
+            if o.id == id and o.count < cap and Items.IsFull(o) and Items.SameIssued(o, probe) then
+                local add = math.min(cap - o.count, count)
                 o.count = o.count + add
                 count = count - add
                 update(ply, st, o)
@@ -368,7 +370,7 @@ function Inv.AddItem(ply, id, count, data)
     while count > 0 do
         local cid, x, y, rot = findSpot(st, id)
         if not cid then break end
-        local n = stackable and math.min(def.stack, count) or 1
+        local n = stackable and math.min(cap, count) or 1
         local inst = { uid = nextUid(st), id = id, count = n, data = table.Copy(data) }
         Inv.AutoHotbar(st, inst)
         place(ply, st, inst, cid, x, y, rot)
@@ -506,7 +508,7 @@ end
 -- Moves one item off a stack to x, y (ctrl + drag).
 local function moveOne(ply, st, inst, cid, x, y, rot)
     local c = st.cont[cid]
-    local target = c and cid ~= SLOT_BACK and Items.MergeTarget(c.items, inst, x, y)
+    local target = c and cid ~= SLOT_BACK and Items.MergeTarget(c.items, inst, x, y, ply)
     if target and target ~= inst then
         target.count = target.count + 1
         inst.count = inst.count - 1
@@ -546,10 +548,10 @@ function Inv.Move(ply, uid, cid, x, y, rot, single)
     end
 
     local c = st.cont[cid]
-    local target = c and cid ~= SLOT_BACK and Items.MergeTarget(c.items, inst, x, y)
+    local target = c and cid ~= SLOT_BACK and Items.MergeTarget(c.items, inst, x, y, ply)
     if target then
         local def = Items.defs[inst.id]
-        local add = math.min(def.stack - target.count, inst.count)
+        local add = math.min(Items.StackFor(def, ply) - target.count, inst.count)
         target.count = target.count + add
         inst.count = inst.count - add
         update(ply, st, target)
@@ -630,12 +632,13 @@ local function addInto(ply, st, id, count, data, cid)
     local c = st.cont[cid]
     if count <= 0 or not def then return end
     local full = not def.fill or (data.fill or 1) >= 1
-    if c and full and def.stack > 1 then
+    local cap = Items.StackFor(def, ply)
+    if c and full and cap > 1 then
         local probe = { data = data }
         for _, o in pairs(c.items) do
             if count <= 0 then break end
-            if o.id == id and o.count < def.stack and Items.IsFull(o) and Items.SameIssued(o, probe) then
-                local add = math.min(def.stack - o.count, count)
+            if o.id == id and o.count < cap and Items.IsFull(o) and Items.SameIssued(o, probe) then
+                local add = math.min(cap - o.count, count)
                 o.count = o.count + add
                 count = count - add
                 update(ply, st, o)
@@ -645,7 +648,7 @@ local function addInto(ply, st, id, count, data, cid)
     while count > 0 and c do
         local x, y, rot = Items.FindSpot(c, id)
         if not x then break end
-        local n = full and math.min(def.stack, count) or 1
+        local n = full and math.min(cap, count) or 1
         place(ply, st, { uid = nextUid(st), id = id, count = n, data = table.Copy(data) }, cid, x, y, rot)
         count = count - n
     end
@@ -851,7 +854,7 @@ Rhylib.Hook.Add("PlayerCanPickupWeapon", "inventory.pickup", function(ply, wep)
     -- Stacking kits from a job loadout only top up to one stack, so
     -- respawning (the inventory survives death) doesn't pile them up.
     if not Items.Unique(def) and ply.rhylibSpawnTick and engine.TickCount() - ply.rhylibSpawnTick <= 2
-        and Inv.Count(ply, class) >= def.stack then
+        and Inv.Count(ply, class) >= Items.StackFor(def, ply) then
         wep.rhylibClaimed = true
         timer.Simple(0, function() if IsValid(wep) then wep:Remove() end end)
         return false

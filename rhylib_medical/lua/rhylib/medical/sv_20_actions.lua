@@ -1,16 +1,28 @@
 --[[
-    Medical actions (server): stabilise, revive and heal.
+    Medical actions (server): stabilise, revive, heal and treat a part.
 
     Every action is one row in Med.acts[helper] and four NW2 values on the
     helper (sh_00_config.lua), set when it starts and cleared when it ends.
+    The patient gets rhylib_healBy (the helper) so their screen shows
+    "being treated", and doesn't bleed while it runs (ply.rhylibTreated).
     The 0.1 s loop in sv_10_downed.lua checks them: helper and target still
-    valid and close, kit still carried; at the end time the kit is used up
-    and the effect applied. Stabilising has no end; it pauses the target's
-    bleed-out until the helper stops.
+    valid and close, kit still carried; at the end time the kit is used and
+    the effect applied. Stabilising has no end; it pauses the target's
+    bleed-out until the helper stops. Reviving pauses it too.
+
+    Kits:
+      medkit         one per use. Heals medkitHeal (medic: medkitHealMedic)
+                     and stops bleeding (trooper: the worst part; medic: all).
+                     On one part (H menu): stops its bleeding (medics also
+                     repair damage and burns).
+      first aid kit  medics. Charge = health it can still heal (fill x
+                     firstAidCharge); each use costs the health it heals
+                     (at least firstAidMinCost). Empty kits are used up.
+      revive kit     medics. One per revive.
 
     Started by the kit weapons (left click: someone else, right click:
-    yourself, which takes selfMult times longer) or by the E menu on a
-    downed player (med.act). The client only asks; everything is checked here.
+    yourself, selfMult times longer), the E menu on a downed player
+    (med.act) or the H menu (med.treat in sv_30_injuries.lua).
 ]]
 
 local Med = Rhylib.Medical
@@ -30,54 +42,86 @@ function Med.Has(ply, class)
     return ply:HasWeapon(class)
 end
 
--- Uses in a full medkit: the item's (from the weapon file), else config.
-local function medkitMax()
-    local def = Rhylib.Items and Rhylib.Items.Get(Med.MEDKIT)
-    local n = def and def.rounds or tonumber(Med.Cfg("medkitUses")) or 5
-    return math.max(1, math.floor(n))
-end
-
--- Uses up one kit (or one medkit use). Returns false if there was none.
+-- Uses up one kit (medkit, revive kit). Returns false if there was none.
 function Med.Consume(ply, class)
     local Inv = inventory()
-    local wep = ply:GetWeapon(class)
     if not Inv then
-        if not IsValid(wep) then return false end
-        if class == Med.MEDKIT and wep.SetUses then
-            local left = wep:GetUses() - 1
-            wep:SetUses(left)
-            if left > 0 then return true end
-        end
+        if not ply:HasWeapon(class) then return false end
         ply:StripWeapon(class)
         return true
     end
-
     local st = Inv.Get(ply)
-    local pick
     for _, o in pairs(st.byUid) do
         if o.id == class then
-            -- Medkits: use the emptiest first, so full ones stay full.
+            Inv.Remove(ply, o.uid, 1)
+            return true
+        end
+    end
+    return false
+end
+
+-- First aid kits: the one to use next (the emptiest), and its charge in health.
+local function chargeMax() return math.max(1, Med.Cfg("firstAidCharge")) end
+
+local function nextKit(ply)
+    local Inv = inventory()
+    if not Inv then return nil end
+    local pick
+    for _, o in pairs(Inv.Get(ply).byUid) do
+        if o.id == Med.FIRST_AID then
             local f = o.data and o.data.fill or 1
             if not pick or f < (pick.data and pick.data.fill or 1) then pick = o end
         end
     end
-    if not pick then return false end
+    return pick
+end
 
-    if class == Med.MEDKIT then
-        local max = medkitMax()
-        local left = math.floor((pick.data and pick.data.fill or 1) * max + 0.5) - 1
-        if left > 0 then
-            pick.data = pick.data or {}
-            pick.data.fill = left / max
-            Inv.Internal.update(ply, st, pick)
-            if IsValid(wep) and wep.SetUses then wep:SetUses(left) end
-            return true
-        end
-        Inv.Remove(ply, pick.uid)
-        return true
+-- Health the next first aid kit can still heal.
+function Med.KitCharge(ply)
+    local Inv = inventory()
+    if not Inv then
+        local w = ply:GetWeapon(Med.FIRST_AID)
+        return IsValid(w) and (w.rhylibCharge or chargeMax()) or 0
     end
-    Inv.Remove(ply, pick.uid, 1)
-    return true
+    local o = nextKit(ply)
+    return o and (o.data and o.data.fill or 1) * chargeMax() or 0
+end
+
+-- Spend charge from the next first aid kit (an empty kit is used up).
+function Med.SpendCharge(ply, amount)
+    local max = chargeMax()
+    local Inv = inventory()
+    if not Inv then
+        local w = ply:GetWeapon(Med.FIRST_AID)
+        if not IsValid(w) then return end
+        w.rhylibCharge = (w.rhylibCharge or max) - amount
+        if w.SetCharge then w:SetCharge(math.max(0, w.rhylibCharge / max)) end
+        if w.rhylibCharge < 1 then ply:StripWeapon(Med.FIRST_AID) end
+        return
+    end
+    local o = nextKit(ply)
+    if not o then return end
+    local left = (o.data and o.data.fill or 1) * max - amount
+    if left < 1 then
+        Inv.Remove(ply, o.uid)
+    else
+        o.data = o.data or {}
+        o.data.fill = left / max
+        Inv.Internal.update(ply, Inv.Get(ply), o)
+    end
+    -- The weapon shows the kit that's next.
+    local w = ply:GetWeapon(Med.FIRST_AID)
+    if IsValid(w) and w.SetCharge then
+        local n = nextKit(ply)
+        w:SetCharge(n and (n.data and n.data.fill or 1) or 0)
+    end
+end
+
+-- Health a first aid treatment heals (at most `want`), and what it costs.
+local function kitHeal(ply, want)
+    local have = Med.KitCharge(ply)
+    local heal = math.max(0, math.min(want, have))
+    return heal, math.min(have, math.max(heal, Med.Cfg("firstAidMinCost")))
 end
 
 --------------------------------------------------------------------------
@@ -91,6 +135,13 @@ local function setAct(helper, kind, target, startT, endT)
     helper:SetNW2Float("rhylib_medE", endT or 0)
 end
 
+-- The patient's side: "being treated" on their screen, no bleeding.
+local function setPatient(target, helper)
+    if not IsValid(target) then return end
+    target.rhylibTreated = helper and true or nil
+    target:SetNW2Entity("rhylib_healBy", helper or NULL)
+end
+
 local KIT = {
     [Med.A_REVIVE] = Med.REVIVE_KIT,
     [Med.A_FA_REVIVE] = Med.FIRST_AID,
@@ -98,28 +149,45 @@ local KIT = {
     [Med.A_MEDKIT] = Med.MEDKIT,
 }
 
-local function duration(kind, self)
+local function kitOf(a) return a.kit or KIT[a.kind] end
+
+local function duration(kind, self, kit)
     local mult = self and math.max(1, tonumber(Med.Cfg("selfMult")) or 2) or 1
     if kind == Med.A_REVIVE then return Med.Cfg("reviveKitTime") end
     if kind == Med.A_FA_REVIVE then return Med.Cfg("firstAidReviveTime") end
     if kind == Med.A_FA_HEAL then return Med.Cfg("firstAidHealTime") * mult end
     if kind == Med.A_MEDKIT then return Med.Cfg("medkitHealTime") * mult end
+    if kind == Med.A_TREAT then
+        return (kit == Med.FIRST_AID and Med.Cfg("firstAidLimbTime") or Med.Cfg("medkitLimbTime")) * mult
+    end
     return 0
 end
 
--- Why this can't start, or nil if it can.
-local function refuse(helper, kind, target)
+local function bleeding(target)
+    local t = Med.inj and Med.inj[target]
+    if not t then return false end
+    for _, l in ipairs(Med.LIMBS) do
+        if t[l].bleed > 0 then return true end
+    end
+    return false
+end
+
+-- Why this can't start, or nil if it can. opts: { kit, limb } for A_TREAT.
+local function refuse(helper, kind, target, opts)
     if not helper:Alive() or helper.rhylibDown then return "" end
     if Med.acts[helper] then return "" end
     if not (IsValid(target) and target:IsPlayer() and target:Alive()) then return "" end
     local self = target == helper
     local down = target.rhylibDown
+    local medic = Med.IsMedic(helper)
 
     if kind == Med.A_STAB or kind == Med.A_REVIVE or kind == Med.A_FA_REVIVE then
         if self or not down then return "" end
-    elseif kind == Med.A_FA_HEAL or kind == Med.A_MEDKIT then
-        if down then return kind == Med.A_MEDKIT and "Medkits can't revive" or "" end
-        if target:Health() >= target:GetMaxHealth() then return (self and "You're" or target:Nick() .. " is") .. " at full health" end
+    elseif kind == Med.A_FA_HEAL or kind == Med.A_MEDKIT or kind == Med.A_TREAT then
+        if down then return "Revive them first" end
+        if kind ~= Med.A_TREAT and target:Health() >= target:GetMaxHealth() and not bleeding(target) then
+            return (self and "You're" or target:Nick() .. " is") .. " at full health"
+        end
     else
         return ""
     end
@@ -137,18 +205,22 @@ local function refuse(helper, kind, target)
             return (h:Nick() or "Someone") .. " is already treating them"
         end
     end
-    local medicNeeded = kind ~= Med.A_MEDKIT or Med.Cfg("medkitMedicOnly")
-    if medicNeeded and not Med.IsMedic(helper) then return "Only medics can do that" end
-    local kit = KIT[kind]
+    local kit = kind == Med.A_TREAT and opts and opts.kit or KIT[kind]
+    if kit == Med.MEDKIT then
+        if Med.Cfg("medkitMedicOnly") and not medic then return "Only medics can use medkits" end
+    elseif not medic then
+        return kit == Med.FIRST_AID and "Only medics can use a first aid kit" or "Only medics can do that"
+    end
     if not Med.Has(helper, kit) then
         if kit == Med.REVIVE_KIT then return "You have no revive kit" end
         if kit == Med.FIRST_AID then return "You have no first aid kit" end
         return "You have no medkit"
     end
+    if kit == Med.FIRST_AID and Med.KitCharge(helper) < 1 then return "Your first aid kit is empty" end
 end
 
-function Med.Start(helper, kind, target)
-    local why = refuse(helper, kind, target)
+function Med.Start(helper, kind, target, opts)
+    local why = refuse(helper, kind, target, opts)
     if why then
         if why ~= "" then Med.Note(helper, why) end
         return false
@@ -164,10 +236,32 @@ function Med.Start(helper, kind, target)
         return true
     end
 
-    local endT = now + duration(kind, target == helper)
-    Med.acts[helper] = { kind = kind, target = target, endTime = endT }
-    setAct(helper, kind, target, now, endT)
+    local a = { kind = kind, target = target, kit = opts and opts.kit, limb = opts and opts.limb, started = now }
+    a.endTime = now + duration(kind, target == helper, a.kit)
+    -- Reviving pauses the bleed-out (unless someone already stabilises).
+    if (kind == Med.A_REVIVE or kind == Med.A_FA_REVIVE) and not Med.StabilisedBy(target) then
+        target:SetNW2Float("rhylib_downLeft", Med.TimeLeft(target))
+        target:SetNW2Entity("rhylib_stabBy", helper)
+        a.paused = true
+    end
+    Med.acts[helper] = a
+    setAct(helper, kind, target, now, a.endTime)
+    setPatient(target, helper)
     return true
+end
+
+-- Resume a downed player's bleed-out (or hand the pause to another helper).
+local function resume(t, helper)
+    if not IsValid(t) or t:GetNW2Entity("rhylib_stabBy") ~= helper then return end
+    for h, o in pairs(Med.acts) do
+        if h ~= helper and o.target == t and (o.kind == Med.A_REVIVE or o.kind == Med.A_FA_REVIVE or o.kind == Med.A_STAB) then
+            t:SetNW2Entity("rhylib_stabBy", h)
+            o.paused = true
+            return
+        end
+    end
+    t:SetNW2Float("rhylib_downEnd", CurTime() + t:GetNW2Float("rhylib_downLeft", 0))
+    t:SetNW2Entity("rhylib_stabBy", NULL)
 end
 
 function Med.Cancel(helper)
@@ -175,35 +269,80 @@ function Med.Cancel(helper)
     if not a then return end
     Med.acts[helper] = nil
     local t = a.target
-    if a.kind == Med.A_STAB and IsValid(t) and t:GetNW2Entity("rhylib_stabBy") == helper then
-        t:SetNW2Float("rhylib_downEnd", CurTime() + t:GetNW2Float("rhylib_downLeft", 0))
-        t:SetNW2Entity("rhylib_stabBy", NULL)
+    if a.kind == Med.A_STAB or a.paused then resume(t, helper) end
+    if a.kind ~= Med.A_STAB and IsValid(t) and t:GetNW2Entity("rhylib_healBy") == helper then
+        setPatient(t, nil)
+        -- Stopped early: the bleeding that was held off still happens
+        -- (so starting and stopping a treatment can't stop bleeding).
+        if a.started and Med.BleedRate and not t.rhylibDown then
+            t.rhylibBleedAcc = (t.rhylibBleedAcc or 0) + Med.BleedRate(t) * (CurTime() - a.started)
+        end
     end
     if IsValid(helper) then setAct(helper, Med.A_NONE) end
 end
 
 --------------------------------------------------------------------------
--- Checks and finishing (from the loop in sv_10_downed.lua)
+-- Effects
 --------------------------------------------------------------------------
+
+local function heal(t, amount)
+    t:SetHealth(math.min(t:GetMaxHealth(), t:Health() + math.floor(amount + 0.5)))
+end
+
+-- Stop bleeding: the worst part (or every part).
+local function stopBleeding(t, all)
+    local inj = Med.inj and Med.inj[t]
+    if not inj then return end
+    local worst
+    for _, l in ipairs(Med.LIMBS) do
+        local p = inj[l]
+        if all then
+            p.bleed = 0
+        elseif p.bleed > 0 and (not worst or p.bleed > inj[worst].bleed) then
+            worst = l
+        end
+    end
+    if worst then inj[worst].bleed = 0 end
+    Med.MarkInjuries(t)
+end
 
 local function finishAct(helper, a)
     Med.acts[helper] = nil
     setAct(helper, Med.A_NONE)
     local t = a.target
-    local kit = KIT[a.kind]
-    if not Med.Consume(helper, kit) then return end
+    setPatient(t, nil)
+    local medic = Med.IsMedic(helper)
+    local kit = kitOf(a)
 
     if a.kind == Med.A_REVIVE then
+        if not Med.Consume(helper, kit) then resume(t, helper) return end
         Med.Revive(t, t:GetMaxHealth() * Med.Cfg("reviveKitHealth"), helper)
     elseif a.kind == Med.A_FA_REVIVE then
-        Med.Revive(t, Med.Cfg("firstAidReviveHealth"), helper)
+        local hp, cost = kitHeal(helper, Med.Cfg("firstAidReviveHealth"))
+        if hp < 1 then
+            Med.Note(helper, "Your first aid kit is empty")
+            resume(t, helper)
+            return
+        end
+        Med.SpendCharge(helper, cost)
+        Med.Revive(t, hp, helper)
     elseif a.kind == Med.A_FA_HEAL then
-        t:SetHealth(math.max(t:Health(), t:GetMaxHealth()))
+        -- As much health as is missing (and the kit holds); stops all bleeding.
+        if t:Health() >= t:GetMaxHealth() and not bleeding(t) then return end   -- (nothing left to do)
+        local hp, cost = kitHeal(helper, t:GetMaxHealth() - t:Health())
+        Med.SpendCharge(helper, cost)
+        heal(t, hp)
+        stopBleeding(t, true)
         hook.Run("Rhylib.PlayerHealed", t, helper)
     elseif a.kind == Med.A_MEDKIT then
-        t:SetHealth(math.min(t:GetMaxHealth(), t:Health() + Med.Cfg("medkitHeal")))
+        if not Med.Consume(helper, kit) then return end
+        heal(t, medic and Med.Cfg("medkitHealMedic") or Med.Cfg("medkitHeal"))
+        stopBleeding(t, medic)
         hook.Run("Rhylib.PlayerHealed", t, helper)
+    elseif a.kind == Med.A_TREAT then
+        if Med.TreatPart then Med.TreatPart(helper, t, a.limb, kit) end
     end
+    if IsValid(t) and a.kind ~= Med.A_REVIVE and a.kind ~= Med.A_FA_REVIVE then t:EmitSound("items/medshot4.wav", 60) end
 end
 
 function Med.CheckActions(now)
@@ -215,7 +354,7 @@ function Med.CheckActions(now)
             local needDown = a.kind == Med.A_STAB or a.kind == Med.A_REVIVE or a.kind == Med.A_FA_REVIVE
             ok = (t.rhylibDown and true or false) == needDown
                 and (t == helper or Med.InRange(helper, t, 50))
-                and (a.kind == Med.A_STAB or Med.Has(helper, KIT[a.kind]))
+                and (a.kind == Med.A_STAB or Med.Has(helper, kitOf(a)))
                 and not (needDown and Med.DraggedBy(t))
         end
         if not ok then
@@ -270,3 +409,10 @@ Rhylib.Net.Receive("med.act", function(ply)
     if not MENU_KINDS[kind] or not IsValid(target) or not target:IsPlayer() then return end
     Med.Start(ply, kind, target)
 end, { rate = 4, burst = 4 })
+
+-- Anything still pointing at a player who leaves.
+Rhylib.Hook.Add("PlayerDisconnected", "medical.acts", function(ply)
+    for h, a in pairs(Med.acts) do
+        if h == ply or a.target == ply then Med.Cancel(h) end
+    end
+end)

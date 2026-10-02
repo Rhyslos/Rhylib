@@ -383,14 +383,15 @@ function Inv.Take(ply, suid, cid, x, y, rot, single)
     -- Merge onto a matching stack of yours, or place at x, y.
     local c = st.cont[cid]
     local probe = { uid = -1, id = so.id, count = n, data = data }
-    local target = c and cid ~= SLOT_BACK and Items.MergeTarget(c.items, probe, x, y)
+    local target = c and cid ~= SLOT_BACK and Items.MergeTarget(c.items, probe, x, y, ply)
     if target then
-        n = math.min(n, def.stack - target.count)
+        n = math.min(n, Items.StackFor(def, ply) - target.count)
         if n <= 0 then return end
         target.count = target.count + n
         if data.issued then target.data.issued = true end
         I.update(ply, st, target)
     elseif Items.CanPlace(st, so.id, cid, x, y, rot) then
+        n = math.min(n, Items.StackFor(def, ply))   -- (your stack size; the rest stays)
         local inst = { uid = I.nextUid(st), id = so.id, count = n, data = data }
         Inv.AutoHotbar(st, inst)
         I.place(ply, st, inst, cid, x, y, rot)

@@ -18,11 +18,12 @@
     clients don't know it.
 
     Treatment: drag a kit onto a body part in the H menu (your own body,
-    or the person you looked at when pressing H):
+    or the person you looked at when pressing H). It takes a moment
+    (medkitLimbTime / firstAidLimbTime; yourself: selfMult times longer):
       troopers  medkit: stops bleeding. Nothing else.
       medics    first aid kit: fixes the part completely (bleeding,
-                fracture, burns, damage). Medkit: stops bleeding and
-                heals damage and burns, but doesn't set bones.
+                fracture, burns, damage), uses charge. Medkit: stops
+                bleeding and heals damage and burns, but doesn't set bones.
     Medics also see exact numbers, fractures, burns and effects; troopers
     see roughly how hurt each part is and whether it bleeds.
 ]]
@@ -56,7 +57,6 @@ Config.Register("medical", "torsoStaminaHit", 0.8, "Stamina lost per point of to
 Config.Register("medical", "torsoStaminaCap", 0.5, "Share of max stamina lost at a fully hurt torso")
 Config.Register("medical", "firstAidLimbHealth", 25, "Health a first aid kit gives when treating a body part")
 Config.Register("medical", "medkitLimbRepair", 40, "Damage and burns a medkit use removes from a body part")
-Config.Register("medical", "treatCooldown", 1.2, "Seconds between treatments from the H menu")
 Config.Register("medical", "viewRange", 120, "How close you must be to open someone's injury menu (units)")
 
 local function cfg(k) return Config.Get("medical", k) end

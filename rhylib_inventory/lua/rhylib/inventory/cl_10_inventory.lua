@@ -196,7 +196,7 @@ function Inv.RequestMove(inst, cid, x, y, rot, single)
     if cid ~= inst.c and not Items.CanLeave(Inv, inst) then return end
     single = single and inst.count > 1
 
-    local merge = cid ~= Items.SLOT_BACK and Items.MergeTarget(c.items, inst, x, y)
+    local merge = cid ~= Items.SLOT_BACK and Items.MergeTarget(c.items, inst, x, y, cid ~= EXT and LocalPlayer() or nil)
     if not merge and not single and cid ~= EXT then
         if not Items.CanPlace(Inv, inst.id, cid, x, y, rot, inst.uid) then return end
         local moved = { uid = inst.uid, id = inst.id, c = cid, x = x, y = y, rot = rot, count = inst.count, data = inst.data }

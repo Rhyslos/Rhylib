@@ -581,12 +581,12 @@ function PANEL:DropAllowed(d, r, tx, ty)
         return Items.MergeTarget(c.items, probe, tx, ty) ~= nil or Items.Fits(c.w, c.h, c.items, d.inst.id, tx, ty, d.rot)
     end
     if fromExt then
-        return (not r.slot and Items.MergeTarget(c.items, probe, tx, ty) ~= nil)
+        return (not r.slot and Items.MergeTarget(c.items, probe, tx, ty, LocalPlayer()) ~= nil)
             or Items.CanPlace(Inv, d.inst.id, r.cid, tx, ty, d.rot)
     end
     if d.fromHotbar then return false end
     local ok = Items.CanLeave(Inv, d.inst) or r.cid == d.inst.c
-    return ok and ((not r.slot and Items.MergeTarget(c.items, d.inst, tx, ty) ~= nil)
+    return ok and ((not r.slot and Items.MergeTarget(c.items, d.inst, tx, ty, LocalPlayer()) ~= nil)
         or Items.CanPlace(Inv, d.inst.id, r.cid, tx, ty, d.rot, not d.single and d.inst.uid or nil))
 end
 
@@ -635,7 +635,8 @@ function PANEL:PaintTooltip()
     elseif def.fill then
         lines[#lines + 1] = "Charge " .. math.ceil((inst.data.fill or 1) * 100) .. "%"
     end
-    if def.stack > 1 then lines[#lines + 1] = inst.count .. " / " .. def.stack end
+    if def.stack > 1 then lines[#lines + 1] = inst.count .. " / " .. (inst.c == EXT and def.stack or Items.StackFor(def, LocalPlayer())) end
+    if def.desc then lines[#lines + 1] = def.desc end
     if def.weight then
         local w = def.weight * inst.count
         local note = inst.c == BACK and string.format(" (counts as %.2f in the backpack)", w * Rhylib.Config.Get("inventory", "backpackWeightMult")) or ""

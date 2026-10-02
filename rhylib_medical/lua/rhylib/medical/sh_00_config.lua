@@ -11,7 +11,19 @@
     Anyone can stabilise (E menu, pauses the timer, helper is locked in
     place) or drag (hold attack with empty hands). Medics (DarkRP job with
     medic = true) revive with a revive kit or first aid kit, picked by the
-    medic. Medkits heal only.
+    medic; reviving also pauses the timer.
+
+    Kits:
+      medkit          single use, stacks 3 (troopers) / 5 (medics). Heals
+                      and stops bleeding; stronger in a medic's hands.
+      first aid kit   medics only, doesn't stack. Holds a charge
+                      (firstAidCharge, shown as %) spent on the health it
+                      heals; empty kits are used up.
+      revive kit      medics only.
+    Every treatment takes a moment; the patient sees "being treated" and
+    doesn't bleed while it runs.
+    Medicines (antiviral, antidote, antibiotics, ...) are items with no
+    effect yet.
 
     State, all NW2 (changes only on events):
       downed player:  rhylib_down (bool), rhylib_downEnd (CurTime when the
@@ -35,13 +47,19 @@ Config.Register("medical", "range", 90, "How close a helper must be (units; ~2.3
 Config.Register("medical", "reviveKitTime", 5, "Seconds to revive with a revive kit")
 Config.Register("medical", "reviveKitHealth", 1, "Health after a revive kit, as a share of max health")
 Config.Register("medical", "firstAidReviveTime", 15, "Seconds to revive with a first aid kit")
-Config.Register("medical", "firstAidReviveHealth", 30, "Health after a first aid revive")
-Config.Register("medical", "firstAidHealTime", 4, "Seconds to fully heal someone who is up with a first aid kit")
-Config.Register("medical", "medkitHealTime", 2, "Seconds per medkit use on someone else")
-Config.Register("medical", "medkitHeal", 25, "Health per medkit use")
-Config.Register("medical", "medkitUses", 5, "Uses in a full medkit")
+Config.Register("medical", "firstAidReviveHealth", 30, "Health after a first aid revive (taken from the kit's charge)")
+Config.Register("medical", "firstAidCharge", 500, "Health a full first aid kit can heal before it's used up")
+Config.Register("medical", "firstAidMinCost", 10, "Charge a first aid treatment always costs, even when it heals less")
+Config.Register("medical", "firstAidHealTime", 5, "Seconds to heal someone who is up with a first aid kit (as much as the charge allows)")
+Config.Register("medical", "firstAidLimbTime", 4, "Seconds to treat one body part with a first aid kit")
+Config.Register("medical", "medkitHealTime", 3, "Seconds for a medkit on someone else")
+Config.Register("medical", "medkitLimbTime", 3, "Seconds for a medkit on one body part")
+Config.Register("medical", "medkitHeal", 25, "Health a medkit gives (trooper)")
+Config.Register("medical", "medkitHealMedic", 50, "Health a medkit gives in a medic's hands")
+Config.Register("medical", "medkitStack", 3, "Medkits per stack for troopers")
+Config.Register("medical", "medkitStackMedic", 5, "Medkits per stack for medics (at most 10)")
 Config.Register("medical", "medkitMedicOnly", false, "Only medics can use medkits")
-Config.Register("medical", "selfMult", 2, "Healing yourself takes this many times longer")
+Config.Register("medical", "selfMult", 2, "Treating yourself takes this many times longer")
 Config.Register("medical", "dragSpeed", 100, "Top speed while dragging someone")
 Config.Register("medical", "dragLeash", 45, "How far behind the dragger the body trails")
 Config.Register("medical", "dragWeapons", { rhylib_stowed = true, keys = true }, "Weapons that count as empty hands for dragging")
@@ -58,8 +76,9 @@ Med.A_NONE = 0
 Med.A_STAB = 1      -- stabilising (open-ended)
 Med.A_REVIVE = 2    -- reviving with a revive kit
 Med.A_FA_REVIVE = 3 -- reviving with a first aid kit
-Med.A_FA_HEAL = 4   -- full heal with a first aid kit
-Med.A_MEDKIT = 5    -- one medkit use
+Med.A_FA_HEAL = 4   -- heal with a first aid kit
+Med.A_MEDKIT = 5    -- one medkit
+Med.A_TREAT = 6     -- one body part, from the H menu (kit in the action)
 Med.ACT_BITS = 3
 
 Med.ActName = {
@@ -68,12 +87,41 @@ Med.ActName = {
     [3] = "Reviving (first aid)",
     [4] = "Treating",
     [5] = "Healing",
+    [6] = "Treating",
 }
 
 -- Kit weapon classes.
 Med.REVIVE_KIT = "rhylib_revivekit"
 Med.FIRST_AID = "rhylib_firstaid"
 Med.MEDKIT = "rhylib_medkit"
+
+-- Medicines: items with no effect yet (ideas for later treatments).
+Med.MEDICINES = {
+    { "rhylib_antiviral", "Antiviral", "Treats viral infections (no effect yet)" },
+    { "rhylib_antidote", "Antidote", "Counters poisons and toxins (no effect yet)" },
+    { "rhylib_antibiotics", "Antibiotics", "Treats infected wounds (no effect yet)" },
+}
+
+local function registerMedicines()
+    local Items = Rhylib.Items
+    if not Items or not Items.Register then return end
+    for _, m in ipairs(Med.MEDICINES) do
+        if not Items.Get(m[1]) then
+            Items.Register(m[1], {
+                name = m[2], desc = m[3], w = 1, h = 1, stack = 5, weight = 0.1,
+                category = "medical", model = "models/healthvial.mdl",
+            })
+        end
+    end
+end
+registerMedicines()
+
+-- Medkits stack 3 for troopers and 5 for medics (rhylib_inventory asks this).
+Rhylib.Hook.Add("Rhylib.ItemStack", "medical.stack", function(def, ply)
+    if def.id == "rhylib_medkit" and IsValid(ply) then
+        return Med.IsMedic(ply) and Med.Cfg("medkitStackMedic") or Med.Cfg("medkitStack")
+    end
+end)
 
 --------------------------------------------------------------------------
 -- State readers (shared)
