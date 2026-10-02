@@ -174,7 +174,7 @@ local function drawMarkers(ply)
     local s = S(1)
     for _, t in ipairs(Med.clientDown) do
         if t ~= ply and IsValid(t) then
-            local pos = t:GetPos() + Vector(0, 0, 24)
+            local pos = Med.BodyPos(t) + Vector(0, 0, 14)
             local dist = eye:Distance(pos)
             if dist <= range then
                 local sp = pos:ToScreen()

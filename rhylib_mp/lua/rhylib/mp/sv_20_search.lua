@@ -39,7 +39,8 @@ local function canSearch(mp, target)
     local r = toolRange(mp)
     if not r then return false end
     if mp:GetPos():DistToSqr(target:GetPos()) > r * r then return false end
-    local tr = util.TraceLine({ start = mp:EyePos(), endpos = target:WorldSpaceCenter(), filter = { mp, target }, mask = MASK_SOLID })
+    local rag = Rhylib.Lying and Rhylib.Lying.Ragdoll and Rhylib.Lying.Ragdoll(target)   -- (a lying target's own body)
+    local tr = util.TraceLine({ start = mp:EyePos(), endpos = target:WorldSpaceCenter(), filter = rag and { mp, target, rag } or { mp, target }, mask = MASK_SOLID })
     return not tr.Hit
 end
 MP.CanSearch = canSearch

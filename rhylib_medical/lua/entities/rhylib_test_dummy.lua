@@ -7,6 +7,10 @@
     The entity itself is an invisible marker; the bot stands on it and
     comes back there 3 seconds after dying. Removing the marker (undo,
     remover tool, cleanup) kicks the bot. Each dummy takes a player slot.
+
+    rhylib_dummy_move still|walk|run (admins): every dummy stands still,
+    or walks / runs back and forth (turning every 2.5 s), for testing
+    falls and moving targets.
 ]]
 
 AddCSLuaFile()
@@ -94,12 +98,33 @@ local function dummyOf(ply)
     return IsValid(ent) and ent or nil
 end
 
--- Stand still: no movement, no buttons, no turning.
+DUMMY_MOVE = DUMMY_MOVE or "still"   -- still, walk, run (all dummies)
+
+-- Stand still, or walk/run back and forth from the marker's facing.
 Rhylib.Hook.Add("StartCommand", "dummy.still", function(ply, cmd)
-    if not ply:IsBot() or not dummyOf(ply) then return end
+    if not ply:IsBot() then return end
+    local ent = dummyOf(ply)
+    if not ent then return end
     cmd:ClearMovement()
     cmd:ClearButtons()
+    if DUMMY_MOVE == "still" then return end
+    local back = math.floor(CurTime() / 2.5) % 2 == 1
+    cmd:SetViewAngles(Angle(0, ent:GetAngles().y + (back and 180 or 0), 0))
+    cmd:SetForwardMove(10000)
+    if DUMMY_MOVE == "run" then cmd:SetButtons(IN_SPEED) end
 end, -200)
+
+concommand.Add("rhylib_dummy_move", function(ply, _, args)
+    if IsValid(ply) and not ply:IsAdmin() then return end
+    local m = string.lower(args[1] or "")
+    if m ~= "still" and m ~= "walk" and m ~= "run" then
+        local msg = "rhylib_dummy_move still|walk|run (now: " .. DUMMY_MOVE .. ")"
+        if IsValid(ply) then ply:ChatPrint(msg) else print(msg) end
+        return
+    end
+    DUMMY_MOVE = m
+    if IsValid(ply) then ply:ChatPrint("Test dummies: " .. m) end
+end)
 
 -- Every spawn: back on the marker, with the dummy model and no weapons.
 Rhylib.Hook.Add("PlayerSpawn", "dummy.place", function(ply)

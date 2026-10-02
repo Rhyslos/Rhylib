@@ -413,6 +413,8 @@ local function lookTarget()
     local r = Rhylib.Config.Get("medical", "viewRange")
     local tr = me:GetEyeTrace()
     local e = tr.Entity
+    local L = Rhylib.Lying
+    if L and L.Owner and L.Owner(e) then e = L.Owner(e) end   -- a lying player's ragdoll
     if IsValid(e) and e:IsPlayer() and e:Alive() and me:GetPos():DistToSqr(e:GetPos()) <= r * r then return e end
     return Med.FindDowned and Med.FindDowned(me) or nil
 end

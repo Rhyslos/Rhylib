@@ -25,6 +25,7 @@ local function getUp(ply)
         ply.rhylibStunView = nil
     end
     ply.rhylibStunImmune = CurTime() + MP.Cfg("stunImmune")
+    if Rhylib.Lying and not ply.rhylibDown then Rhylib.Lying.End(ply) end
 end
 
 -- Collapse for stunTime seconds. by: who stunned them (for logs/hooks).
@@ -44,6 +45,8 @@ function MP.Stun(ply, by)
         ply:SetViewOffsetDucked(VIEW_LOW)
     end
     stow(ply)
+    -- Body centred on the player's position (rhylib_core; clients draw a ragdoll).
+    if Rhylib.Lying then Rhylib.Lying.Begin(ply) end
     ply:EmitSound("weapons/stunstick/stunstick_impact" .. math.random(1, 2) .. ".wav", 70)
     timer.Create("Rhylib.MP.Stun." .. ply:EntIndex(), t, 1, function() getUp(ply) end)
     hook.Run("Rhylib.PlayerStunned", ply, by)

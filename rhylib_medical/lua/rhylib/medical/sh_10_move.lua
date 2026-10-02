@@ -130,6 +130,10 @@ end, -100)  -- before the jetpack and grapple, which read Jump
 -- settle down, like a simple walk move. Server only, after the dragger moves.
 local STEP = 16
 local function dragBody(body, dragger)
+    -- A ragdoll body (rhylib_core) is pulled by its chest; the player
+    -- follows the ragdoll.
+    local L = Rhylib.Lying
+    if L and L.Pull and L.Pull(body, dragger:GetPos(), Med.Cfg("dragLeash"), 300) then return end
     local pos = body:GetPos()
     local to = dragger:GetPos() - pos
     to.z = 0
@@ -171,8 +175,9 @@ Rhylib.Hook.Add("PlayerSwitchWeapon", "medical.noswitch", function(ply)
 end)
 
 --------------------------------------------------------------------------
--- Pose: the last frame of a death animation, held still. Runs on the
--- server too, so hitboxes match what everyone sees.
+-- Pose: a death animation played once, then its last frame held. Runs
+-- on the server too, so hitboxes match. Clients draw a ragdoll once the
+-- fall is over (rhylib_core cl_60_lying.lua).
 --------------------------------------------------------------------------
 
 local function downSequence(ply)
@@ -203,9 +208,11 @@ end)
 local POSE_ZERO = { "aim_yaw", "aim_pitch", "head_yaw", "head_pitch" }
 
 Rhylib.Hook.Add("UpdateAnimation", "medical.pose", function(ply)
-    if not Med.IsDown(ply) or downSequence(ply) <= 0 then return end
+    local seq = Med.IsDown(ply) and downSequence(ply) or -1
+    if seq <= 0 then return end
     ply:SetPlaybackRate(0)
-    ply:SetCycle(0.99)
+    -- The fall plays once, then holds (rhylib_core), else the last frame.
+    ply:SetCycle(Rhylib.Lying and Rhylib.Lying.Cycle(ply, seq) or 0.99)
     for i = 1, #POSE_ZERO do ply:SetPoseParameter(POSE_ZERO[i], 0) end
     if CLIENT then ply:SetRenderAngles(Angle(0, ply:GetNW2Float("rhylib_downYaw", 0), 0)) end
     return true

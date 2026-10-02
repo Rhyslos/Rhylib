@@ -96,9 +96,11 @@ Rhylib.Hook.Add("CalcMainActivity", "mp.pose", function(ply)
 end)
 
 Rhylib.Hook.Add("UpdateAnimation", "mp.pose", function(ply)
-    if not MP.IsStunned(ply) or stunSequence(ply) <= 0 then return end
+    local seq = MP.IsStunned(ply) and stunSequence(ply) or -1
+    if seq <= 0 then return end
     ply:SetPlaybackRate(0)
-    ply:SetCycle(0.99)
+    -- The fall plays once, then holds (rhylib_core), else the last frame.
+    ply:SetCycle(Rhylib.Lying and Rhylib.Lying.Cycle(ply, seq) or 0.99)
     ply:SetPoseParameter("aim_yaw", 0)
     ply:SetPoseParameter("aim_pitch", 0)
     ply:SetPoseParameter("head_yaw", 0)

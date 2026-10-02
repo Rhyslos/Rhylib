@@ -40,18 +40,33 @@ end
 -- target's body.
 local seeTr = {}
 local seeData = { mask = MASK_SOLID, output = seeTr }
-function Med.CanSee(helper, target)
+local function seeClear(helper, target, pos)
     seeData.start = helper:EyePos()
-    seeData.endpos = target:WorldSpaceCenter()
-    seeData.filter = { helper, target }
+    seeData.endpos = pos
+    -- (the target's own ragdoll body doesn't block the view of it)
+    local rag = Rhylib.Lying and Rhylib.Lying.Ragdoll and Rhylib.Lying.Ragdoll(target)
+    seeData.filter = rag and { helper, target, rag } or { helper, target }
     util.TraceLine(seeData)
     return not seeTr.Hit
 end
 
-function Med.InRange(helper, target, slack)
-    local a, b = helper:GetPos(), target:GetPos()
-    local range = Med.Cfg("range") + (slack or 0)
+function Med.CanSee(helper, target)
+    if not target.rhylibDown then return seeClear(helper, target, target:WorldSpaceCenter()) end
+    -- Downed: the position or the measured body is enough.
+    return seeClear(helper, target, target:GetPos() + Vector(0, 0, 12)) or seeClear(helper, target, Med.BodyPos(target))
+end
+
+local function near(a, b, range)
     return math.abs(a.z - b.z) < 72 and (a.x - b.x) ^ 2 + (a.y - b.y) ^ 2 <= range * range
+end
+
+-- Downed targets: their position or the measured body, with extra room
+-- (each client's ragdoll lies a little differently).
+function Med.InRange(helper, target, slack)
+    local a = helper:GetPos()
+    local range = Med.Cfg("range") + (slack or 0)
+    if not target.rhylibDown then return near(a, target:GetPos(), range) end
+    return near(a, target:GetPos(), range + 40) or near(a, Med.BodyPos(target), range + 40)
 end
 
 --------------------------------------------------------------------------
@@ -93,6 +108,10 @@ function Med.Down(ply, attacker, inflictor)
     ply.rhylibCollision = ply.rhylibCollision or ply:GetCollisionGroup()
     ply:SetCollisionGroup(COLLISION_GROUP_WEAPON)
     if Med.Cfg("noTarget") then ply:AddFlags(FL_NOTARGET) end
+    ply.rhylibDownGrace = CurTime() + Med.Cfg("downGrace")
+    -- Body centred on the player's position (rhylib_core; clients draw a ragdoll).
+    -- A ragdoll body (rhylib_core); a stunned player keeps theirs.
+    if Rhylib.Lying then Rhylib.Lying.Begin(ply) end
 
     hook.Run("Rhylib.PlayerDowned", ply, attacker)
 end
@@ -130,6 +149,7 @@ local function clear(ply)
     ply:SetCollisionGroup(ply.rhylibCollision or COLLISION_GROUP_PLAYER)
     ply.rhylibCollision = nil
     ply:RemoveFlags(FL_NOTARGET)
+    if Rhylib.Lying then Rhylib.Lying.End(ply) end
     return true
 end
 
@@ -196,6 +216,14 @@ Rhylib.Hook.Add("EntityTakeDamage", "medical.down", function(ent, dmg)
     dmg:SetDamage(hp - 1)
     ent.rhylibGoingDown = true
 end, 150)  -- after armour (100)
+
+-- Just went down: no damage while the fall plays (bleeding out and
+-- giving up use DMG_DIRECT from finish(), which isn't blocked).
+Rhylib.Hook.Add("EntityTakeDamage", "medical.grace", function(ent, dmg)
+    if ent.rhylibDown and ent:IsPlayer() and CurTime() < (ent.rhylibDownGrace or 0) and not ent.rhylibDying then
+        return true
+    end
+end, 50)
 
 Rhylib.Hook.Add("PostEntityTakeDamage", "medical.down", function(ent, dmg, took)
     if not ent.rhylibGoingDown then return end

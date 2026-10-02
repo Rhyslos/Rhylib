@@ -42,6 +42,7 @@ local Config = Rhylib.Config
 Config.Register("medical", "enabled", true, "Players go down at 0 HP instead of dying")
 Config.Register("medical", "bleedTime", 120, "Seconds a downed player lasts before bleeding out")
 Config.Register("medical", "downHealth", 50, "Health while downed; damage while down comes off this")
+Config.Register("medical", "downGrace", 2, "Seconds after going down when the body takes no damage (the fall plays; no instant finishing)")
 Config.Register("medical", "giveUpTime", 3, "Seconds of holding Jump to give up")
 Config.Register("medical", "range", 90, "How close a helper must be (units; ~2.3 m)")
 Config.Register("medical", "reviveKitTime", 5, "Seconds to revive with a revive kit")
@@ -177,6 +178,8 @@ end
 
 -- Centre of a lying body (for aiming and range checks).
 function Med.BodyPos(ply)
+    -- rhylib_core measures where the lying pose really puts the body.
+    if Rhylib.Lying and Rhylib.Lying.BodyPos then return Rhylib.Lying.BodyPos(ply) end
     return ply:GetPos() + Vector(0, 0, 10)
 end
 

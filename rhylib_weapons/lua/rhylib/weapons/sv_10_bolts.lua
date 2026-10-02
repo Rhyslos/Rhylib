@@ -92,6 +92,10 @@ local function applyHit(bolt, tr)
     end
     local ent = tr.Entity
     if not IsValid(ent) then return end
+    -- A lying player's ragdoll (rhylib_core): the hit is on the player.
+    local L = Rhylib.Lying
+    local rag = L and L.Owner and L.Owner(ent) and ent or nil
+    if rag then ent = L.Owner(rag) end
     -- Stun bolts (SWEP.Stun): no damage; rhylib_mp decides what a hit does.
     if bolt.stun then
         if ent:IsPlayer() then hook.Run("Rhylib.StunHit", ent, bolt.owner, bolt.weapon) end
@@ -100,7 +104,11 @@ local function applyHit(bolt, tr)
 
     -- Models whose hitboxes are all "generic": guess the part from the hit position.
     local group = tr.HitGroup
-    if group == HITGROUP_GENERIC and ent:IsPlayer() and Rhylib.HitGroupAt then group = Rhylib.HitGroupAt(ent, tr.HitPos) end
+    if rag then
+        group = L.HitGroup(rag, tr.HitPos)
+    elseif group == HITGROUP_GENERIC and ent:IsPlayer() and Rhylib.HitGroupAt then
+        group = Rhylib.HitGroupAt(ent, tr.HitPos)
+    end
 
     local mult = 1
     if group == HITGROUP_HEAD then
@@ -123,7 +131,9 @@ local function applyHit(bolt, tr)
     local living = ent:IsPlayer() or ent:IsNPC() or ent:IsNextBot()
     local wasDown = ent.rhylibDown
     if ent:IsPlayer() then ent.rhylibHitGroup = group end
+    if rag then ent.rhylibFwd = true end   -- (a hit on the ragdoll counts for its lying player)
     ent:TakeDamageInfo(dmg)
+    ent.rhylibFwd = nil
     if ent:IsPlayer() then ent.rhylibHitGroup = nil end
 
     if IsValid(owner) and owner:IsPlayer() and living then

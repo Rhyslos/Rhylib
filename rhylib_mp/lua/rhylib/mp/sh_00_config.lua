@@ -80,7 +80,9 @@ function MP.Target(ply, range)
         mins = Vector(-6, -6, -6), maxs = Vector(6, 6, 6),
         mask = MASK_SHOT_HULL,
     })
+    local L = Rhylib.Lying
     local e = tr.Entity
+    if L and L.Owner and L.Owner(e) then e = L.Owner(e) end   -- a lying player's ragdoll
     if IsValid(e) and e:IsPlayer() and e:Alive() then return e end
     -- Lying bodies (stunned or downed) are low: try a little lower too.
     local tr2 = util.TraceHull({
@@ -91,5 +93,6 @@ function MP.Target(ply, range)
         mask = MASK_SHOT_HULL,
     })
     e = tr2.Entity
+    if L and L.Owner and L.Owner(e) then e = L.Owner(e) end
     if IsValid(e) and e:IsPlayer() and e:Alive() then return e end
 end
