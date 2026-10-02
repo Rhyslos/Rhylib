@@ -1,0 +1,417 @@
+--[[
+    Roster (server): characters, names, membership, ranks, the roster page.
+
+    Data:
+      "char"/sid          { num, nick, trained, bn, r (rank index), seen }
+      "char_nums"/"all"   { ["n" .. num] = sid }   taken numbers
+      "roster"/battalion  { ["s" .. sid] = true }  members (also offline)
+      "roster_log"/bn     list of { t, txt }, newest first
+    (keys are prefixed: JSON would turn bare number-like keys into numbers)
+
+    Messages:
+      roster.need     server -> player: create your character
+      roster.create   num, nick -> roster.created (ok, message)
+      roster.get      battalion ("" = mine) -> roster.data
+      roster.act      action, target sid, value
+      roster.open     server -> player: open the Battalion page (/roster)
+]]
+
+local R = Rhylib.Roster
+local Data = Rhylib.Data
+
+for _, n in ipairs({ "roster.need", "roster.created", "roster.data", "roster.open" }) do Rhylib.Net.Register(n) end
+
+local function validSid(id) return isstring(id) and #id <= 20 and string.match(id, "^%d+$") ~= nil end
+Rhylib.Perms.Register("rhylib.roster.admin", "admin", "Manage any battalion's roster, ranks and characters")
+
+R.ACT_TRAIN, R.ACT_ADD, R.ACT_RANK, R.ACT_REMOVE = 0, 1, 2, 3
+
+local function sid(ply) return ply:SteamID64() or "" end
+
+--------------------------------------------------------------------------
+-- Storage (cached)
+--------------------------------------------------------------------------
+
+local chars = {}   -- [sid] = record or false
+
+function R.Char(id)
+    local c = chars[id]
+    if c == nil then
+        c = Data.Get("char", id)
+        if not istable(c) then c = false end
+        chars[id] = c
+    end
+    return c or nil
+end
+
+function R.SaveChar(id, c)
+    chars[id] = c
+    Data.Set("char", id, c)
+end
+
+local function numbers()
+    local t = Data.Get("char_nums", "all")
+    return istable(t) and t or {}
+end
+
+local function members(bn)
+    local t = Data.Get("roster", bn)
+    return istable(t) and t or {}
+end
+
+local function setMember(bn, id, on)
+    if bn == "" then return end
+    local t = members(bn)
+    t["s" .. id] = on or nil
+    Data.Set("roster", bn, t)
+end
+
+function R.Log(bn, txt)
+    if bn == "" then return end
+    local t = Data.Get("roster_log", bn)
+    if not istable(t) then t = {} end
+    table.insert(t, 1, { t = os.time(), txt = txt })
+    while #t > 200 do table.remove(t) end
+    Data.Set("roster_log", bn, t)
+end
+
+--------------------------------------------------------------------------
+-- Names and networked state
+--------------------------------------------------------------------------
+
+function R.Publish(ply)
+    local c = R.Char(sid(ply))
+    ply:SetNW2Bool("rhylib_char", c ~= nil)
+    ply:SetNW2String("rhylib_num", c and c.num or "")
+    ply:SetNW2String("rhylib_nick", c and c.nick or "")
+    ply:SetNW2Bool("rhylib_trained", c and c.trained or false)
+    ply:SetNW2String("rhylib_bn", c and c.bn or "")
+    ply:SetNW2Int("rhylib_rank", c and c.r or 0)
+end
+
+-- PREFIX-NUMBER Nickname as the DarkRP name.
+function R.ApplyName(ply)
+    if not IsValid(ply) then return end
+    local name = R.FullName(ply)
+    if name and ply.setDarkRPVar then ply:setDarkRPVar("rpname", name) end
+end
+
+-- After a rank or membership change: if the current job isn't allowed any
+-- more, back to the CT (or cadet) job.
+-- Trained players sitting in the cadet job move up to CT too.
+local function checkJob(ply)
+    local j = RPExtraTeams and RPExtraTeams[ply:Team()]
+    local c = R.Get(ply)
+    local cadet = TEAM_CADET or GAMEMODE.DefaultTeam
+    if j and R.JobBlock(ply, j) then
+        local t = c.trained and TEAM_CT or cadet
+        if t and ply.changeTeam then ply:changeTeam(t, true) end
+    elseif c.trained and TEAM_CT and ply:Team() == cadet and ply.changeTeam then
+        ply:changeTeam(TEAM_CT, true)
+    end
+    R.ApplyName(ply)
+end
+
+local function needCharacter(ply)
+    Rhylib.Net.Start("roster.need")
+    net.Send(ply)
+end
+
+Rhylib.Hook.Add("PlayerInitialSpawn", "roster.load", function(ply)
+    if ply:IsBot() then return end
+    R.Publish(ply)
+    timer.Simple(2, function()
+        if not IsValid(ply) then return end
+        if R.Char(sid(ply)) then
+            R.ApplyName(ply)
+            checkJob(ply)
+        else
+            needCharacter(ply)
+        end
+    end)
+end)
+
+Rhylib.Hook.Add("PlayerSpawn", "roster.name", function(ply)
+    timer.Simple(0, function() R.ApplyName(ply) end)
+end)
+
+-- The client asks once it has loaded (the first message can arrive too early).
+Rhylib.Net.Receive("roster.hello", function(ply)
+    if not R.Char(sid(ply)) then needCharacter(ply) end
+end, { rate = 1, burst = 3 })
+Rhylib.Hook.Add("OnPlayerChangedTeam", "roster.name", function(ply)
+    timer.Simple(0, function() R.ApplyName(ply) end)
+end)
+
+-- Names come from the character, not /rpname.
+Rhylib.Hook.Add("CanChangeRPName", "roster.name", function(ply)
+    if R.Char(sid(ply)) then return false, "Your name comes from your character" end
+end)
+
+Rhylib.Hook.Add("PlayerDisconnected", "roster.seen", function(ply)
+    local c = R.Char(sid(ply))
+    if c then
+        c.seen = os.time()
+        R.SaveChar(sid(ply), c)
+    end
+end)
+
+--------------------------------------------------------------------------
+-- Character creator
+--------------------------------------------------------------------------
+
+local function reply(ply, ok, msg)
+    Rhylib.Net.Start("roster.created")
+    net.WriteBool(ok)
+    net.WriteString(msg or "")
+    net.Send(ply)
+end
+
+Rhylib.Net.Receive("roster.create", function(ply)
+    local num = string.Trim(net.ReadString())
+    local nick = R.CleanNick(net.ReadString())
+    local id = sid(ply)
+    if id == "" or R.Char(id) then return end   -- one character per player
+    local ok, why = R.ValidNumber(num)
+    if not ok then return reply(ply, false, why) end
+    ok, why = R.ValidNick(nick)
+    if not ok then return reply(ply, false, why) end
+    local nums = numbers()
+    if nums["n" .. num] and nums["n" .. num] ~= id then return reply(ply, false, "That number is taken") end
+    nums["n" .. num] = id
+    Data.Set("char_nums", "all", nums)
+    R.SaveChar(id, { num = num, nick = nick, trained = false, bn = "", r = 0, seen = os.time() })
+    R.Publish(ply)
+    reply(ply, true)
+    -- Start as a cadet.
+    local cadet = TEAM_CADET or GAMEMODE.DefaultTeam
+    if cadet and ply:Team() ~= cadet and ply.changeTeam then ply:changeTeam(cadet, true) end
+    ply:Spawn()
+    R.ApplyName(ply)
+end, { rate = 1, burst = 3 })
+
+-- Admin: rhylib_char_reset <name or SteamID64>: the player picks a new character.
+concommand.Add("rhylib_char_reset", function(caller, _, args)
+    Rhylib.Perms.Check(caller, "rhylib.roster.admin", function(allowed)
+        local function say(m) if IsValid(caller) then caller:ChatPrint(m) else print(m) end end
+        if not allowed then return say("You don't have permission for rhylib_char_reset") end
+        local q = string.lower(string.Trim(table.concat(args, " ")))
+        if q == "" then return say("Usage: rhylib_char_reset <SteamID64, clone number or exact name>") end
+        local target, id
+        -- SteamID64, then clone number, then exactly one name match.
+        for _, p in ipairs(player.GetHumans()) do
+            if sid(p) == q then target = p end
+        end
+        if not target and #q == 4 then
+            local owner = numbers()["n" .. q]
+            if owner then
+                id = owner
+                for _, p in ipairs(player.GetHumans()) do
+                    if sid(p) == owner then target = p end
+                end
+            end
+        end
+        if not target and not id then
+            local found
+            for _, p in ipairs(player.GetHumans()) do
+                if string.find(string.lower(p:Nick()), q, 1, true) then
+                    if found then return say("More than one player matches '" .. q .. "'; use the SteamID64 or clone number") end
+                    found = p
+                end
+            end
+            target = found
+        end
+        id = id or (IsValid(target) and sid(target)) or (validSid(q) and q)
+        local c = id and R.Char(id)
+        if not c then return say("No character found for " .. q) end
+        local nums = numbers()
+        nums["n" .. c.num] = nil
+        Data.Set("char_nums", "all", nums)
+        setMember(c.bn or "", id, false)
+        chars[id] = false
+        Data.Delete("char", id)
+        say("Reset the character of " .. (IsValid(target) and target:Nick() or id))
+        if IsValid(target) then
+            R.Publish(target)
+            checkJob(target)
+            if target.setDarkRPVar then target:setDarkRPVar("rpname", "New recruit") end
+            needCharacter(target)
+        end
+    end)
+end)
+
+--------------------------------------------------------------------------
+-- Roster actions
+--------------------------------------------------------------------------
+
+local function isAdmin(ply, fn)
+    Rhylib.Perms.Check(ply, "rhylib.roster.admin", function(ok) if IsValid(ply) then fn(ok) end end)
+end
+
+local function manageRank() return R.RankIndex(R.Cfg("manageRank")) or 4 end
+
+-- Online player by SteamID64.
+local function online(id)
+    for _, p in ipairs(player.GetHumans()) do
+        if sid(p) == id then return p end
+    end
+end
+
+local function after(id)
+    local p = online(id)
+    if IsValid(p) then
+        R.Publish(p)
+        checkJob(p)
+    end
+end
+
+local function fullName(c)
+    if not c then return "?" end
+    local prefix = ((c.bn or "") ~= "" and (c.r or 0) > 0) and (R.RankPrefix(c.r) or "CT") or (c.trained and "CT" or "CC")
+    return prefix .. "-" .. c.num .. " " .. c.nick
+end
+
+Rhylib.Net.Receive("roster.act", function(ply)
+    local act = net.ReadUInt(2)
+    local id = net.ReadString()
+    local value = net.ReadUInt(8)
+    if not validSid(id) then return end
+    isAdmin(ply, function(admin)
+        local me = R.Char(sid(ply))
+        local myRank = (me and (me.bn or "") ~= "" and me.r) or 0
+        local manager = admin or myRank >= manageRank()
+        if not manager then return end   -- (before looking anyone up)
+        local them = R.Char(id)
+        if not them then return end
+        local by = ply:Nick()
+
+        if act == R.ACT_TRAIN then
+            if not manager or them.trained then return end
+            them.trained = true
+            R.SaveChar(id, them)
+            R.Log(me and me.bn or "", by .. " passed " .. fullName(them) .. " through basic training")
+            after(id)
+        elseif act == R.ACT_ADD then
+            -- value: unused for officers (their battalion); admins pass the battalion name via the roster page's bn.
+            local bn = me and me.bn or ""
+            if admin and ply.rhylibRosterBn and ply.rhylibRosterBn ~= "" then bn = ply.rhylibRosterBn end
+            if bn == "" or not manager or not them.trained or (them.bn or "") ~= "" then return end
+            if not admin and (not me or me.bn ~= bn) then return end
+            them.bn, them.r = bn, 1
+            R.SaveChar(id, them)
+            setMember(bn, id, true)
+            R.Log(bn, by .. " added " .. fullName(them) .. " to the " .. bn)
+            after(id)
+        elseif act == R.ACT_RANK then
+            local bn = them.bn or ""
+            if bn == "" or value < 1 or value > #R.Ranks() then return end
+            if not admin then
+                -- Own battalion, someone below you, to below your rank.
+                if not me or me.bn ~= bn or not manager or them.r >= myRank or value >= myRank then return end
+            end
+            if value == them.r then return end
+            local old = them.r
+            them.r = value
+            R.SaveChar(id, them)
+            R.Log(bn, by .. (value > old and " promoted " or " demoted ") .. fullName(them) .. " (" .. R.RankName(old) .. " → " .. R.RankName(value) .. ")")
+            after(id)
+        elseif act == R.ACT_REMOVE then
+            local bn = them.bn or ""
+            if bn == "" then return end
+            if not admin and (not me or me.bn ~= bn or not manager or them.r >= myRank) then return end
+            R.Log(bn, by .. " removed " .. fullName(them) .. " from the " .. bn)
+            them.bn, them.r = "", 0
+            R.SaveChar(id, them)
+            setMember(bn, id, false)
+            after(id)
+        end
+        R.SendRoster(ply, ply.rhylibRosterBn or "")
+    end)
+end, { rate = 4, burst = 6 })
+
+--------------------------------------------------------------------------
+-- The roster page
+--------------------------------------------------------------------------
+
+function R.SendRoster(ply, want)
+    isAdmin(ply, function(admin)
+        local me = R.Char(sid(ply))
+        local bn = (admin and want ~= "") and want or (me and me.bn or "")
+        ply.rhylibRosterBn = admin and want or ""
+        local myRank = (me and me.bn == bn and me.r) or 0
+        local manager = admin or (myRank >= manageRank())
+
+        local list = {}
+        if bn ~= "" then
+            for key in pairs(members(bn)) do
+                local id = string.sub(key, 2)
+                local c = R.Char(id)
+                if c and c.bn == bn then
+                    list[#list + 1] = { id = id, name = fullName(c), r = c.r, on = IsValid(online(id)), seen = c.seen or 0 }
+                end
+            end
+            table.sort(list, function(a, b)
+                if a.r ~= b.r then return a.r > b.r end
+                return a.name < b.name
+            end)
+        end
+        -- Online people an officer could act on: cadets to pass, CTs to add.
+        local cadets, cts = {}, {}
+        if manager then
+            for _, p in ipairs(player.GetHumans()) do
+                local c = R.Char(sid(p))
+                if c and not c.trained then cadets[#cadets + 1] = p
+                elseif c and c.trained and (c.bn or "") == "" then cts[#cts + 1] = p end
+            end
+        end
+        local log = bn ~= "" and Data.Get("roster_log", bn) or {}
+        if not istable(log) then log = {} end
+
+        Rhylib.Net.Start("roster.data")
+        net.WriteString(bn)
+        net.WriteBool(admin)
+        net.WriteBool(manager)
+        net.WriteUInt(admin and 255 or myRank, 8)   -- you can set ranks below this
+        net.WriteUInt(math.min(#list, 255), 8)
+        for i = 1, math.min(#list, 255) do
+            local m = list[i]
+            net.WriteString(m.id)
+            net.WriteString(m.name)
+            net.WriteUInt(m.r, 8)
+            net.WriteBool(m.on)
+            net.WriteUInt(m.seen, 32)
+        end
+        net.WriteUInt(math.min(#cadets, 63), 6)
+        for i = 1, math.min(#cadets, 63) do net.WriteString(sid(cadets[i])) net.WriteString(cadets[i]:Nick()) end
+        net.WriteUInt(math.min(#cts, 63), 6)
+        for i = 1, math.min(#cts, 63) do net.WriteString(sid(cts[i])) net.WriteString(cts[i]:Nick()) end
+        local nlog = math.min(#log, 40)
+        net.WriteUInt(nlog, 6)
+        for i = 1, nlog do
+            net.WriteUInt(log[i].t or 0, 32)
+            net.WriteString(log[i].txt or "")
+        end
+        net.Send(ply)
+    end)
+end
+
+Rhylib.Net.Receive("roster.get", function(ply)
+    R.SendRoster(ply, string.sub(net.ReadString(), 1, 64))
+end, { rate = 3, burst = 4 })
+
+-- /roster opens the Battalion page.
+Rhylib.Hook.Add("PlayerSay", "roster.cmd", function(ply, text)
+    local t = string.lower(string.Trim(text))
+    if t == "/roster" or t == "!roster" then
+        Rhylib.Net.Start("roster.open")
+        net.Send(ply)
+        return ""
+    end
+end)
+
+-- The battalion board: officers (boardRank and up) of that battalion post.
+Rhylib.Hook.Add("Rhylib.CanPostBoard", "roster.board", function(ply, bn)
+    local c = R.Get(ply)
+    local need = R.RankIndex(R.Cfg("boardRank")) or 6
+    if c.bn == bn and c.rank >= need then return true end
+end)
