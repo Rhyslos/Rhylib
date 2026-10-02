@@ -92,7 +92,7 @@ Rhylib.Hook.Add("Rhylib.RosterNote", "datapad.loa", function(bn, id)
     local now = os.time()
     for _, e in ipairs(activeLeave(bn).list) do
         if e.s == id and e.from <= now + 86400 then
-            return (e.from > now and "leave from " .. os.date("%d %b", e.from) or "on leave") .. " until " .. os.date("%d %b", e.to)
+            return (e.from > now and "LOA from " .. os.date("%d %b", e.from) or "on LOA") .. " until " .. os.date("%d %b", e.to)
         end
     end
 end)

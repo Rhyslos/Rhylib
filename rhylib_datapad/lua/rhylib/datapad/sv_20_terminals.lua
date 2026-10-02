@@ -28,20 +28,27 @@ local function near(ply, ent)
 end
 
 -- What a player may do here. admin comes from the permission check.
+-- Only members read a computer (medics the holotable). Admins too only use
+-- their own, unless inspecting (rhylib_datapad_inspect).
 local function access(ply, ent, admin)
-    local a = { admin = admin }
+    local insp = admin and ply.rhylibDpInspect or false
+    local a = {}
+    local own
     if isMed(ent) then
-        local medic = D.IsMedic(ply)
-        a.view = medic or admin
-        a.upload = medic
-        a.mod = admin or (medic and D.IsCommander(ply))
+        own = D.IsMedic(ply)
+        a.upload = own
+        a.mod = insp or (own and (admin or D.IsCommander(ply)))
+        a.admin = admin and (own or insp)
     else
         local bn = ent:GetBattalion()
-        local mine = bn ~= "" and D.Battalion(ply) == bn
-        a.view = mine or D.IsMP(ply) or admin
-        a.upload = mine
-        a.mod = admin or (mine and D.IsCommander(ply))
+        own = bn ~= "" and D.Battalion(ply) == bn
+        a.upload = own
+        a.mod = insp or (own and (admin or D.IsCommander(ply)))
+        a.admin = admin and (own or insp or bn == "")
     end
+    a.view = own or insp
+    a.foreign = insp and not own   -- shown as "admin inspection"
+    a.rawAdmin = admin
     return a
 end
 
@@ -74,6 +81,7 @@ function D.SendTerminal(ply, ent)
         net.WriteBool(a.view)
         net.WriteBool(a.mod)
         net.WriteBool(admin)
+        net.WriteBool(a.foreign)
         net.WriteBool(key ~= "" and D.Banned(key, sid(ply)))
         net.WriteUInt(a.upload and math.min(uploadable(ply, ent), 255) or 0, 8)
         local list = a.view and book.list or {}
@@ -238,7 +246,8 @@ recv("dp.tunban", {
 recv("dp.tset", {
     read = function() return D.Clip(net.ReadString(), 64) end,
     run = function(ply, ent, a, bn)
-        if not a.admin or isMed(ent) then return end
+        -- The window's button only sets a new computer; changing one is a command.
+        if not a.rawAdmin or isMed(ent) or ent:GetBattalion() ~= "" then return end
         if string.sub(bn, 1, 2) == "__" then return end  -- reserved Data keys
         ent:SetBattalion(bn)
         if D.SavePlacements(true) == 0 then
@@ -247,6 +256,41 @@ recv("dp.tset", {
         D.SendTerminal(ply, ent)
     end,
 }, { rate = 2, burst = 3 })
+
+--------------------------------------------------------------------------
+-- Admin commands
+--------------------------------------------------------------------------
+
+-- rhylib_datapad_inspect: toggle reading any battalion computer / the holotable.
+concommand.Add("rhylib_datapad_inspect", function(ply)
+    if not IsValid(ply) then return end
+    withAdmin(ply, function(admin)
+        if not admin then ply:ChatPrint("Admins only") return end
+        ply.rhylibDpInspect = not ply.rhylibDpInspect or nil
+        ply:ChatPrint(ply.rhylibDpInspect and "Inspecting: you can read and moderate every computer (run again to stop)"
+            or "Inspection off: only your own battalion's computer")
+    end)
+end)
+
+-- rhylib_datapad_setbattalion <name>: change (or with no name, clear) the
+-- battalion of the computer you're looking at.
+concommand.Add("rhylib_datapad_setbattalion", function(ply, _, args, argStr)
+    if not IsValid(ply) then return end
+    withAdmin(ply, function(admin)
+        if not admin then ply:ChatPrint("Admins only") return end
+        local tr = ply:GetEyeTrace()
+        local ent = tr.Entity
+        if not IsValid(ent) or ent:GetClass() ~= "rhylib_bn_computer" or tr.HitPos:DistToSqr(ply:EyePos()) > 400 * 400 then
+            ply:ChatPrint("Look at a battalion computer")
+            return
+        end
+        local bn = D.Clip(string.Trim(argStr or ""), 64)
+        if string.sub(bn, 1, 2) == "__" then return end
+        ent:SetBattalion(bn)
+        D.SavePlacements(true)
+        ply:ChatPrint(bn ~= "" and ("Computer set to the " .. bn) or "Computer cleared (set it again from its window)")
+    end)
+end)
 
 --------------------------------------------------------------------------
 -- Placements

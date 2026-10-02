@@ -40,9 +40,9 @@ local SECTIONS = { "Info", "Plans", "Session", "AAR" }
 local OUTCOMES = { "Success", "Partial success", "Failure" }
 local STAT_NAMES = {
     kd = "Droid kills", kp = "Player kills", de = "Deaths", rv = "Revives",
-    he = "Heals", ar = "Arrests", mi = "Hours", mo = "Money", at = "Attended",
+    he = "Heals", ar = "Arrests", mi = "Hours", mo = "Money", at = "Attended", jd = "Arrested",
 }
-local STAT_KEYS = { "kd", "kp", "de", "rv", "he", "ar", "mi", "mo", "at" }   -- same order as the server
+local STAT_KEYS = { "kd", "kp", "de", "rv", "he", "ar", "mi", "mo", "at", "jd" }   -- same order as the server
 local RSVP = { "Attending", "Maybe", "Can't" }
 local APP_STATUS = { [0] = "Pending", [1] = "Accepted", [2] = "Declined", [3] = "Withdrawn" }
 local PERIOD_NAMES = { "Today", "This week", "Last week", "This month", "All time" }
@@ -56,6 +56,16 @@ end
 
 local build
 local sessionStrip
+
+-- Stats shown: MP battalions count arrests made, the others times arrested.
+local function shownKeys()
+    local mp = D.IsMPBattalion(term and term.bn or "")
+    local out = {}
+    for _, key in ipairs(STAT_KEYS) do
+        if not ((mp and key == "jd") or (not mp and key == "ar")) then out[#out + 1] = key end
+    end
+    return out
+end
 
 local function statText(k, v)
     if k == "mi" then return string.format("%.1f", (v or 0) / 60) end
@@ -609,6 +619,8 @@ local function statsTab(body)
         return
     end
 
+    local STAT_KEYS = shownKeys()   -- (this tab only)
+
     -- Totals: one tile per stat.
     local tiles = vgui.Create("DPanel", body)
     tiles:Dock(TOP)
@@ -780,11 +792,11 @@ local function leaveTab(body)
     local s = k.S
     if not unit then label(body, "Loading…") return end
     local left, right = columns(body)
-    local h = k.Heading(left, "On leave (" .. #unit.leave .. ")")
+    local h = k.Heading(left, "On LOA (" .. #unit.leave .. ")")
     h:Dock(TOP)
     local sp = k.Scroll(left)
     sp:Dock(FILL)
-    if #unit.leave == 0 then label(sp, "Nobody is on leave.") end
+    if #unit.leave == 0 then label(sp, "Nobody is on LOA.") end
     local now = os.time()
     for _, e in ipairs(unit.leave) do
         local range = os.date("%d %b", e.from) .. " – " .. os.date("%d %b %Y", e.to) .. (e.from <= now and "  (now)" or "")
@@ -800,7 +812,7 @@ local function leaveTab(body)
         end
     end
 
-    local rh = k.Heading(right, "File leave")
+    local rh = k.Heading(right, "File a leave of absence")
     rh:Dock(TOP)
     if not unit.member then
         label(right, "Only members of the battalion can file leave.")
@@ -823,10 +835,10 @@ local function leaveTab(body)
     local why = k.TextEntry(right, "Reason (optional)")
     why:Dock(TOP)
     why:DockMargin(0, 0, 0, s(10))
-    local go = k.Button(right, "File leave", function()
+    local go = k.Button(right, "File LOA", function()
         local a, b = parseDate(from:GetText(), false), parseDate(to:GetText(), true)
         if not (a and b) or b < a then
-            Derma_Message("Write the dates as YYYY-MM-DD, with the end after the start.", "Leave", "OK")
+            Derma_Message("Write the dates as YYYY-MM-DD, with the end after the start.", "LOA", "OK")
             return
         end
         send("dp.uloa", function()
@@ -1064,7 +1076,7 @@ local function personFile(parent)
     -- Service record (all time, this battalion).
     headRow(sp, "Service record")
     local parts = {}
-    for _, key in ipairs({ "mi", "at", "kd", "kp", "de", "rv", "he", "ar" }) do
+    for _, key in ipairs({ "mi", "at", "kd", "kp", "de", "rv", "he", D.IsMPBattalion(term.bn) and "ar" or "jd" }) do
         parts[#parts + 1] = STAT_NAMES[key] .. " " .. statText(key, f.stats[key])
     end
     local st = label(sp, table.concat(parts, "   ·   "), k.C.text, 13)
@@ -1272,7 +1284,7 @@ local function tabs()
     if not term.med then
         list[#list + 1] = { "board", "Board", boardTab }
         list[#list + 1] = { "orders", "Orders", ordersTab }
-        list[#list + 1] = { "leave", "Leave", leaveTab }
+        list[#list + 1] = { "leave", "LOA", leaveTab }
         list[#list + 1] = { "people", "Personnel", personnelTab }
         list[#list + 1] = { "stats", "Stats", statsTab }
         if unit and unit.manager then
@@ -1316,7 +1328,7 @@ function build()
     topButton(n > 0 and ("Upload " .. n .. " note" .. (n == 1 and "" or "s")) or "Nothing to upload", function()
         send("dp.tup")
     end, { accent = true, enabled = n > 0 and not term.banned })
-    if term.admin and not term.med then
+    if term.admin and not term.med and term.bn == "" then
         topButton("Set battalion", function()
             local m = k.Menu()
             local cats = DarkRP and DarkRP.getCategories and DarkRP.getCategories().jobs or {}
@@ -1346,7 +1358,7 @@ function build()
     end
     if not term.view then
         label(body, term.med and "Medical records are for medics only." or
-            ("This is the " .. term.bn .. " battalion's computer. Only its members and military police can read it."), nil, 14)
+            ("This is the " .. term.bn .. " battalion's computer. Only its members can read it."), nil, 14)
         if not term.med then applyPanel(body) end
         return
     end
@@ -1385,8 +1397,11 @@ local function open()
             if not term then return end
             local title = term.med and "Medical holotable" or (term.bn ~= "" and (term.bn .. " computer") or "Battalion computer")
             -- Fully opaque: the text must stay readable whatever is behind the screen.
-            k.Plate(0, 0, w, h, { title = title, sub = term.med and "Medical records" or "Battalion", ticks = "all", header = s(38), bg = OPAQUE })
+            k.Plate(0, 0, w, h, { title = title, sub = term.foreign and "Admin inspection" or (term.med and "Medical records" or "Battalion"),
+                ticks = "all", header = s(38), bg = OPAQUE })
         end
+        -- The battalion's colour as the accent.
+        k.Tint(panel, function() return term and not term.med and D.BnColor(term.bn) or nil end)
         function panel:Think()
             local r = D.Cfg("useRange") + 20
             if not term or not IsValid(term.ent) or LocalPlayer():GetPos():DistToSqr(term.ent:GetPos()) > r * r then self:Remove() end
@@ -1414,6 +1429,7 @@ Rhylib.Net.Receive("dp.term", function()
     t.view = net.ReadBool()
     t.mod = net.ReadBool()
     t.admin = net.ReadBool()
+    t.foreign = net.ReadBool()
     t.banned = net.ReadBool()
     t.upload = net.ReadUInt(8)
     for i = 1, net.ReadUInt(8) do

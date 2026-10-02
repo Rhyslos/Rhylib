@@ -20,6 +20,40 @@ local function send(name, fn)
     net.SendToServer()
 end
 
+-- A battalion's colour (its DarkRP job category), brightened enough to
+-- read as an accent. nil if unknown.
+local bnColors = {}
+function D.BnColor(bn)
+    if not bn or bn == "" then return nil end
+    local c = bnColors[bn]
+    if c ~= nil then return c or nil end
+    c = false
+    local cats = DarkRP and DarkRP.getCategories and DarkRP.getCategories()
+    for _, cat in ipairs(cats and cats.jobs or {}) do
+        if cat.name == bn and IsColor(cat.color) then c = cat.color end
+    end
+    if not c then
+        for _, j in pairs(RPExtraTeams or {}) do
+            if j.category == bn and IsColor(j.color) then c = j.color break end
+        end
+    end
+    if c then
+        local m = math.max(c.r, c.g, c.b, 1)
+        local f = m < 150 and 150 / m or 1
+        c = Color(math.min(255, c.r * f), math.min(255, c.g * f), math.min(255, c.b * f), 255)
+    end
+    bnColors[bn] = c
+    return c or nil
+end
+
+-- Is this the military police battalion (its jobs have mp = true)?
+function D.IsMPBattalion(bn)
+    for _, j in pairs(RPExtraTeams or {}) do
+        if j.category == bn and j.mp then return true end
+    end
+    return false
+end
+
 --------------------------------------------------------------------------
 -- Building blocks
 --------------------------------------------------------------------------
@@ -475,7 +509,7 @@ local function openWindow()
     function panel:Paint(w, h)
         local st = D.state
         k.Plate(0, 0, w, h, { title = "Datapad", ticks = "all", header = s(38) })
-        local right = w - s(54)
+        local right = w - s(14) - s(132) - s(12)
         if dl then
             -- Download progress, left of the refresh light.
             local f = math.Clamp((RealTime() - dl.start) / dl.dur, 0, dl.data and 1 or 0.97)
@@ -504,46 +538,57 @@ local function openWindow()
     end
     function panel:OnRemove() dl = nil end   -- closing the pad cancels a download
 
-    -- The refresh light: blinks green when the computer has something new.
+    -- The sync button: a panel button with a round status light.
+    -- Light: off when up to date, blinking green when the computer has
+    -- something new, amber pulsing while downloading.
     local refresh = vgui.Create("DButton", panel)
     refresh:SetText("")
-    refresh:SetSize(s(30), s(30))
-    refresh:SetPos(s(960) - s(14) - s(30), s(4))
-    refresh:SetTooltip("Download from the battalion computer")
+    refresh:SetSize(s(132), s(28))
+    refresh:SetPos(s(960) - s(14) - s(132), s(5))
+    refresh:SetTooltip("Download the board and logs from the battalion computer")
     function refresh:Paint(w, h)
         local st = D.state
         if not st or st.bn == "" then return true end
-        local cx, cy, r = w * 0.5, h * 0.5, s(9)
+        local C = k.C
         local new = hasNew()
-        local col = (dl and k.C.textDim) or (new and k.C.good) or k.C.text
-        if new and not dl and math.floor(RealTime() * 2.5) % 2 == 0 then
-            surface.SetDrawColor(k.C.good.r, k.C.good.g, k.C.good.b, 60)
-            draw.NoTexture()
-            surface.DrawRect(0, 0, w, h)
+        -- Body, like a kit button.
+        local body = C.button
+        if not dl and self:IsDown() then body = C.buttonDown elseif not dl and self:IsHovered() then body = C.buttonHover end
+        k.SetCol(body)
+        surface.DrawRect(0, 0, w, h)
+        k.SetCol(C.edgeDark)
+        surface.DrawOutlinedRect(0, 0, w, h)
+        k.SetCol(C.edgeLight)
+        surface.DrawLine(1, 1, w - 1, 1)
+        -- The light.
+        local r = math.floor(h * 0.24)
+        local cx, cy = s(8) + r + s(2), math.floor(h * 0.5)
+        local lit, col = 0, C.good
+        if dl then
+            col = Color(235, 170, 60)
+            lit = 0.55 + 0.45 * math.sin(RealTime() * 9)
+        elseif new then
+            lit = (math.floor(RealTime() * 2.2) % 2 == 0) and 1 or 0.08
         end
-        -- A circular arrow: most of a ring, and an arrowhead at its end.
-        surface.SetDrawColor(col)
-        local a0 = dl and (RealTime() * 6) or 0.7
-        local steps = 14
-        for i = 0, steps - 1 do
-            local t0 = a0 + (i / steps) * 5.2
-            local t1 = a0 + ((i + 1) / steps) * 5.2
-            surface.DrawLine(cx + math.cos(t0) * r, cy + math.sin(t0) * r, cx + math.cos(t1) * r, cy + math.sin(t1) * r)
-            surface.DrawLine(cx + math.cos(t0) * (r - 1), cy + math.sin(t0) * (r - 1), cx + math.cos(t1) * (r - 1), cy + math.sin(t1) * (r - 1))
+        -- Bezel, then the lamp (dark when off), then a glow and a highlight.
+        draw.RoundedBox(r + 2, cx - r - 2, cy - r - 2, (r + 2) * 2, (r + 2) * 2, C.edgeDark)
+        local off = Color(col.r * 0.18, col.g * 0.18, col.b * 0.18, 255)
+        local on = Color(Lerp(lit, off.r, col.r), Lerp(lit, off.g, col.g), Lerp(lit, off.b, col.b), 255)
+        draw.RoundedBox(r, cx - r, cy - r, r * 2, r * 2, on)
+        if lit > 0.3 then
+            local g = r * 2
+            draw.RoundedBox(g, cx - g, cy - g, g * 2, g * 2, Color(col.r, col.g, col.b, 40 * lit))
         end
-        local te = a0 + 5.2
-        local ex, ey = cx + math.cos(te) * r, cy + math.sin(te) * r
-        local tx, ty = -math.sin(te), math.cos(te)   -- along the ring
-        local nx, ny = math.cos(te), math.sin(te)    -- outward
-        draw.NoTexture()
-        surface.DrawPoly({
-            { x = ex + tx * s(5), y = ey + ty * s(5) },
-            { x = ex + nx * s(4), y = ey + ny * s(4) },
-            { x = ex - nx * s(4), y = ey - ny * s(4) },
-        })
+        local hr = math.max(1, math.floor(r * 0.35))
+        draw.RoundedBox(hr, cx - r * 0.45 - hr, cy - r * 0.45 - hr, hr * 2, hr * 2, Color(255, 255, 255, 40 + 60 * lit))
+        -- Label.
+        local text = dl and "Syncing" or (new and "New data" or "Sync")
+        draw.SimpleText(string.upper(text), k.Font(12, 700), cx + r + s(10), h * 0.5, dl and C.textDim or C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         return true
     end
     function refresh:DoClick() startDownload() end
+    -- Your battalion's colour as the accent.
+    k.Tint(panel, function() return D.state and D.BnColor(D.state.bn) or nil end)
     if Rhylib.Menus.RegisterCloser then
         Rhylib.Menus.RegisterCloser("datapad", function()
             if IsValid(panel) then panel:Remove() return true end

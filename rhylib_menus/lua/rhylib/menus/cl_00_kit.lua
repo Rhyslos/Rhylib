@@ -132,6 +132,25 @@ end
 -- Panels
 --------------------------------------------------------------------------
 
+-- Give a window its own accent colour: its Paint swaps the accent in and
+-- PaintOver (after the children) puts it back. getCol() returns a Color or nil.
+function K.Tint(panel, getCol)
+    local paint, over = panel.Paint, panel.PaintOver
+    function panel:Paint(w, h)
+        self.rhylibAccent = C.accent
+        local c = getCol()
+        if c then C.accent = c end
+        if paint then return paint(self, w, h) end
+    end
+    function panel:PaintOver(w, h)
+        if over then over(self, w, h) end
+        if self.rhylibAccent then
+            C.accent = self.rhylibAccent
+            self.rhylibAccent = nil
+        end
+    end
+end
+
 -- A button. opts: accent (filled stripe), danger (red stripe), small,
 -- enabled (function or bool), tooltip, align ("left"), icon text.
 function K.Button(parent, text, fn, opts)
