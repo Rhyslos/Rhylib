@@ -1,6 +1,9 @@
 --[[
     Base for the medical kits (revive kit, first aid kit, medkit).
-    Left click: use on the player you aim at. Right click: on yourself.
+    Kits with OpensMenu (medkit, first aid kit): left click on someone opens
+    their injury menu (drag the kit onto a body part); on a downed player a
+    first aid kit revives. Right click opens your own.
+    Others (revive kit): left click uses it on the player you aim at.
     The server does the work (rhylib_medical sv_20_actions.lua); a timer
     plays until it's done. Kits are inventory items (InvW / InvStack).
 ]]
@@ -38,6 +41,7 @@ function SWEP:UseKit(onSelf)
     Rhylib.Medical.UseKit(owner, self:GetClass(), onSelf)
 end
 
+-- (the server decides; menu kits get the injury menu opened via med.open)
 function SWEP:PrimaryAttack()
     self:SetNextPrimaryFire(CurTime() + 0.5)
     self:SetNextSecondaryFire(CurTime() + 0.5)
@@ -47,7 +51,7 @@ end
 function SWEP:SecondaryAttack()
     self:SetNextPrimaryFire(CurTime() + 0.5)
     self:SetNextSecondaryFire(CurTime() + 0.5)
-    if self.CanSelf then self:UseKit(true) end
+    if self.CanSelf or self.OpensMenu then self:UseKit(true) end
 end
 
 function SWEP:Reload() end

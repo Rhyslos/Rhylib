@@ -33,6 +33,8 @@ timer.Create("Rhylib.Medical.List", 0.25, 0, function()
 end)
 
 local note, noteTime = nil, 0
+-- The same short message, from the client (e.g. a kit with nobody aimed at).
+function Med.ShowNote(text) note, noteTime = text, RealTime() end
 Rhylib.Net.Receive("med.note", function()
     note, noteTime = net.ReadString(), RealTime()
 end)

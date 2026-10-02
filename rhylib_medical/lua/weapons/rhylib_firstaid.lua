@@ -5,7 +5,8 @@ SWEP.PrintName = "First aid kit"
 SWEP.Spawnable = true
 SWEP.Category = "Rhylib Medical"  -- the spawn menu reads it from this file, not the base
 SWEP.CanSelf = true
-SWEP.Hint = "LMB  treat or revive (medics)   ·   RMB  treat yourself"
+SWEP.OpensMenu = true
+SWEP.Hint = "LMB  treat someone / revive the downed   ·   RMB  treat yourself"
 
 -- Doesn't stack. Holds a charge (config firstAidCharge health), kept by the
 -- inventory item as fill and shown as %.

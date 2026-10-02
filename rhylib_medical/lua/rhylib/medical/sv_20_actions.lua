@@ -370,9 +370,13 @@ end
 --------------------------------------------------------------------------
 
 -- From a kit weapon. self = right click (treat yourself).
+-- Medkits and first aid kits on someone standing open the injury menu on
+-- the client instead (treatment goes through med.treat).
 function Med.UseKit(ply, class, self)
     if Med.acts[ply] then return end
+    local menuKit = class == Med.MEDKIT or class == Med.FIRST_AID
     if self then
+        if menuKit then Med.OpenMenuFor(ply, nil) return end
         if class == Med.FIRST_AID then Med.Start(ply, Med.A_FA_HEAL, ply)
         elseif class == Med.MEDKIT then Med.Start(ply, Med.A_MEDKIT, ply) end
         return
@@ -389,6 +393,18 @@ function Med.UseKit(ply, class, self)
         Med.Note(ply, "Aim at a downed player")
         return
     end
+    if menuKit then
+        -- Someone in front (standing): their injury menu, to drag the kit onto a part.
+        ply:LagCompensation(true)
+        local t = Med.FindStanding(ply)
+        ply:LagCompensation(false)
+        if t then
+            Med.OpenMenuFor(ply, t)
+        else
+            Med.Note(ply, "Aim at someone close, or right click to treat yourself")
+        end
+        return
+    end
 
     ply:LagCompensation(true)
     local t = Med.FindStanding(ply)
@@ -398,6 +414,14 @@ function Med.UseKit(ply, class, self)
         return
     end
     Med.Start(ply, class == Med.FIRST_AID and Med.A_FA_HEAL or Med.A_MEDKIT, t)
+end
+
+-- Open the injury menu on ply's screen: patient's, or their own (nil).
+Rhylib.Net.Register("med.open")
+function Med.OpenMenuFor(ply, patient)
+    Rhylib.Net.Start("med.open")
+    net.WriteEntity(patient or NULL)
+    net.Send(ply)
 end
 
 -- From the E menu on a downed player: stabilise or revive with a chosen kit.

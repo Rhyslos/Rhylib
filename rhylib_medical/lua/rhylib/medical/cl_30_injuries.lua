@@ -263,10 +263,10 @@ function PANEL:Paint(w, h)
     draw.SimpleText("Drag a kit from the right onto a body part.", font(13), ex, hy + s(22), UI.Colors.textDim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
     if medic then
         draw.SimpleText("First aid kit: fixes the part completely (uses charge).", font(13), ex, hy + s(42), UI.Colors.textDim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-        draw.SimpleText("Medkit: stops bleeding, heals damage and burns, not bones.", font(13), ex, hy + s(62), UI.Colors.textDim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        draw.SimpleText("Medkit: stops bleeding, heals health, damage and burns, not bones.", font(13), ex, hy + s(62), UI.Colors.textDim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
     else
-        draw.SimpleText("Medkit: stops bleeding.", font(13), ex, hy + s(42), UI.Colors.textDim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-        draw.SimpleText("Anything else needs a medic.", font(13), ex, hy + s(62), UI.Colors.textDim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        draw.SimpleText("Medkit: stops the part's bleeding and heals some health.", font(13), ex, hy + s(42), UI.Colors.textDim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        draw.SimpleText("Bones, burns and deep damage need a medic.", font(13), ex, hy + s(62), UI.Colors.textDim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
     end
 
     -- Inventory
@@ -417,14 +417,12 @@ local function lookTarget()
     return Med.FindDowned and Med.FindDowned(me) or nil
 end
 
-function Med.ToggleInjuries()
-    if IsValid(Med.injuryPanel) then
-        Med.injuryPanel:Remove()
-        return
-    end
+-- Open the injury menu for patient (a player), or your own (nil).
+function Med.OpenInjuries(target)
+    if IsValid(Med.injuryPanel) then Med.injuryPanel:Remove() end
     local me = LocalPlayer()
     if not me:Alive() or Med.IsDown(me) then return end
-    local target = lookTarget()
+    if target == me then target = nil end
     local p = vgui.Create("RhylibInjuries")
     if IsValid(target) then
         p:SetPatient(target)
@@ -433,6 +431,14 @@ function Med.ToggleInjuries()
         net.SendToServer()
     end
     Med.injuryPanel = p
+end
+
+function Med.ToggleInjuries()
+    if IsValid(Med.injuryPanel) then
+        Med.injuryPanel:Remove()
+        return
+    end
+    Med.OpenInjuries(lookTarget())
 end
 concommand.Add("rhylib_injuries", Med.ToggleInjuries)
 
@@ -464,4 +470,10 @@ Rhylib.Hook.Add("InitPostEntity", "medical.injurymenu", function()
     if Menus.AddSetting then
         Menus.AddSetting("Medical", { id = "med.key", order = 10, title = "Injury menu key", kind = "key", convar = "rhylib_medical_key" })
     end
+end)
+
+-- A kit's click on the server: open the menu (someone's, or your own).
+Rhylib.Net.Receive("med.open", function()
+    local p = net.ReadEntity()
+    Med.OpenInjuries(IsValid(p) and p or nil)
 end)

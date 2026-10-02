@@ -98,10 +98,14 @@ local function applyHit(bolt, tr)
         return
     end
 
+    -- Models whose hitboxes are all "generic": guess the part from the hit position.
+    local group = tr.HitGroup
+    if group == HITGROUP_GENERIC and ent:IsPlayer() and Rhylib.HitGroupAt then group = Rhylib.HitGroupAt(ent, tr.HitPos) end
+
     local mult = 1
-    if tr.HitGroup == HITGROUP_HEAD then
+    if group == HITGROUP_HEAD then
         mult = Config.Get("weapons", "headMult")
-    elseif LIMBS[tr.HitGroup] then
+    elseif LIMBS[group] then
         mult = Config.Get("weapons", "limbMult")
     end
 
@@ -118,12 +122,12 @@ local function applyHit(bolt, tr)
     -- Which body part was hit (rhylib_medical reads it during the hit).
     local living = ent:IsPlayer() or ent:IsNPC() or ent:IsNextBot()
     local wasDown = ent.rhylibDown
-    if ent:IsPlayer() then ent.rhylibHitGroup = tr.HitGroup end
+    if ent:IsPlayer() then ent.rhylibHitGroup = group end
     ent:TakeDamageInfo(dmg)
     if ent:IsPlayer() then ent.rhylibHitGroup = nil end
 
     if IsValid(owner) and owner:IsPlayer() and living then
-        local kind = tr.HitGroup == HITGROUP_HEAD and Bolts.HIT_HEAD or Bolts.HIT_BODY
+        local kind = group == HITGROUP_HEAD and Bolts.HIT_HEAD or Bolts.HIT_BODY
         -- Dropped them: killed, or downed (rhylib_medical).
         if ent:Health() <= 0 or (ent:IsPlayer() and not ent:Alive()) or (ent.rhylibDown and not wasDown) then
             kind = Bolts.HIT_KILL

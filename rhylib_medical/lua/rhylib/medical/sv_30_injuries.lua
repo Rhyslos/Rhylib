@@ -5,8 +5,10 @@
       fall damage        both legs (a hard fall breaks one)
       blast and fire     spread over the body as damage and burns
       everything else    the part that was hit (rhylib bolts tag the hit
-                         group; engine bullets use LastHitGroup); torso if
-                         unknown
+                         group; engine bullets use LastHitGroup). Models
+                         with only "generic" hitboxes: guessed from the
+                         damage position (Rhylib.HitGroupAt), else a
+                         random part (torso most likely)
     Once a second, only for injured players: bleeding takes health (a
     bleed that would kill downs you instead), light bleeds stop after a
     while, and parts with nothing else wrong slowly recover.
@@ -124,6 +126,8 @@ local GROUP_LIMB = {
 -- How blast and fire spread over the body.
 local SPREAD = { head = 0.1, torso = 0.3, larm = 0.15, rarm = 0.15, lleg = 0.15, rleg = 0.15 }
 local IS_LIMB = { larm = true, rarm = true, lleg = true, rleg = true }
+-- No idea where it hit: a random part, torso most often.
+local RANDOM_LIMB = { "torso", "torso", "torso", "head", "larm", "rarm", "lleg", "rleg" }
 
 local function hurt(ply, t, limb, amount, canBleed, now)
     local p = t[limb]
@@ -162,7 +166,11 @@ Rhylib.Hook.Add("PostEntityTakeDamage", "medical.injuries", function(ply, dmg, t
         end
     else
         local group = ply.rhylibHitGroup or ply:LastHitGroup()
-        local limb = GROUP_LIMB[group] or "torso"
+        if (not group or group == HITGROUP_GENERIC) and Rhylib.HitGroupAt then
+            group = Rhylib.HitGroupAt(ply, dmg:GetDamagePosition())
+        end
+        local limb = GROUP_LIMB[group]
+        if not limb or group == HITGROUP_GENERIC then limb = RANDOM_LIMB[math.random(#RANDOM_LIMB)] end
         hurt(ply, t, limb, amount, bit.band(dtype, bit.bor(DMG_BULLET, DMG_SLASH, DMG_CLUB, DMG_GENERIC, DMG_BUCKSHOT, DMG_SNIPER)) ~= 0 or dtype == 0, now)
         -- Torso hits knock the wind out of you.
         if limb == "torso" and Rhylib.Stamina and Rhylib.Stamina.Drain then
@@ -284,13 +292,13 @@ function Med.TreatPart(helper, patient, limb, kit)
     local name = Med.LIMB_NAMES[limb] or "Part"
     local medic = Med.IsMedic(helper)
     -- Nothing left to do by now (healed meanwhile): no kit used.
-    local hurtHP = medic and patient:Health() < patient:GetMaxHealth()
+    local hurtHP = patient:Health() < patient:GetMaxHealth()
     if nothingWrong(p) and not hurtHP then
         Med.Note(helper, name .. ": nothing left to treat")
         Med.MarkInjuries(patient)
         return
     end
-    if kit == Med.MEDKIT and p.bleed == 0 and not (medic and (p.dmg > 0 or p.burn > 0 or hurtHP)) then
+    if kit == Med.MEDKIT and p.bleed == 0 and not hurtHP and not (medic and (p.dmg > 0 or p.burn > 0)) then
         Med.Note(helper, name .. ": nothing left to treat")
         return
     end
@@ -305,14 +313,15 @@ function Med.TreatPart(helper, patient, limb, kit)
         Med.Note(helper, name .. " treated")
     else
         if not Med.Consume(helper, Med.MEDKIT) then return end
+        local bled = p.bleed > 0
         p.bleed = 0
+        patient:SetHealth(math.min(patient:GetMaxHealth(), patient:Health() + (medic and cfg("medkitHealMedic") or cfg("medkitHeal"))))
         if medic then
             local r = cfg("medkitLimbRepair")
             p.dmg = math.max(0, p.dmg - r)
             p.burn = math.max(0, p.burn - r)
-            patient:SetHealth(math.min(patient:GetMaxHealth(), patient:Health() + cfg("medkitHealMedic")))
         end
-        Med.Note(helper, name .. (medic and " patched up" or ": bleeding stopped"))
+        Med.Note(helper, name .. (medic and " patched up" or (bled and ": bleeding stopped" or " bandaged")))
     end
     hook.Run("Rhylib.PlayerHealed", patient, helper)
     Med.MarkInjuries(patient)
@@ -340,17 +349,17 @@ Rhylib.Net.Receive("med.treat", function(ply)
     local medic = Med.IsMedic(ply)
     local kit = kind == Med.TREAT_FIRSTAID and Med.FIRST_AID or Med.MEDKIT
     -- Missing health can be treated on any part (limbs heal on their own, health doesn't).
-    local hurtHP = medic and patient:Health() < patient:GetMaxHealth()
+    local hurtHP = patient:Health() < patient:GetMaxHealth()
     if not hurtHP and nothingWrong(p) then
         Med.Note(ply, name .. ": nothing to treat")
         return
     end
     if kit == Med.MEDKIT then
-        -- Troopers can only stop bleeding; medics also heal damage and burns.
+        -- Medkits stop bleeding and give health; medics also heal damage and burns.
         local canBleed = p and p.bleed > 0
-        local canHeal = medic and ((p and (p.dmg > 0 or p.burn > 0)) or hurtHP)
+        local canHeal = hurtHP or (medic and p and (p.dmg > 0 or p.burn > 0))
         if not canBleed and not canHeal then
-            Med.Note(ply, medic and "A medkit can't set bones; use a first aid kit" or "Only medics can treat that (medkits stop bleeding)")
+            Med.Note(ply, medic and "A medkit can't set bones; use a first aid kit" or "A medkit can't fix that: find a medic")
             return
         end
     end
