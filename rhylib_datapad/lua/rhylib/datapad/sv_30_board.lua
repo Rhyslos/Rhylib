@@ -5,8 +5,12 @@
       dp.tfind   entity, text, days (0 = any time) -> dp.tfound: matching ids
                  (title, text, author or patient contain the text)
 
-    Board (battalion computers only): posts in sections Info, Plans,
-    Sessions and AAR (after-action reports, with an outcome: 1 success,
+    Battalion info: one living text per battalion (Data "dp_info"/bn =
+    { txt, by, t }), edited over time by those who can post; sent with
+    the board and in the datapad download.
+
+    Board (battalion computers only): posts in sections Session and AAR
+    (Info and Plans are old sections: their posts stay readable, no new ones) (after-action reports, with an outcome: 1 success,
     2 partial, 3 failure, and the session they report on). Managers (SGT+)
     may write AARs and edit or delete their own. A session has a time (os.time, shown in each player's own
     time zone); past sessions are listed as an archive. Posts can be pinned.
@@ -17,6 +21,7 @@
       dp.bsave   entity, id (0 = new), section, title, text, time, outcome, session id
       dp.bdel    entity, id
       dp.bpin    entity, id
+      dp.binfo   entity, text: save the battalion info
 
     Data "dp_board"/battalion = { next, list }.
 ]]
@@ -83,6 +88,13 @@ local function canChange(ply, bn, admin, p)
     return p.sec == D.SEC_AAR and p.s == ply:SteamID64() and canAAR(ply, bn, admin)
 end
 
+function D.WriteInfo(bn)
+    local i = bn ~= "" and D.Load("dp_info", bn, {}) or {}
+    net.WriteString(i.txt or "")
+    net.WriteString(i.by or "")
+    net.WriteUInt(i.t or 0, 32)
+end
+
 local function sendBoard(ply, ent, a)
     local bn = ent:GetBattalion()
     local list = bn ~= "" and a.view and D.Board(bn).list or {}
@@ -106,6 +118,7 @@ local function sendBoard(ply, ent, a)
         net.WriteUInt(p.ses or 0, 16)
         net.WriteBool(p.s ~= nil and p.s == me)
     end
+    D.WriteInfo(a.view and bn or "")
     net.Send(ply)
 end
 
@@ -180,6 +193,7 @@ D.TermRecv("dp.bsave", {
         local full = D.CanPost(ply, bn, a.admin)
         -- Without full rights: AARs only.
         if not full and not (arg.sec == D.SEC_AAR and canAAR(ply, bn, a.admin)) then return end
+        if arg.id == 0 and arg.sec < D.SEC_SESSION then return end   -- (old sections: no new posts)
         if arg.ti == "" then arg.ti = "Untitled" end
         local at = arg.sec == D.SEC_SESSION and arg.at or 0
         local aar = arg.sec == D.SEC_AAR
@@ -232,3 +246,15 @@ D.TermRecv("dp.bpin", {
         sendBoard(ply, ent, a)
     end,
 })
+
+D.TermRecv("dp.binfo", {
+    read = function() return D.Clip(net.ReadString(), 4000, true) end,
+    run = function(ply, ent, a, txt)
+        if not boardTerm(ent) or not a.view then return end
+        local bn = ent:GetBattalion()
+        if not D.CanPost(ply, bn, a.admin) then return end
+        D.Store("dp_info", bn, { txt = txt, by = ply:Nick(), t = os.time() })
+        D.Touch(bn)
+        sendBoard(ply, ent, a)
+    end,
+}, { rate = 2, burst = 3 })

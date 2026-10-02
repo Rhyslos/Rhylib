@@ -3,8 +3,13 @@
     Ranks come from rhylib_roster (Rhylib.Roster): "managers" are rank
     manageRank+ (SGT), "officers" boardRank+ (LT), admins always.
 
-    Orders        Data "dp_orders"/bn = { txt, by, t }. Officers set them;
-                  online members get a chat note and the sync light.
+    Orders        Data "dp_ord"/bn = { next, list { id, ti, b, to, by, bs, t,
+                  st, sb, stt } }. to = { ["s"..sid] = name } or nil (whole
+                  battalion). Managers issue them; status (D.ORDER_STATUS)
+                  is set by managers (any) or the people ordered (In
+                  progress / Completed), at the computer or on the datapad.
+                  Assignees (or everyone) are told; the sync light blinks.
+                  The old single text ("dp_orders") becomes the first order.
     Leave         Data "dp_loa"/bn = list { id, s, n, from, to, why }.
                   Members file their own; managers can remove any. Shown on
                   the roster page while it runs (Rhylib.RosterNote).
@@ -22,9 +27,15 @@
                   "at" stat).
 
       dp.uopen  entity -> dp.unit (orders, leave, my application, pending list)
-      dp.uorders / dp.uloa / dp.uloadel / dp.uapply / dp.udecide   entity, ...
+      dp.uorder   entity, title, text, n, n x sid (0 = whole battalion)
+      dp.ustatus  entity, order id, status    (dp.ostatus: same from the datapad)
+      dp.uodel    entity, order id
+      dp.uloa / dp.uloadel / dp.uapply / dp.udecide   entity, ...
       dp.ursvp / dp.ucheck   entity, post id (, choice)
       dp.uwithdraw entity: withdraw your pending application
+      dp.uappget  entity, application id -> dp.uappinfo (managers): the
+                  applicant's own all-time stats, quals, commendations,
+                  active strikes and arrest record (with reasons)
       dp.uanswer  (anywhere) join? for an accepted application
       dp.uprompt  server -> player: 0 pending note, 1 accepted popup, 2 declined
 ]]
@@ -32,7 +43,7 @@
 local D = Rhylib.Datapad
 local Data = Rhylib.Data
 
-for _, n in ipairs({ "dp.unit", "dp.uprompt" }) do Rhylib.Net.Register(n) end
+for _, n in ipairs({ "dp.unit", "dp.uprompt", "dp.uappinfo" }) do Rhylib.Net.Register(n) end
 
 local function sid(ply) return ply:SteamID64() or "" end
 local function R() return Rhylib.Roster end
@@ -87,6 +98,8 @@ local function activeLeave(bn)
     end
     return t
 end
+
+D.ActiveLeave = activeLeave
 
 Rhylib.Hook.Add("Rhylib.RosterNote", "datapad.loa", function(bn, id)
     local now = os.time()
@@ -196,8 +209,7 @@ function D.SendUnit(ply, ent, a)
     local bn = ent:GetBattalion()
     local admin = a.admin
     local member = isMember(ply, bn)
-    local manager = isManager(ply, bn, admin)
-    local orders = a.view and D.Load("dp_orders", bn, {}) or {}   -- members, MPs, admins
+    local manager = a.view and isManager(ply, bn, admin) or false
     local leave = activeLeave(bn).list
     local m = myApp(sid(ply))
     local Ro = R()
@@ -212,9 +224,7 @@ function D.SendUnit(ply, ent, a)
     net.WriteBool(c and c.trained and c.bn == "" and not (m and (m.st == 0 or m.st == 1)) or false)
     net.WriteString(m and m.bn or "")
     net.WriteUInt(m and m.st or 0, 2)
-    net.WriteString(orders.txt or "")
-    net.WriteString(orders.by or "")
-    net.WriteUInt(orders.t or 0, 32)
+    D.WriteOrders(ply, a.view and bn or "", manager)
     -- Leave (members and up see it).
     local nl = (member or admin) and math.min(#leave, 63) or 0
     net.WriteUInt(nl, 6)
@@ -231,10 +241,10 @@ function D.SendUnit(ply, ent, a)
     local apps = {}
     if manager then
         for _, x in ipairs(list("dp_apps", bn).list) do
-            if x.st == 0 and #apps < 63 then apps[#apps + 1] = x end
+            if x.st == 0 and #apps < 30 then apps[#apps + 1] = x end
         end
         for _, x in ipairs(list("dp_apps", bn).list) do
-            if x.st ~= 0 and #apps < 63 then apps[#apps + 1] = x end
+            if x.st ~= 0 and #apps < 30 then apps[#apps + 1] = x end
         end
     end
     net.WriteUInt(#apps, 6)
@@ -257,20 +267,175 @@ D.TermRecv("dp.uopen", {
     end,
 }, { rate = 3, burst = 4 })
 
-D.TermRecv("dp.uorders", {
-    read = function() return D.Clip(net.ReadString(), D.Cfg("bodyMax"), true) end,
-    run = function(ply, ent, a, txt)
-        if not unitTerm(ent) then return end
-        local bn = ent:GetBattalion()
-        if not isOfficer(ply, bn, a.admin) then return end
-        D.Store("dp_orders", bn, { txt = txt, by = ply:Nick(), t = os.time() })
-        D.Touch(bn)
-        for _, p in ipairs(battalionPlayers(bn)) do
-            if p ~= ply then p:ChatPrint("New orders for the " .. bn .. " from " .. ply:Nick() .. ". Check the battalion computer or your datapad.") end
+--------------------------------------------------------------------------
+-- Orders
+--------------------------------------------------------------------------
+
+D.ORDER_STATUS = { "Issued", "In progress", "Completed", "Success", "Failed", "Cancelled" }
+local ORDER_KEEP, ORDER_SEND, ORDER_NAMES = 40, 25, 8   -- (keeps the message small)
+
+local function orders(bn)
+    local t = D.Load("dp_ord", bn, nil)
+    if not t.list then
+        t.next, t.list = 1, {}
+        -- The old single text becomes the first order.
+        local old = Data.Get("dp_orders", bn)
+        if istable(old) and (old.txt or "") ~= "" then
+            t.list[1] = { id = 1, ti = "Standing orders", b = old.txt, by = old.by or "?", t = old.t or os.time(), st = 1 }
+            t.next = 2
+            Data.Delete("dp_orders", bn)
+            D.Store("dp_ord", bn, t)
         end
+    end
+    return t
+end
+
+local function assigned(o, id) return o.to == nil or o.to["s" .. id] ~= nil end
+
+-- id, title, text, by, time, status, status by, status time, whole battalion,
+-- n x name, mine (named in it), can set status. Newest first, open ones first.
+function D.WriteOrders(ply, bn, manager)
+    local me = sid(ply)
+    local open, closed = {}, {}
+    if bn ~= "" then
+        for _, o in ipairs(orders(bn).list) do
+            if (o.st or 1) <= 2 then open[#open + 1] = o else closed[#closed + 1] = o end
+        end
+    end
+    for _, o in ipairs(closed) do open[#open + 1] = o end
+    local n = math.min(#open, ORDER_SEND)
+    net.WriteUInt(n, 6)
+    for i = 1, n do
+        local o = open[i]
+        net.WriteUInt(o.id, 16)
+        net.WriteString(o.ti or "")
+        net.WriteString(o.b or "")
+        net.WriteString(o.by or "?")
+        net.WriteUInt(o.t or 0, 32)
+        net.WriteUInt(o.st or 1, 3)
+        net.WriteString(o.sb or "")
+        net.WriteUInt(o.stt or 0, 32)
+        net.WriteBool(o.to == nil)
+        local names = {}
+        for _, name in pairs(o.to or {}) do names[#names + 1] = tostring(name) end
+        table.sort(names)
+        net.WriteUInt(math.min(#names, 127), 7)   -- how many in all
+        local nn = math.min(#names, ORDER_NAMES)
+        net.WriteUInt(nn, 4)
+        for j = 1, nn do net.WriteString(names[j]) end
+        local mine = o.to ~= nil and o.to["s" .. me] ~= nil
+        net.WriteBool(mine)
+        net.WriteBool(manager or (assigned(o, me) and o.to ~= nil))
+    end
+end
+
+local function tellOrder(bn, o, msg)
+    for _, p in ipairs(battalionPlayers(bn)) do
+        if assigned(o, sid(p)) then p:ChatPrint(msg) end
+    end
+end
+
+-- Set an order's status. Managers: any; the people named in it: In progress or Completed.
+function D.SetOrderStatus(ply, bn, id, st, admin)
+    if st < 1 or st > #D.ORDER_STATUS then return false end
+    local t = orders(bn)
+    for _, o in ipairs(t.list) do
+        if o.id == id then
+            local manager = isManager(ply, bn, admin)
+            local named = o.to ~= nil and o.to["s" .. sid(ply)] ~= nil and isMember(ply, bn)
+            if not manager and not (named and (st == 2 or st == 3)) then return false end
+            if o.st == st then return false end
+            o.st, o.sb, o.stt = st, ply:Nick(), os.time()
+            D.Store("dp_ord", bn, t)
+            D.Touch(bn)
+            -- Tell whoever issued it (if online and not the one changing it).
+            for _, p in ipairs(player.GetHumans()) do
+                if p ~= ply and o.bs and sid(p) == o.bs then
+                    p:ChatPrint(ply:Nick() .. " set your order \"" .. (o.ti or "") .. "\" to " .. D.ORDER_STATUS[st])
+                end
+            end
+            return true
+        end
+    end
+    return false
+end
+
+D.TermRecv("dp.uorder", {
+    read = function()
+        local arg = { ti = D.Clip(net.ReadString(), D.Cfg("titleMax")), b = D.Clip(net.ReadString(), 600, true), to = {} }
+        for _ = 1, net.ReadUInt(7) do arg.to[#arg.to + 1] = string.sub(net.ReadString(), 1, 20) end
+        return arg
+    end,
+    run = function(ply, ent, a, arg)
+        if not unitTerm(ent) or not a.view then return end
+        local bn = ent:GetBattalion()
+        if not isManager(ply, bn, a.admin) then return end
+        if arg.ti == "" then arg.ti = "Orders" end
+        -- Named members must be in the battalion.
+        local to
+        local Ro = R()
+        if #arg.to > 0 and Ro then
+            to = {}
+            for _, id in ipairs(arg.to) do
+                local c = string.match(id, "^%d+$") and Ro.Char(id)
+                if c and c.bn == bn then to["s" .. id] = Ro.FullCharName(c) end
+            end
+            if next(to) == nil then
+                note(ply, "None of those members are in the battalion any more")
+                D.SendUnit(ply, ent, a)
+                return
+            end
+        end
+        local t = orders(bn)
+        local o = { id = t.next, ti = arg.ti, b = arg.b, to = to, by = ply:Nick(), bs = sid(ply), t = os.time(), st = 1 }
+        table.insert(t.list, 1, o)
+        t.next = t.next % 65535 + 1
+        -- Keep ORDER_KEEP: drop the oldest closed ones first, then the oldest.
+        for i = #t.list, 1, -1 do
+            if #t.list <= ORDER_KEEP then break end
+            if (t.list[i].st or 1) > 2 then table.remove(t.list, i) end
+        end
+        while #t.list > ORDER_KEEP do table.remove(t.list) end
+        D.Store("dp_ord", bn, t)
+        D.Touch(bn)
+        tellOrder(bn, o, "New order from " .. ply:Nick() .. ": " .. o.ti .. " (battalion computer or datapad)")
         D.SendUnit(ply, ent, a)
     end,
 }, { rate = 2, burst = 3 })
+
+D.TermRecv("dp.ustatus", {
+    read = function() return { id = net.ReadUInt(16), st = net.ReadUInt(3) } end,
+    run = function(ply, ent, a, arg)
+        if not unitTerm(ent) or not a.view then return end
+        D.SetOrderStatus(ply, ent:GetBattalion(), arg.id, arg.st, a.admin)
+        D.SendUnit(ply, ent, a)
+    end,
+})
+
+D.PadRecv("dp.ostatus", function(ply)
+    local id, st = net.ReadUInt(16), net.ReadUInt(3)
+    local bn = D.Battalion(ply)
+    if bn ~= "" then D.SetOrderStatus(ply, bn, id, st, false) end
+end, { rate = 3, burst = 4 })
+
+D.TermRecv("dp.uodel", {
+    read = function() return net.ReadUInt(16) end,
+    run = function(ply, ent, a, id)
+        if not unitTerm(ent) or not a.view then return end
+        local bn = ent:GetBattalion()
+        if not isManager(ply, bn, a.admin) then return end
+        local t = orders(bn)
+        for i, o in ipairs(t.list) do
+            if o.id == id then
+                table.remove(t.list, i)
+                D.Store("dp_ord", bn, t)
+                D.Touch(bn)
+                break
+            end
+        end
+        D.SendUnit(ply, ent, a)
+    end,
+})
 
 D.TermRecv("dp.uloa", {
     read = function() return { from = net.ReadUInt(32), to = net.ReadUInt(32), why = D.Clip(net.ReadString(), 120) } end,
@@ -362,6 +527,57 @@ D.TermRecv("dp.uwithdraw", {
         D.SendUnit(ply, ent, a)
     end,
 }, { rate = 1, burst = 2 })
+
+D.TermRecv("dp.uappget", {
+    read = function() return net.ReadUInt(16) end,
+    run = function(ply, ent, a, appId)
+        if not unitTerm(ent) or not a.view then return end
+        local bn = ent:GetBattalion()
+        if not isManager(ply, bn, a.admin) then return end
+        local app
+        for _, x in ipairs(list("dp_apps", bn).list) do
+            if x.id == appId then app = x end
+        end
+        if not app or not app.s then return end
+        local id = app.s
+        Rhylib.Net.Start("dp.uappinfo")
+        net.WriteUInt(appId, 16)
+        local ps = D.PlayerStats and D.PlayerStats(id) or {}
+        for _, k in ipairs(D.STAT_KEYS) do net.WriteUInt(math.Clamp(ps[k] or 0, 0, 2 ^ 31), 32) end
+        -- Qualifications held.
+        local Ro = R()
+        local c = Ro and Ro.Char(id)
+        local held = {}
+        if c and istable(c.q) then
+            for q, on in pairs(c.q) do
+                if on then held[#held + 1] = Ro.QualName(tostring(q)) end
+            end
+        end
+        table.sort(held)
+        net.WriteUInt(math.min(#held, 31), 5)
+        for i = 1, math.min(#held, 31) do net.WriteString(held[i]) end
+        -- Commendations and active strikes.
+        local f = D.File and D.File(id) or { c = {}, s = {} }
+        local strikes, now = 0, os.time()
+        for _, x in ipairs(f.s or {}) do
+            if (x.exp or 0) > now then strikes = strikes + 1 end
+        end
+        net.WriteUInt(math.min(#(f.c or {}), 255), 8)
+        net.WriteUInt(math.min(strikes, 255), 8)
+        -- Arrest record (rhylib_mp), newest first.
+        local rec = Rhylib.MP and Rhylib.MP.GetRecord and Rhylib.MP.GetRecord(id) or {}
+        local n = math.min(#rec, 50)
+        net.WriteUInt(n, 6)
+        for i = 1, n do
+            local j = rec[i]
+            net.WriteUInt(j.t or 0, 32)
+            net.WriteString(j.by or "?")
+            net.WriteUInt(math.Clamp(j.min or 0, 0, 1023), 10)
+            net.WriteString(j.why or "")
+        end
+        net.Send(ply)
+    end,
+}, { rate = 4, burst = 6 })
 
 D.TermRecv("dp.udecide", {
     read = function() return { id = net.ReadUInt(16), ok = net.ReadBool() } end,

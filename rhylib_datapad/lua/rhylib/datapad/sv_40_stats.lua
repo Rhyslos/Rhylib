@@ -7,6 +7,7 @@
       ar arrests (rhylib_mp)   mi minutes played   mo money earned (DarkRP)
       at sessions attended (checked in at the computer)
       jd times jailed (shown instead of arrests for non-MP battalions)
+      ev events (missions taken part in, sv_90_missions)
 
     Each battalion keeps buckets: all time, today, this and last week, this
     month (older day/week/month buckets are dropped). Each bucket has the
@@ -23,7 +24,7 @@ local D = Rhylib.Datapad
 
 Rhylib.Net.Register("dp.statsr")
 
-D.STAT_KEYS = { "kd", "kp", "de", "rv", "he", "ar", "mi", "mo", "at", "jd" }
+D.STAT_KEYS = { "kd", "kp", "de", "rv", "he", "ar", "mi", "mo", "at", "jd", "ev" }
 D.PERIODS = { "today", "week", "lastweek", "month", "all" }   -- index sent on the network
 
 local dirty = {}   -- [battalion] = true
@@ -38,6 +39,8 @@ local function bucketKeys(now)
         all = "all",
     }
 end
+
+D.StatBucketKeys = function(now) return bucketKeys(now) end
 
 local function stats(bn)
     local s = D.Load("dp_stats", bn, nil)
@@ -54,11 +57,22 @@ local function prune(s)
     end
 end
 
--- Add n to stat for this player's battalion.
+-- A player's own all-time totals, whatever their battalion (shown on
+-- applications): Data "dp_pst"/sid = { [stat] = n }.
+local pdirty = {}
+function D.PlayerStats(id) return D.Load("dp_pst", id, nil) end
+
+-- Add n to stat for this player (and their battalion).
 function D.AddStat(ply, stat, n)
-    if not (IsValid(ply) and ply:IsPlayer()) or ply:IsBot() then return end
+    if not (IsValid(ply) and ply:IsPlayer()) or ply:IsBot() or n == 0 then return end
+    local id = ply:SteamID64() or ""
+    if id ~= "" then
+        local ps = D.PlayerStats(id)
+        ps[stat] = (ps[stat] or 0) + n
+        pdirty[id] = true
+    end
     local bn = D.Battalion(ply)
-    if bn == "" or n == 0 then return end
+    if bn == "" then return end
     local s = stats(bn)
     local key = "s" .. (ply:SteamID64() or "0")
     local keys = bucketKeys()
@@ -87,9 +101,11 @@ local function flush()
         D.Store("dp_stats", bn, s)
     end
     dirty = {}
+    for id in pairs(pdirty) do D.Store("dp_pst", id, D.PlayerStats(id)) end
+    pdirty = {}
 end
 timer.Create("Rhylib.Datapad.Stats", 60, 0, function()
-    -- A minute played for everyone in a battalion.
+    -- A minute played for everyone.
     for _, p in ipairs(player.GetHumans()) do
         D.AddStat(p, "mi", 1)
     end

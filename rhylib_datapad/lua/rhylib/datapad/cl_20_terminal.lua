@@ -2,11 +2,14 @@
     Battalion computer / medical holotable window.
 
     Top: upload your notes; admins set the battalion. Tabs:
-      Logs     search (title, text, author), time filter, MP-only filter;
+      Logs     search (title, text, author), time filter;
                reader; moderators delete entries and ban authors
       Board    battalion computers: Info, Plans and Sessions posts, pinned
                first, upcoming sessions with a countdown, past ones archived
-      Orders   the battalion's current orders; officers set them
+      Missions the current mission (run from officers' datapads) and the
+               archive of ended ones (officers delete)
+      Orders   orders to the battalion or named members, with a status;
+               managers issue them
       Leave    who is away; members file their own
       Personnel  member files: service record, qualifications,
                commendations, strikes, NCO notes
@@ -33,16 +36,18 @@ local filter = { q = "", days = 0, mp = false, ids = nil }   -- ids: set from th
 local board, boardSel, boardBodies, editing = nil, nil, {}, nil
 local statsPeriod, statsData, statsSort = 2, nil, "mi"
 local boardMeta = {}  -- [post id] = { rv = {{name, s}}, mine, ci = {names}, checked }
-local unit, unitAsked, appSel, ordersEdit = nil, nil, nil, false
+local unit, unitAsked, appSel, orderDraft, orderSel = nil, nil, nil, nil, nil
+local appInfo, appAsked = {}, nil   -- [application id] = the applicant's record
+local missions, missionsAsked, missionSel, missionFull = nil, nil, nil, {}
 local people, peopleAsked, personSel, pfile, pAsked, notesEdit = nil, nil, nil, nil, nil, false
 
 local SECTIONS = { "Info", "Plans", "Session", "AAR" }
 local OUTCOMES = { "Success", "Partial success", "Failure" }
 local STAT_NAMES = {
     kd = "Droid kills", kp = "Player kills", de = "Deaths", rv = "Revives",
-    he = "Heals", ar = "Arrests", mi = "Hours", mo = "Money", at = "Attended", jd = "Arrested",
+    he = "Heals", ar = "Arrests", mi = "Hours", mo = "Money", at = "Attended", jd = "Arrested", ev = "Events",
 }
-local STAT_KEYS = { "kd", "kp", "de", "rv", "he", "ar", "mi", "mo", "at", "jd" }   -- same order as the server
+local STAT_KEYS = { "kd", "kp", "de", "rv", "he", "ar", "mi", "mo", "at", "jd", "ev" }   -- same order as the server
 local RSVP = { "Attending", "Maybe", "Can't" }
 local APP_STATUS = { [0] = "Pending", [1] = "Accepted", [2] = "Declined", [3] = "Withdrawn" }
 local PERIOD_NAMES = { "Today", "This week", "Last week", "This month", "All time" }
@@ -208,15 +213,6 @@ local function logsTab(body)
     go:Dock(LEFT)
     go:SetWide(s(80))
     go:DockMargin(s(6), 0, s(12), 0)
-    if not term.med then
-        local mp = k.Button(bar, "MP only", function()
-            filter.mp = not filter.mp
-            build()
-        end, { small = true, selected = function() return filter.mp end })
-        mp:Dock(RIGHT)
-        mp:SetWide(s(90))
-        mp:DockMargin(s(6), 0, 0, 0)
-    end
     local days = k.Choices(bar, { { 0, "Any time" }, { 1, "Today" }, { 7, "Week" }, { 30, "Month" } },
         function() return filter.days end,
         function(v)
@@ -229,7 +225,7 @@ local function logsTab(body)
     local left, right = columns(body)
     local shown = {}
     for _, e in ipairs(term.entries) do
-        if (not filter.ids or filter.ids[e.id]) and (not filter.mp or e.mp) then shown[#shown + 1] = e end
+        if not filter.ids or filter.ids[e.id] then shown[#shown + 1] = e end
     end
     local h = k.Heading(left, (term.med and "Medical records" or "Logs") .. " (" .. #shown .. (#shown ~= #term.entries and (" of " .. #term.entries) or "") .. ")")
     h:Dock(TOP)
@@ -300,7 +296,7 @@ local function editor(parent, p)
         return
     end
     local isNew = not p or not p.id
-    local sec = p and p.sec or (board.canPost and 1 or 4)
+    local sec = p and p.sec or (board.canPost and 3 or 4)
     local oc = (p and p.oc and p.oc > 0) and p.oc or 1
     local ses = p and p.ses or 0
     local h = k.Heading(parent, isNew and (sec == 4 and "New after-action report" or "New post") or "Edit post")
@@ -316,13 +312,14 @@ local function editor(parent, p)
         if IsValid(ocRow) then ocRow:SetVisible(sec == 4) end
         parent:InvalidateLayout()
     end
-    local secOpts = board.canPost and { { 1, "Info" }, { 2, "Plans" }, { 3, "Session" }, { 4, "AAR" } } or { { 4, "AAR" } }
+    local secOpts = board.canPost and { { 3, "Session" }, { 4, "AAR" } } or { { 4, "AAR" } }
+    if p and p.id and p.sec < 3 then table.insert(secOpts, 1, { p.sec, SECTIONS[p.sec] }) end   -- (an old Info/Plans post)
     local secs = k.Choices(secRow, secOpts, function() return sec end, function(v)
         sec = v
         relayout()
     end)
     secs:Dock(LEFT)
-    secs:SetWide(s(board.canPost and 400 or 100))
+    secs:SetWide(s(board.canPost and 300 or 100))
     local title = k.TextEntry(parent, "Title")
     title:Dock(TOP)
     title:SetText(p and p.title or "")
@@ -448,9 +445,68 @@ function sessionStrip(parent, p)
     end
 end
 
+-- The battalion info: one text, edited over time.
+local function infoReader(parent)
+    local k = K()
+    local s = k.S
+    local info = board.info
+    if editing == "info" then
+        local h = k.Heading(parent, "Edit battalion info")
+        h:Dock(TOP)
+        local hint = label(parent, "Whatever is useful right now: who leads what, SOPs, callsigns, what to bring. Everyone reads it here and on their datapad.")
+        hint:DockMargin(0, s(4), 0, s(8))
+        local foot = vgui.Create("DPanel", parent)
+        foot:Dock(BOTTOM)
+        foot:SetTall(s(32))
+        foot:DockMargin(0, s(8), 0, 0)
+        foot.Paint = nil
+        local te = k.TextEntry(parent, "Battalion info…")
+        te:SetMultiline(true)
+        te:Dock(FILL)
+        te:SetText(info.txt)
+        local save = k.Button(foot, "Save", function()
+            send("dp.binfo", function() net.WriteString(string.sub(te:GetText() or "", 1, 12000)) end)
+            editing = nil
+        end, { accent = true })
+        save:Dock(RIGHT)
+        save:SetWide(s(120))
+        local cancel = k.Button(foot, "Cancel", function()
+            editing = nil
+            build()
+        end)
+        cancel:Dock(RIGHT)
+        cancel:SetWide(s(120))
+        cancel:DockMargin(0, 0, s(6), 0)
+        return
+    end
+    local h = k.Heading(parent, "Battalion info")
+    h:Dock(TOP)
+    local by = label(parent, info.txt ~= "" and ("Last edited by " .. info.by .. "  ·  " .. when(info.t)) or "Nothing written yet.")
+    by:DockMargin(0, s(4), 0, s(8))
+    if board.canPost then
+        local row = vgui.Create("DPanel", parent)
+        row:Dock(BOTTOM)
+        row:SetTall(s(30))
+        row:DockMargin(0, s(8), 0, 0)
+        row.Paint = nil
+        local b = k.Button(row, "Edit", function()
+            editing = "info"
+            build()
+        end, { small = true, accent = true })
+        b:Dock(LEFT)
+        b:SetWide(s(110))
+    end
+    local sp = k.Scroll(parent)
+    sp:Dock(FILL)
+    local body = k.Label(sp, info.txt, 15, 400, k.C.text)
+    body:Dock(TOP)
+    body:DockMargin(0, 0, s(10), 0)
+end
+
 local function boardReader(parent)
     local k = K()
     local s = k.S
+    if boardSel == "info" then infoReader(parent) return end
     local p = boardSel and postById(boardSel)
     if not p then
         label(parent, (board.canPost or board.canAAR) and "Pick a post, or write a new one." or "Pick a post to read it.")
@@ -538,21 +594,30 @@ local function boardTab(body)
     local sp = k.Scroll(left)
     sp:Dock(FILL)
 
-    -- Group: pinned, upcoming sessions (soonest first), plans, info, AARs, archive.
+    -- Battalion info first.
+    listRow(sp, "Battalion info", board.info.txt ~= "" and ("Edited " .. when(board.info.t) .. " by " .. board.info.by) or "Not written yet",
+        function() return boardSel == "info" end, function()
+            boardSel = "info"
+            editing = nil
+            build()
+        end, "Info")
+
+    -- Group: pinned, upcoming sessions (soonest first), AARs, archive, old Info/Plans posts.
     local now = os.time()
-    local groups = { { "Pinned", {} }, { "Upcoming sessions", {} }, { "Plans", {} }, { "Info", {} },
+    local groups = { { "Pinned", {} }, { "Upcoming sessions", {} }, { "Older posts", {} }, { "Older posts", {} },
         { "After-action reports", {} }, { "Past sessions", {} } }
     for _, p in ipairs(board.posts) do
         local g
         if p.pin then g = 1
         elseif p.sec == 3 then g = p.at > now - 3600 and 2 or 6   -- a session stays "upcoming" for its first hour
         elseif p.sec == 4 then g = 5
-        elseif p.sec == 2 then g = 3
-        else g = 4 end
+        else g = 3 end
         table.insert(groups[g][2], p)
     end
     table.sort(groups[2][2], function(a, b) return a.at < b.at end)
     table.sort(groups[6][2], function(a, b) return a.at > b.at end)
+    -- Older posts last.
+    groups = { groups[1], groups[2], groups[5], groups[6], groups[3] }
     local any = false
     for _, g in ipairs(groups) do
         if #g[2] > 0 then
@@ -569,9 +634,9 @@ local function boardTab(body)
             end
         end
     end
-    if not any then label(sp, "Nothing posted yet.") end
-
-    if editing then
+    if editing == "info" then
+        infoReader(right)
+    elseif editing then
         if istable(editing) then
             editor(right, editing)
         else
@@ -744,45 +809,162 @@ local function parseDate(txt, endOfDay)
         hour = endOfDay and 23 or 0, min = endOfDay and 59 or 0, sec = 0 })
 end
 
+-- Members for picking (the Personnel list).
+local function wantPeople()
+    if people or peopleAsked then return end
+    peopleAsked = true
+    send("dp.plist")
+    timer.Simple(5, function() if not people then peopleAsked = nil end end)
+end
+
+local function orderById(id)
+    for _, o in ipairs(unit.orders) do
+        if o.id == id then return o end
+    end
+end
+
+local function orderEditor(body)
+    local k = K()
+    local s = k.S
+    local d = orderDraft
+    local h = k.Heading(body, "New order")
+    h:Dock(TOP)
+    local title = k.TextEntry(body, "What (short)")
+    title:Dock(TOP)
+    title:DockMargin(0, s(8), 0, s(6))
+    title:SetText(d.ti)
+    function title:OnChange() d.ti = self:GetText() or "" end
+    local who = vgui.Create("DPanel", body)
+    who:Dock(TOP)
+    who:SetTall(s(30))
+    who:DockMargin(0, 0, 0, s(6))
+    who.Paint = nil
+    local ch = k.Choices(who, { { true, "Whole battalion" }, { false, "Specific members" } }, function() return d.all end, function(v)
+        d.all = v
+        build()
+    end)
+    ch:Dock(LEFT)
+    ch:SetWide(s(330))
+    local foot = footRow(body)
+    footButton(foot, "Issue order", function()
+        local ids = {}
+        if not d.all then
+            for id in pairs(d.sel) do ids[#ids + 1] = id end
+            if #ids == 0 then
+                Derma_Message("Pick at least one member, or order the whole battalion.", "Orders", "OK")
+                return
+            end
+        end
+        send("dp.uorder", function()
+            net.WriteString(string.sub(d.ti or "", 1, 200))
+            net.WriteString(string.sub(d.b or "", 1, 1200))
+            local n = math.min(#ids, 127)
+            net.WriteUInt(n, 7)
+            for i = 1, n do net.WriteString(ids[i]) end
+        end)
+        orderDraft = nil
+        build()
+    end, { accent = true })
+    footButton(foot, "Cancel", function()
+        orderDraft = nil
+        build()
+    end)
+    -- Member picker.
+    if not d.all then
+        wantPeople()
+        local pick = vgui.Create("DPanel", body)
+        pick:Dock(RIGHT)
+        pick:SetWide(s(320))
+        pick:DockMargin(s(10), 0, 0, 0)
+        pick.Paint = nil
+        local n = 0
+        for _ in pairs(d.sel) do n = n + 1 end
+        local ph = k.Heading(pick, "Ordered (" .. n .. ")")
+        ph:Dock(TOP)
+        local sp = k.Scroll(pick)
+        sp:Dock(FILL)
+        if not people then label(sp, "Loading members…") end
+        for _, m in ipairs(people or {}) do
+            local b = k.Button(sp, m.name, function()
+                d.sel[m.id] = not d.sel[m.id] or nil
+                build()
+            end, { small = true, align = "left", selected = function() return d.sel[m.id] ~= nil end })
+            b:Dock(TOP)
+            b:DockMargin(0, 0, s(8), s(3))
+        end
+    end
+    local txt = k.TextEntry(body, "Details: where, when, how…")
+    txt:SetMultiline(true)
+    txt:Dock(FILL)
+    txt:SetText(d.b)
+    function txt:OnChange() d.b = self:GetText() or "" end
+end
+
 local function ordersTab(body)
     local k = K()
     local s = k.S
     if not unit then label(body, "Loading…") return end
-    local o = unit.orders
-    if ordersEdit and unit.officer then
-        local h = k.Heading(body, "Set orders")
-        h:Dock(TOP)
-        local hint = label(body, "Every member sees these here and on their datapad, and online members are told.")
-        hint:DockMargin(0, s(4), 0, s(8))
-        local foot = footRow(body)
-        local txt = k.TextEntry(body, "Orders…")
-        txt:SetMultiline(true)
-        txt:Dock(FILL)
-        txt:SetText(o.txt)
-        footButton(foot, "Give orders", function()
-            send("dp.uorders", function() net.WriteString(string.sub(txt:GetText() or "", 1, 8000)) end)
-            ordersEdit = false
-        end, { accent = true })
-        footButton(foot, "Cancel", function()
-            ordersEdit = false
+    if orderDraft and unit.manager then orderEditor(body) return end
+    local left, right = columns(body)
+    if unit.manager then
+        local new = k.Button(left, "New order", function()
+            orderDraft = { ti = "", b = "", all = true, sel = {} }
             build()
-        end)
+        end, { small = true, accent = true })
+        new:Dock(TOP)
+        new:DockMargin(0, 0, s(8), s(8))
+    end
+    local sp = k.Scroll(left)
+    sp:Dock(FILL)
+    if #unit.orders == 0 then label(sp, "No orders yet.") end
+    local lastOpen
+    for _, o in ipairs(unit.orders) do
+        local open = o.st <= 2
+        if lastOpen ~= open then
+            local hd = k.Heading(sp, open and "Open orders" or "Closed")
+            hd:Dock(TOP)
+            hd:DockMargin(0, s(4), s(8), s(4))
+            lastOpen = open
+        end
+        listRow(sp, o.title, D.OrderSub(o), function() return orderSel == o.id end, function()
+            orderSel = o.id
+            build()
+        end, D.ORDER_TAG[o.st])
+    end
+
+    local o = orderSel and orderById(orderSel)
+    if not o then
+        label(right, unit.manager and "Pick an order, or issue a new one." or "Pick an order to read it.")
         return
     end
-    local h = k.Heading(body, "Current orders")
+    local h = k.Heading(right, o.title)
     h:Dock(TOP)
-    local by = label(body, o.txt ~= "" and ("From " .. o.by .. "  ·  " .. when(o.t)) or "No orders have been given.")
-    by:DockMargin(0, s(4), 0, s(8))
-    if unit.officer then
-        local foot = footRow(body)
-        footButton(foot, o.txt ~= "" and "Change orders" or "Give orders", function()
-            ordersEdit = true
-            build()
+    local by = label(right, "From " .. o.by .. "  ·  " .. when(o.t))
+    by:DockMargin(0, s(4), 0, s(2))
+    label(right, "To: " .. D.OrderTo(o), k.C.text)
+    local stl = label(right, "Status: " .. D.ORDER_STATUS[o.st] .. (o.sb ~= "" and ("  (" .. o.sb .. ", " .. when(o.stt) .. ")") or ""),
+        D.OrderColor(o.st))
+    stl:DockMargin(0, s(2), 0, s(8))
+    if o.canSet or unit.manager then
+        local foot = footRow(right)
+        footButton(foot, "Set status ▾", function()
+            D.OrderStatusMenu(o, unit.manager, function(st)
+                send("dp.ustatus", function()
+                    net.WriteUInt(o.id, 16)
+                    net.WriteUInt(st, 3)
+                end)
+            end)
         end, { accent = true })
+        if unit.manager then
+            footButton(foot, "Delete", function()
+                send("dp.uodel", function() net.WriteUInt(o.id, 16) end)
+                orderSel = nil
+            end, { danger = true })
+        end
     end
-    local sp = k.Scroll(body)
-    sp:Dock(FILL)
-    local t = k.Label(sp, o.txt, 15, 400, k.C.text)
+    local tsp = k.Scroll(right)
+    tsp:Dock(FILL)
+    local t = k.Label(tsp, o.text ~= "" and o.text or "(no details)", 15, 400, k.C.text)
     t:Dock(TOP)
     t:DockMargin(0, 0, s(10), 0)
 end
@@ -898,9 +1080,59 @@ local function appsTab(body)
     end
     local tsp = k.Scroll(right)
     tsp:Dock(FILL)
-    local t = k.Label(tsp, a.txt, 14, 400, k.C.text)
+    local function sub(text)
+        local hd = k.Heading(tsp, text)
+        hd:Dock(TOP)
+        hd:DockMargin(0, s(8), s(10), s(4))
+    end
+    -- The application itself, in a box so it stands out.
+    sub("Application")
+    local box = vgui.Create("DPanel", tsp)
+    box:Dock(TOP)
+    box:DockMargin(0, 0, s(10), 0)
+    box:DockPadding(s(12), s(10), s(12), s(10))
+    function box:Paint(w, h)
+        k.SetCol(k.C.row)
+        surface.DrawRect(0, 0, w, h)
+        k.SetCol(k.C.accent)
+        surface.DrawRect(0, 0, s(3), h)
+    end
+    local t = k.Label(box, a.txt, 15, 400, k.C.text)
     t:Dock(TOP)
-    t:DockMargin(0, 0, s(10), 0)
+    function box:PerformLayout(w, h)
+        local want = t:GetTall() + s(20)
+        if math.abs(want - h) > 1 then self:SetTall(want) end
+    end
+
+    -- Their record (asked for once per application).
+    local info = appInfo[a.id]
+    if not info then
+        if appAsked ~= a.id then
+            appAsked = a.id
+            send("dp.uappget", function() net.WriteUInt(a.id, 16) end)
+        end
+        label(tsp, "Loading their record…")
+        return
+    end
+    sub("Service record (all time)")
+    local parts = {}
+    for _, key in ipairs({ "mi", "ev", "at", "kd", "kp", "de", "rv", "he", "ar" }) do
+        parts[#parts + 1] = (key == "ar" and "Arrests made" or STAT_NAMES[key]) .. " " .. statText(key, info.stats[key])
+    end
+    local st = label(tsp, table.concat(parts, "   ·   "), k.C.text, 13)
+    st:DockMargin(0, 0, s(10), s(4))
+    label(tsp, "Qualifications: " .. (#info.quals > 0 and table.concat(info.quals, ", ") or "none"), k.C.text, 13)
+    label(tsp, info.coms .. " commendation" .. (info.coms == 1 and "" or "s") .. "  ·  " .. info.strikes .. " active strike" .. (info.strikes == 1 and "" or "s"),
+        info.strikes > 0 and k.C.bad or k.C.text, 13)
+    sub("Arrest record (" .. #info.arrests .. ")")
+    if #info.arrests == 0 then label(tsp, "Never arrested.", k.C.good, 13) end
+    for _, j in ipairs(info.arrests) do
+        local l = label(tsp, os.date("%d %b %Y", j.t) .. "  ·  " .. j.min .. " min  ·  by " .. j.by, nil, 12)
+        l:DockMargin(0, s(4), s(10), 0)
+        local w = k.Label(tsp, j.why ~= "" and j.why or "No reason given", 14, 500, k.C.bad)
+        w:Dock(TOP)
+        w:DockMargin(0, 0, s(10), s(2))
+    end
 end
 
 -- For troopers outside the battalion: apply, or see how it went.
@@ -1076,7 +1308,7 @@ local function personFile(parent)
     -- Service record (all time, this battalion).
     headRow(sp, "Service record")
     local parts = {}
-    for _, key in ipairs({ "mi", "at", "kd", "kp", "de", "rv", "he", D.IsMPBattalion(term.bn) and "ar" or "jd" }) do
+    for _, key in ipairs({ "mi", "ev", "at", "kd", "kp", "de", "rv", "he", D.IsMPBattalion(term.bn) and "ar" or "jd" }) do
         parts[#parts + 1] = STAT_NAMES[key] .. " " .. statText(key, f.stats[key])
     end
     local st = label(sp, table.concat(parts, "   ·   "), k.C.text, 13)
@@ -1252,6 +1484,118 @@ local function personnelTab(body)
 end
 
 --------------------------------------------------------------------------
+-- Missions (sv_90_missions): the current one and the archive
+--------------------------------------------------------------------------
+
+local function missionsTab(body)
+    local k = K()
+    local s = k.S
+    if not missions then
+        label(body, "Loading…")
+        if not missionsAsked then
+            missionsAsked = true
+            send("dp.mlist")
+            timer.Simple(5, function() missionsAsked = nil end)
+        end
+        return
+    end
+    local left, right = columns(body)
+    local sp = k.Scroll(left)
+    sp:Dock(FILL)
+    local cur = missions.current
+    if cur then
+        local hd = k.Heading(sp, "Current")
+        hd:Dock(TOP)
+        hd:DockMargin(0, 0, s(8), s(4))
+        listRow(sp, cur.title, (cur.active and "Active" or "Posted") .. "  ·  " .. cur.by, function() return missionSel == "cur" end, function()
+            missionSel = "cur"
+            build()
+        end, cur.active and "Live" or "Posted")
+    end
+    local hd = k.Heading(sp, "Archive (" .. #missions.list .. ")")
+    hd:Dock(TOP)
+    hd:DockMargin(0, s(4), s(8), s(4))
+    if #missions.list == 0 then label(sp, "No finished missions yet.") end
+    for _, x in ipairs(missions.list) do
+        listRow(sp, x.title, (x.date ~= "" and (x.date .. "  ·  ") or "") .. x.n .. " took part  ·  " .. x.by,
+            function() return missionSel == x.id end, function()
+                missionSel = x.id
+                build()
+            end)
+    end
+
+    -- Reader.
+    if missionSel == "cur" and cur then
+        local h = k.Heading(right, cur.title)
+        h:Dock(TOP)
+        label(right, (cur.date ~= "" and (cur.date .. "  ·  ") or "") .. "by " .. cur.by .. "  ·  " ..
+            (cur.active and ("active since " .. when(cur.started)) or "not started"), cur.active and k.C.good or k.C.warn)
+        local r = k.Scroll(right)
+        r:Dock(FILL)
+        local function part(title, txt)
+            if txt == "" then return end
+            local ph = k.Heading(r, title)
+            ph:Dock(TOP)
+            ph:DockMargin(0, s(6), s(10), s(4))
+            local l = k.Label(r, txt, 14, 400, k.C.text)
+            l:Dock(TOP)
+            l:DockMargin(0, 0, s(10), 0)
+        end
+        part("Objectives", cur.obj)
+        part("Sub objectives", cur.sub)
+        part("Info", cur.info)
+        if cur.npeople > 0 then part("Taking part (" .. cur.npeople .. ")", table.concat(cur.people, ", ")) end
+        label(r, "Officers run it from their datapad (Mission tab).", nil, 12)
+        return
+    end
+    local x
+    for _, it in ipairs(missions.list) do
+        if it.id == missionSel then x = it end
+    end
+    if not x then
+        label(right, "Pick a mission to read it. Officers post, start and end missions from their datapad; ended ones land here.")
+        return
+    end
+    local h = k.Heading(right, x.title)
+    h:Dock(TOP)
+    local by = label(right, (x.date ~= "" and (x.date .. "  ·  ") or "") .. "by " .. x.by .. "  ·  " ..
+        (x.started > 0 and (when(x.started) .. " – ") or "not started – ") .. when(x.ended))
+    by:DockMargin(0, s(4), 0, s(6))
+    if missions.canDelete then
+        local foot = footRow(right)
+        footButton(foot, "Delete", function()
+            send("dp.mdel", function() net.WriteUInt(x.id, 16) end)
+            missionSel = nil
+        end, { danger = true })
+    end
+    local full = missionFull[x.id]
+    local r = k.Scroll(right)
+    r:Dock(FILL)
+    if not full then
+        label(r, "Loading…")
+        if not missionFull["asked" .. x.id] then
+            missionFull["asked" .. x.id] = true
+            send("dp.mread", function() net.WriteUInt(x.id, 16) end)
+        end
+        return
+    end
+    local function part(title, txt)
+        if txt == "" then return end
+        local ph = k.Heading(r, title)
+        ph:Dock(TOP)
+        ph:DockMargin(0, s(6), s(10), s(4))
+        local l = k.Label(r, txt, 14, 400, k.C.text)
+        l:Dock(TOP)
+        l:DockMargin(0, 0, s(10), 0)
+    end
+    part("Objectives", full.obj)
+    part("Sub objectives", full.sub)
+    part("Info", full.info)
+    part("Took part (" .. #full.people .. ")", #full.people > 0 and table.concat(full.people, ", ") or "nobody")
+    if full.endedBy ~= "" then label(r, "Ended by " .. full.endedBy, nil, 12) end
+end
+
+--------------------------------------------------------------------------
 -- Bans
 --------------------------------------------------------------------------
 
@@ -1284,6 +1628,7 @@ local function tabs()
     if not term.med then
         list[#list + 1] = { "board", "Board", boardTab }
         list[#list + 1] = { "orders", "Orders", ordersTab }
+        list[#list + 1] = { "missions", "Missions", missionsTab }
         list[#list + 1] = { "leave", "LOA", leaveTab }
         list[#list + 1] = { "people", "Personnel", personnelTab }
         list[#list + 1] = { "stats", "Stats", statsTab }
@@ -1292,7 +1637,7 @@ local function tabs()
             for _, a in ipairs(unit.apps) do
                 if a.st == 0 then n = n + 1 end
             end
-            list[#list + 1] = { "apps", n > 0 and ("Apps (" .. n .. ")") or "Apps", appsTab }
+            list[#list + 1] = { "apps", n > 0 and ("Applications (" .. n .. ")") or "Applications", appsTab, n > 0 }
         end
         -- MPs/admins outside the battalion can see it, and can still apply.
         if unit and not unit.member and (unit.canApply or unit.myBn ~= "") then
@@ -1375,7 +1720,7 @@ function build()
         topButton(t[2], function()
             tab = t[1]
             build()
-        end, { selected = function() return tab == t[1] end }, RIGHT)
+        end, { selected = function() return tab == t[1] end, accent = t[4] }, RIGHT)
     end
 
     for _, t in ipairs(list) do
@@ -1447,7 +1792,9 @@ Rhylib.Net.Receive("dp.term", function()
         board, boardSel, boardBodies, editing = nil, nil, {}, nil
         boardMeta = {}
         statsData = nil
-        unit, unitAsked, appSel, ordersEdit = nil, nil, nil, false
+        unit, unitAsked, appSel, orderDraft, orderSel = nil, nil, nil, nil, nil
+        appInfo, appAsked = {}, nil
+        missions, missionsAsked, missionSel, missionFull = nil, nil, nil, {}
         people, peopleAsked, personSel, pfile, pAsked, notesEdit = nil, nil, nil, nil, nil, false
     end
     term = t
@@ -1476,11 +1823,12 @@ Rhylib.Net.Receive("dp.board", function()
             t = net.ReadUInt(32), at = net.ReadUInt(32), pin = net.ReadBool(), oc = net.ReadUInt(2), ses = net.ReadUInt(16),
             mine = net.ReadBool() }
     end
+    b.info = { txt = net.ReadString(), by = net.ReadString(), t = net.ReadUInt(32) }
     if not term or term.ent ~= ent then return end
     board = b
     boardBodies = {}   -- posts may have been edited
     boardMeta = {}
-    if boardSel and not postById(boardSel) then boardSel = nil end
+    if boardSel and boardSel ~= "info" and not postById(boardSel) then boardSel = nil end
     if IsValid(panel) and tab == "board" then build() end
 end)
 
@@ -1513,7 +1861,7 @@ Rhylib.Net.Receive("dp.unit", function()
     local u = { leave = {}, apps = {} }
     u.member, u.manager, u.officer, u.canApply = net.ReadBool(), net.ReadBool(), net.ReadBool(), net.ReadBool()
     u.myBn, u.mySt = net.ReadString(), net.ReadUInt(2)
-    u.orders = { txt = net.ReadString(), by = net.ReadString(), t = net.ReadUInt(32) }
+    u.orders = D.ReadOrders()
     for i = 1, net.ReadUInt(6) do
         u.leave[i] = { id = net.ReadUInt(16), name = net.ReadString(), from = net.ReadUInt(32), to = net.ReadUInt(32),
             why = net.ReadString(), mine = net.ReadBool() }
@@ -1612,7 +1960,7 @@ Rhylib.Net.Receive("dp.pmembers", function()
     peopleAsked = nil
     if not term or term.ent ~= ent then return end
     people = list
-    if IsValid(panel) and tab == "people" then build() end
+    if IsValid(panel) and (tab == "people" or tab == "orders") then build() end
 end)
 
 Rhylib.Net.Receive("dp.pfile", function()
@@ -1638,4 +1986,42 @@ Rhylib.Net.Receive("dp.pfile", function()
     if not term or term.ent ~= ent then return end
     pfile = f
     if IsValid(panel) and tab == "people" and personSel == f.id then build() end
+end)
+
+Rhylib.Net.Receive("dp.uappinfo", function()
+    local id = net.ReadUInt(16)
+    local info = { stats = {}, quals = {}, arrests = {} }
+    for _, key in ipairs(STAT_KEYS) do info.stats[key] = net.ReadUInt(32) end
+    for i = 1, net.ReadUInt(5) do info.quals[i] = net.ReadString() end
+    info.coms = net.ReadUInt(8)
+    info.strikes = net.ReadUInt(8)
+    for i = 1, net.ReadUInt(6) do
+        info.arrests[i] = { t = net.ReadUInt(32), by = net.ReadString(), min = net.ReadUInt(10), why = net.ReadString() }
+    end
+    appInfo[id] = info
+    if appAsked == id then appAsked = nil end
+    if IsValid(panel) and tab == "apps" and appSel == id then build() end
+end)
+
+Rhylib.Net.Receive("dp.mlistr", function()
+    local ent = net.ReadEntity()
+    local d = { list = {} }
+    d.canDelete = net.ReadBool()
+    d.current = D.ReadMission()
+    for i = 1, net.ReadUInt(7) do
+        d.list[i] = { id = net.ReadUInt(16), title = net.ReadString(), date = net.ReadString(), by = net.ReadString(),
+            started = net.ReadUInt(32), ended = net.ReadUInt(32), n = net.ReadUInt(8) }
+    end
+    missionsAsked = nil
+    if not term or term.ent ~= ent then return end
+    missions = d
+    if IsValid(panel) and tab == "missions" then build() end
+end)
+
+Rhylib.Net.Receive("dp.mfull", function()
+    local id = net.ReadUInt(16)
+    local f = { obj = net.ReadString(), sub = net.ReadString(), info = net.ReadString(), endedBy = net.ReadString(), people = {} }
+    for i = 1, net.ReadUInt(8) do f.people[i] = net.ReadString() end
+    missionFull[id] = f
+    if IsValid(panel) and tab == "missions" and missionSel == id then build() end
 end)

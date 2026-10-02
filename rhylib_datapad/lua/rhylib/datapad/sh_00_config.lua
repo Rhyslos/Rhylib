@@ -35,6 +35,21 @@ Config.Register("datapad", "medCap", 250, "Medical records kept on the medical h
 Config.Register("datapad", "arrestRange", 250, "MPs can jail cuffed players this close with the datapad")
 Config.Register("datapad", "useRange", 160, "How close you must stay to a computer to use it")
 Config.Register("datapad", "strikeDays", 30, "Days a strike stays active")
+
+-- Quick response calls (datapad). to: "mp", "medic", "battalion" (the
+-- caller's), "all". accept = true: they see where you are only after
+-- answering. items = true: pick from supplyItems. At most 7 kinds.
+Config.Register("datapad", "calls", {
+    { id = "mp", name = "Call military police", short = "MP", to = "mp", accept = false, inbound = "MP" },
+    { id = "medic", name = "Call a medic", short = "Medic", to = "medic", accept = false, inbound = "Medic" },
+    { id = "reinf", name = "Request reinforcements", short = "Reinforcements", to = "all", accept = true, inbound = "Reinforcements" },
+    { id = "supply", name = "Request resupply", short = "Resupply", to = "all", accept = true, inbound = "Resupply", items = true },
+}, "Quick response calls: { id, name, short, to = mp|medic|battalion|all, accept, inbound, items }")
+Config.Register("datapad", "supplyItems", {
+    "Medical crate", "Light ammo", "Medium ammo", "Heavy ammo", "Rockets", "Grenades", "Power cells",
+}, "What a resupply request can ask for (at most 16)")
+Config.Register("datapad", "callLife", 300, "Seconds a call stays open")
+Config.Register("datapad", "callCooldown", 20, "Seconds between two calls of the same kind from one player")
 Config.Register("datapad", "strikeWarn", 3, "Active strikes at which the battalion's officers are told")
 
 D.MODELS = {

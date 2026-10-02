@@ -7,13 +7,15 @@
     the battalion's online members (dp.ver), so their datapad can show
     that there's something new.
 
-      dp.dl     datapad: download -> dp.dldata (version, log list, board list, orders)
+      dp.dl     datapad: download -> dp.dldata (version, log list, board list)
+                and dp.dlx (orders, LOA, stats, your own file) and dp.dlm
+                (battalion info, mission). Stats don't bump the version.
       dp.dread  datapad: kind (0 log, 1 post), id -> dp.dbody
 ]]
 
 local D = Rhylib.Datapad
 
-for _, n in ipairs({ "dp.ver", "dp.dldata", "dp.dbody" }) do Rhylib.Net.Register(n) end
+for _, n in ipairs({ "dp.ver", "dp.dldata", "dp.dlx", "dp.dlm", "dp.dbody" }) do Rhylib.Net.Register(n) end
 
 function D.Version(bn)
     return D.Load("dp_ver", bn, {}).v or 0
@@ -74,12 +76,78 @@ D.PadRecv("dp.dl", function(ply)
         net.WriteBool(p.pin or false)
         net.WriteUInt(p.oc or 0, 2)
     end
-    local o = D.Load("dp_orders", bn, {})
-    net.WriteString(o.txt or "")
-    net.WriteString(o.by or "")
-    net.WriteUInt(o.t or 0, 32)
     net.Send(ply)
+    D.SendExtra(ply, bn)
 end, { rate = 1, burst = 2 })
+
+-- The rest of a download: orders, LOA, stats, info, mission, your own file.
+function D.SendExtra(ply, bn)
+    local id = ply:SteamID64() or ""
+    local manager = D.IsUnitManager and D.IsUnitManager(ply, bn, false) or false
+    Rhylib.Net.Start("dp.dlx")
+    net.WriteString(bn)
+    net.WriteBool(manager)
+    if D.WriteOrders then D.WriteOrders(ply, bn, manager) else net.WriteUInt(0, 6) end
+    -- LOA.
+    local leave = D.ActiveLeave and D.ActiveLeave(bn).list or {}
+    local nl = math.min(#leave, 63)
+    net.WriteUInt(nl, 6)
+    for i = 1, nl do
+        local e = leave[i]
+        net.WriteString(e.n or "?")
+        net.WriteUInt(e.from or 0, 32)
+        net.WriteUInt(e.to or 0, 32)
+        net.WriteString(e.why or "")
+    end
+    -- Stats: the battalion this week, you this week, you all time.
+    local b = D.Load("dp_stats", bn, {}).b or {}
+    local keys = D.StatBucketKeys()
+    local week, all = b[keys.week] or {}, b[keys.all] or {}
+    local function row(t)
+        for _, k in ipairs(D.STAT_KEYS) do net.WriteUInt(math.Clamp(t[k] or 0, 0, 2 ^ 31), 32) end
+    end
+    row(week.t or {})
+    row(week.p and week.p["s" .. id] or {})
+    row(all.p and all.p["s" .. id] or {})
+    -- Your file: quals held, commendations, active strikes.
+    local Ro = Rhylib.Roster
+    local c = Ro and Ro.Char(id)
+    local held = {}
+    if c and istable(c.q) then
+        for q, on in pairs(c.q) do
+            if on then held[#held + 1] = Ro.QualName(tostring(q)) end
+        end
+    end
+    table.sort(held)
+    net.WriteUInt(math.min(#held, 31), 5)
+    for i = 1, math.min(#held, 31) do net.WriteString(held[i]) end
+    local f = D.File and D.File(id) or { c = {}, s = {} }
+    net.WriteUInt(math.min(#f.c, 255), 8)
+    local nc = math.min(#f.c, 10)
+    net.WriteUInt(nc, 4)
+    for i = 1, nc do
+        net.WriteUInt(f.c[i].t or 0, 32)
+        net.WriteString(f.c[i].by or "?")
+        net.WriteString(f.c[i].txt or "")
+    end
+    local now, act = os.time(), {}
+    for _, x in ipairs(f.s) do
+        if (x.exp or 0) > now and #act < 10 then act[#act + 1] = x end
+    end
+    net.WriteUInt(#act, 4)
+    for _, x in ipairs(act) do
+        net.WriteUInt(x.t or 0, 32)
+        net.WriteUInt(x.exp or 0, 32)
+        net.WriteString(x.by or "?")
+        net.WriteString(x.txt or "")
+    end
+    net.Send(ply)
+    -- Battalion info and the current mission: their own message (size).
+    Rhylib.Net.Start("dp.dlm")
+    if D.WriteInfo then D.WriteInfo(bn) else net.WriteString("") net.WriteString("") net.WriteUInt(0, 32) end
+    if D.WriteMission then D.WriteMission(bn) else net.WriteBool(false) end
+    net.Send(ply)
+end
 
 D.PadRecv("dp.dread", function(ply)
     local kind = net.ReadUInt(1)
