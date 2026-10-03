@@ -107,6 +107,30 @@ Admin.COMMANDS = {
     { id = "announce", name = "Announcement", cat = "Server", args = { { "text", "Text", "text", need = true } }, aliases = { "a" }, desc = "A banner for everyone" },
 }
 
+-- How the staff menu groups the commands (rhylib_menus cl_30_commands.lua).
+-- Anything not listed lands in "Other"; call/endcall have their own block.
+Admin.SECTIONS = {
+    player = {
+        { "Info & messages", { "info", "warnings", "tell", "warn", "unwarn" } },
+        { "Move", { "goto", "bring", "return", "teleport", "spectate" } },
+        { "Health", { "heal", "revive", "hp", "armor", "respawn" } },
+        { "Restrain", { "freeze", "unfreeze", "free", "jail", "unjail" } },
+        { "Chat & voice", { "mute", "unmute", "gag", "ungag" } },
+        { "Powers", { "god", "buddha", "noclip", "cloak", "notarget", "give" } },
+        { "Event fun", { "scale", "speed", "jump", "model", "slap", "ignite", "extinguish" } },
+        { "Job & money", { "setjob", "money", "setmoney" } },
+        { "Roster & staff rank", { "rank", "rrank", "battalion", "unbattalion", "train", "qual", "charreset" } },
+        { "Punish", { "slay", "kick", "ban" } },
+    },
+    server = {
+        { "Map", { "map", "restartmap", "cancelmap" } },
+        { "Announcements & sound", { "announce", "playsound", "stopsound" } },
+        { "Cleanup", { "cleanup", "freezeprops", "cleardecals" } },
+        { "Staff", { "who", "unspectate" } },
+    },
+    skip = { call = true, endcall = true, unban = true },
+}
+
 Admin.byId = {}
 Admin.byAlias = {}
 for i, c in ipairs(Admin.COMMANDS) do

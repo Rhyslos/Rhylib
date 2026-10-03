@@ -70,8 +70,10 @@ H.call = function(caller, t, a)
     local secs = math.Clamp(math.floor(mins * 60 + 0.5), 0, 36000)
     Admin.StartCall(title, sub, secs, IsValid(caller) and caller:Nick() or "Command")
     local left = secs > 0 and string.format(" (%d:%02d)", math.floor(secs / 60), secs % 60) or ""
-    -- (The banner and its chat line are the message; just log it.)
+    -- (The banner and its chat line are the message; log it and confirm to the caller.)
     Admin.Log((IsValid(caller) and caller:Nick() or "Console") .. " called: " .. title .. left)
+    print("[Rhylib Admin] call #" .. GetGlobal2Int("rhylib_call_n", 0) .. ": " .. title .. left)
+    Admin.Tell(caller, "Call sent: " .. title .. left)
 end
 
 H.endcall = function(caller)

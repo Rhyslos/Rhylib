@@ -2,10 +2,13 @@
     Commands page (staff). Tabs:
       Players: pick a player, then an action. With rhylib_admin the actions
                are its commands (only those your rank has; arguments are
-               asked for), else the admin mod's own (ULX or SAM).
+               asked for) in sections (Admin.SECTIONS.player), else the admin
+               mod's own (ULX or SAM).
       Bans / Log (rhylib_admin): current bans (unban) and the admin log.
-      Server:  Rhylib's console commands, which check rights themselves
-               (plus map change, announcement and cleanup with rhylib_admin).
+      Server:  with rhylib_admin a Calls block (presets, timer, message, end,
+               what's up now) and its no-target commands in sections
+               (Admin.SECTIONS.server); then Rhylib's console tools, which
+               check rights themselves.
     Add more with:
         Rhylib.Menus.AddCommand("Server", {
             id = "x", title = "Do X", desc = "...", order = 50,
@@ -208,48 +211,81 @@ local function buildPlayers(parent)
             K.Font(12), 0, s(36), C.textDim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
     end
 
-    local grid = vgui.Create("DIconLayout", right)
+    -- Actions in sectioned blocks (rhylib_admin: Admin.SECTIONS.player).
+    local grid = K.Scroll(right)
     grid:Dock(FILL)
-    grid:SetSpaceX(s(6))
-    grid:SetSpaceY(s(6))
     grid:SetVisible(false)
+
+    local function block(title, buttons)
+        if #buttons == 0 then return end
+        local h = K.Heading(grid, title)
+        h:Dock(TOP)
+        h:DockMargin(0, 0, s(8), s(4))
+        local lay = vgui.Create("DIconLayout", grid)
+        lay:Dock(TOP)
+        lay:DockMargin(0, 0, s(8), s(12))
+        lay:SetSpaceX(s(6))
+        lay:SetSpaceY(s(6))
+        if lay.SetStretchHeight then lay:SetStretchHeight(true) end
+        for _, def in ipairs(buttons) do
+            local b = K.Button(lay, def[1], def[2], { small = true, danger = def.danger })
+            b:SetSize(s(150), s(30))
+        end
+        lay:Layout()
+    end
+
     local function fillGrid()
         grid:Clear()
         if not mod then return end
         local extra = {
-            { "Copy SteamID", function(p) SetClipboardText(p:SteamID()) end },
-            { "Steam profile", function(p) p:ShowProfile() end },
+            { "Copy SteamID", function() if IsValid(box.selected) then SetClipboardText(box.selected:SteamID()) end end },
+            { "Steam profile", function() if IsValid(box.selected) then box.selected:ShowProfile() end end },
         }
         if mod.id == "rhylib" then
-            -- rhylib_admin: the commands your rank has for this player.
+            -- rhylib_admin: the commands your rank has for this player, by section.
             local Admin = Rhylib.Admin
             local me = LocalPlayer()
             local sel = box.selected
             local DANGER = { kick = true, ban = true, slay = true, charreset = true }
-            for _, cmd in ipairs(Admin.COMMANDS) do
+            local function usable(cmd)
+                if not cmd or not cmd.target or (Admin.SECTIONS and Admin.SECTIONS.skip[cmd.id]) then return false end
                 local full = Admin.Has(me, cmd.perm)
-                local allowed = cmd.target and (full or (sel == me and Admin.Has(me, cmd.perm .. ".self")))
-                if allowed and IsValid(sel) and (sel == me or Admin.CanTarget(me, sel)) then
-                    local b = K.Button(grid, cmd.name, function()
-                        local p = box.selected
-                        if not IsValid(p) then return end
-                        Admin.AskArgs(cmd, function(words)
-                            table.insert(words, 1, Admin.TargetWord(p))
-                            Admin.Run(cmd.id, words)
-                        end)
-                    end, { small = true, danger = DANGER[cmd.id] })
-                    b:SetSize(s(150), s(30))
+                local allowed = full or (sel == me and Admin.Has(me, cmd.perm .. ".self"))
+                return allowed and IsValid(sel) and (sel == me or Admin.CanTarget(me, sel))
+            end
+            local function button(cmd)
+                return { cmd.name, function()
+                    local p = box.selected
+                    if not IsValid(p) then return end
+                    Admin.AskArgs(cmd, function(words)
+                        table.insert(words, 1, Admin.TargetWord(p))
+                        Admin.Run(cmd.id, words)
+                    end)
+                end, danger = DANGER[cmd.id] }
+            end
+            local placed = {}
+            for _, sec in ipairs(Admin.SECTIONS and Admin.SECTIONS.player or {}) do
+                local list = {}
+                for _, id in ipairs(sec[2]) do
+                    local cmd = Admin.byId[id]
+                    placed[id] = true
+                    if usable(cmd) then list[#list + 1] = button(cmd) end
                 end
+                block(sec[1], list)
             end
+            local other = {}
+            for _, cmd in ipairs(Admin.COMMANDS) do
+                if not placed[cmd.id] and usable(cmd) then other[#other + 1] = button(cmd) end
+            end
+            block("Other", other)
+            block("Steam", extra)
         else
+            local list = {}
             for _, act in ipairs(ACTIONS) do
-                local b = K.Button(grid, act[1], function() runAction(mod, act, box.selected) end, { small = true, danger = act.danger })
-                b:SetSize(s(150), s(30))
+                list[#list + 1] = { act[1], function() runAction(mod, act, box.selected) end, danger = act.danger }
             end
-        end
-        for _, e in ipairs(extra) do
-            local b = K.Button(grid, e[1], function() if IsValid(box.selected) then e[2](box.selected) end end, { small = true })
-            b:SetSize(s(150), s(30))
+            block("Actions", list)
+            block("Steam", extra)
         end
     end
     fillGrid()
@@ -295,24 +331,137 @@ local function buildPlayers(parent)
     return box
 end
 
--- rhylib_admin's server commands (only those your rank has).
+local function heading(sp, text)
+    local h = K.Heading(sp, text)
+    h:Dock(TOP)
+    h:DockMargin(0, K.S(4), K.S(10), K.S(6))
+end
+
+-- Calls (rhylib_admin !call): preset buttons, timer, message, end, and what's up now.
+local function callsBlock(sp)
+    local Admin = Rhylib.Admin
+    local me = LocalPlayer()
+    if not (Admin.byId.call and Admin.Has(me, "call")) then return end
+    heading(sp, "Calls")
+    local s = K.S
+    local box = vgui.Create("DPanel", sp)
+    box:Dock(TOP)
+    box:DockMargin(0, 0, s(10), s(12))
+    box:DockPadding(s(12), s(36), s(12), s(10))
+    box:SetTall(s(176))
+    function box:Paint(w, h)
+        K.SetCol(C.row)
+        surface.DrawRect(0, 0, w, h)
+        K.SetCol(C.edgeDark)
+        surface.DrawOutlinedRect(0, 0, w, h)
+        local c = Admin.CurrentCall and Admin.CurrentCall()
+        local text, col = "No call is up", C.textDim
+        if c then
+            text = "Up now: " .. c.title .. (c.left and string.format("  ·  %d:%02d left", math.floor(c.left / 60), math.ceil(c.left) % 60) or "")
+            col = C.warn
+        end
+        draw.SimpleText(text, K.Font(14, 700), s(12), s(18), col, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+    end
+
+    local timerWord, msg = "d", nil
+    local function send(id)
+        local text = string.Trim(msg:GetText() or "")
+        if id == "custom" and text == "" then
+            msg:RequestFocus()
+            surface.PlaySound("buttons/button10.wav")
+            return
+        end
+        Admin.Run("call", { id, timerWord, text })
+    end
+
+    -- Preset buttons (+ custom), End call on the right.
+    local row = vgui.Create("DPanel", box)
+    row:Dock(TOP)
+    row:SetTall(s(30))
+    row.Paint = nil
+    local stop = K.Button(row, "End call", function() Admin.Run("endcall", {}) end, { small = true, danger = true })
+    stop:Dock(RIGHT)
+    stop:SetWide(s(110))
+    local list = {}
+    for _, p in ipairs(Admin.Cfg("calls") or {}) do list[#list + 1] = { p.id, p.name or p.id, tonumber(p.minutes) or 0 } end
+    list[#list + 1] = { "custom", "Custom (message as title)", 0 }
+    for _, p in ipairs(list) do
+        local label = p[2] .. (p[3] > 0 and (" · " .. p[3] .. " min") or "")
+        local b = K.Button(row, label, function() send(p[1]) end, { small = true, accent = p[1] ~= "custom" })
+        b:Dock(LEFT)
+        b:DockMargin(0, 0, s(6), 0)
+        surface.SetFont(K.Font(12, 700))
+        b:SetWide(surface.GetTextSize(string.upper(label)) + s(30))
+    end
+
+    -- Timer.
+    local trow = vgui.Create("DPanel", box)
+    trow:Dock(TOP)
+    trow:SetTall(s(30))
+    trow:DockMargin(0, s(10), 0, 0)
+    function trow:Paint(w, h)
+        draw.SimpleText("Timer", K.Font(13, 500), 0, h * 0.5, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+    end
+    local opts = { { "d", "Preset" }, { "0", "None" }, { "5", "5 min" }, { "10", "10 min" }, { "15", "15 min" }, { "20", "20 min" }, { "30", "30 min" } }
+    local ch = K.Choices(trow, opts, function() return timerWord end, function(v) timerWord = v end)
+    ch:Dock(FILL)
+    ch:DockMargin(s(80), 0, 0, 0)
+
+    -- Message.
+    local mrow = vgui.Create("DPanel", box)
+    mrow:Dock(TOP)
+    mrow:SetTall(s(30))
+    mrow:DockMargin(0, s(10), 0, 0)
+    function mrow:Paint(w, h)
+        draw.SimpleText("Message", K.Font(13, 500), 0, h * 0.5, C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+    end
+    msg = K.TextEntry(mrow, "Optional: replaces the subtitle (the title for Custom)")
+    msg:Dock(FILL)
+    msg:DockMargin(s(80), 0, 0, 0)
+end
+
+-- rhylib_admin's server commands (only those your rank has), by section.
 local function adminRows(sp)
     local Admin = Rhylib.Admin
     if not (Admin and Admin.Run) then return end
-    for _, cmd in ipairs(Admin.COMMANDS) do
-        if (not cmd.target or cmd.target == "opt") and Admin.Has(LocalPlayer(), cmd.perm) then
-            local row = K.Row(sp, cmd.name, cmd.desc)
-            row:Dock(TOP)
-            row:DockMargin(0, 0, K.S(10), K.S(4))
-            local b = K.Button(row.right, "Run", function()
-                Admin.AskArgs(cmd, function(words)
-                    if cmd.target == "opt" then words = {} end   -- (no target: everyone's)
-                    Admin.Run(cmd.id, words)
-                end)
-            end, { small = true, accent = true })
-            b:Dock(RIGHT)
-            b:SetWide(K.S(90))
+    callsBlock(sp)
+    local me = LocalPlayer()
+    local function usable(cmd)
+        return cmd and (not cmd.target or cmd.target == "opt") and not (Admin.SECTIONS and Admin.SECTIONS.skip[cmd.id])
+            and Admin.Has(me, cmd.perm)
+    end
+    local function row(cmd)
+        local r = K.Row(sp, cmd.name, cmd.desc)
+        r:Dock(TOP)
+        r:DockMargin(0, 0, K.S(10), K.S(4))
+        local b = K.Button(r.right, "Run", function()
+            Admin.AskArgs(cmd, function(words)
+                if cmd.target == "opt" then words = {} end   -- (no target: everyone's)
+                Admin.Run(cmd.id, words)
+            end)
+        end, { small = true, accent = true })
+        b:Dock(RIGHT)
+        b:SetWide(K.S(90))
+    end
+    local placed = {}
+    for _, sec in ipairs(Admin.SECTIONS and Admin.SECTIONS.server or {}) do
+        local list = {}
+        for _, id in ipairs(sec[2]) do
+            placed[id] = true
+            if usable(Admin.byId[id]) then list[#list + 1] = Admin.byId[id] end
         end
+        if #list > 0 then
+            heading(sp, sec[1])
+            for _, cmd in ipairs(list) do row(cmd) end
+        end
+    end
+    local other = {}
+    for _, cmd in ipairs(Admin.COMMANDS) do
+        if not placed[cmd.id] and usable(cmd) then other[#other + 1] = cmd end
+    end
+    if #other > 0 then
+        heading(sp, "Other")
+        for _, cmd in ipairs(other) do row(cmd) end
     end
 end
 
@@ -355,6 +504,7 @@ local function buildServer(sp)
     for g in pairs(Menus.commands) do groups[#groups + 1] = g end
     table.sort(groups)
     for _, g in ipairs(groups) do
+        heading(sp, g == "Server" and "Rhylib tools" or g)
         local list = table.Copy(Menus.commands[g])
         table.sort(list, function(a, b) return (a.order or 50) < (b.order or 50) end)
         for _, cmd in ipairs(list) do
