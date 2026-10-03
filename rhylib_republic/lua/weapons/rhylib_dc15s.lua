@@ -60,7 +60,7 @@ SWEP.FireSound = "weapons/airboat/airboat_gun_energy1.wav"
 SWEP.Mags = { "mag_medium", "mag_small" }
 
 SWEP.Grapple = true     -- grapple fire mode while carrying a grapple hook
-SWEP.FireModes = { "semi", "auto" }
+SWEP.FireModes = { "semi", "auto", "stun" }   -- (stun: military police only)
 
 SWEP.UsesCell = false
 SWEP.StartMags = 8

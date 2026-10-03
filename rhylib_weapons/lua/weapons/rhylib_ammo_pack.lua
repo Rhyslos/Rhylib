@@ -35,6 +35,7 @@ SWEP.InvCharge = true
 SWEP.InvCategory = "ammo"
 
 SWEP.RequiresSkill = "ammo_pack"
+SWEP.CarrySkill = "ammo_pack"   -- (only Autoriflemen with the skill may even carry one)
 SWEP.Range = 110
 SWEP.Cooldown = 1.5
 SWEP.Spares = 4

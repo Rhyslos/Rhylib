@@ -10,7 +10,6 @@
       f5  Curve tiles. Slots 1-4 are tiles whose tops follow the cheek;
           slots 2-4 reach down to a strip with the overflow and backpack
           slots. Under them a wide ammo plate, as wide as the tiles.
-      console  The console plate next to the ammo box (cl_40_hotbar.lua).
 
     The hotbar fades like before; the ammo parts never fade.
     Shapes are drawn as strips of trapezoids with vertical sides, which

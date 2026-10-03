@@ -47,9 +47,8 @@ reg("gunRunnerWeight", 0.5, "Gun runner: Z-6 weight multiplier")
 reg("steadySpread", 0.45, "Steady barrels: Z-6 spread multiplier")
 reg("steadyRecoil", 0.45, "Steady barrels: Z-6 view kick multiplier")
 reg("rapidFireRPM", 600, "Rapid fire: DC-15S fire rate")
-reg("pistolRate", 1.1, "Pistol proficiency: DC-17 fire rate multiplier")
 reg("pistolSpread", 0.8, "Pistol proficiency: DC-17 spread multiplier")
-reg("dualRate", 1.7, "Dual DC-17: fire rate multiplier")
+reg("dualRate", 1, "Dual DC-17: fire rate multiplier (the gain is the second magazine)")
 reg("critChance", 0.1, "Critical hits: chance per hit")
 reg("critMult", 1.5, "Critical hits: damage multiplier")
 reg("airborneFuel", 15, "Airborne: jetpack seconds of thrust with any Airborne skill (others: jetpack fuelTime)")
@@ -61,12 +60,16 @@ reg("dodgeSpeed", 450, "Thruster dodge: dash speed (units/s)")
 reg("dodgeCooldown", 2, "Thruster dodge: seconds between dashes")
 reg("dodgeFuel", 0.15, "Thruster dodge: share of a full tank per dash")
 reg("dodgeStamina", 20, "Thruster dodge: stamina per dash without a jetpack")
+reg("sidestepSpeed", 340, "Sidestep: dash speed (units/s)")
+reg("sidestepCooldown", 2.5, "Sidestep: seconds between dashes")
+reg("sidestepStamina", 25, "Sidestep: stamina per dash")
+reg("lightMagBonus", 20, "Light mags: extra rounds in a small magazine")
 reg("blastMult", 0.7, "Blast hardened: explosion damage multiplier")
 reg("airMult", 0.8, "Aerial stability: damage multiplier while off the ground")
 reg("slamSpeed", 500, "Death from above: landing speed needed (units/s)")
 reg("slamRadius", 220, "Death from above: radius (units)")
 reg("slamDamage", 60, "Death from above: damage at the centre (more for faster landings)")
-reg("underFireMult", 0.7, "Under fire: damage multiplier while reviving or treating")
+reg("underFireMult", 0.8, "Under fire: damage multiplier while reviving or treating")
 reg("stanceSpread", 0.8, "Steady stance: spread multiplier while crouched")
 reg("steadyAimSpread", 0.75, "Steady aim: spread multiplier while aiming")
 reg("headhunterMult", 1.25, "Headhunter: headshot damage multiplier")
@@ -88,7 +91,7 @@ local function cfg(k) return Config.Get("skills", k) end
 K.Z6 = "rhylib_z6"
 K.DC15X = "rhylib_dc15x"
 K.DP24 = "rhylib_dp24"
-K.PISTOLS = { rhylib_dc17 = true, rhylib_dc17_stun = true }
+K.PISTOLS = { rhylib_dc17 = true }
 
 local function isPly(p) return IsValid(p) and p:IsPlayer() end
 
@@ -117,7 +120,7 @@ function K.SpreadMult(ply, wep)
     if next(set) == nil then return 1 end
     local m = 1
     local class = wep:GetClass()
-    local steady = class == K.Z6 and set.steady_barrels
+    local steady = class == K.Z6 and set.steady_barrels and sprinting(ply, wep)
     if steady then m = m * cfg("steadySpread") end
     if set.run_gun and not steady and sprinting(ply, wep) then m = m * cfg("runGunSpread") end
     if set.pistol_prof and K.PISTOLS[class] then m = m * cfg("pistolSpread") end
@@ -134,7 +137,7 @@ function K.RecoilMult(ply, wep)
     if not isPly(ply) then return 1 end
     local m = 1
     if wep:GetClass() == K.Z6 then
-        if K.Has(ply, "steady_barrels") then m = m * cfg("steadyRecoil") end
+        if K.Has(ply, "steady_barrels") and sprinting(ply, wep) then m = m * cfg("steadyRecoil") end
         if K.Has(ply, "planted") and ply:Crouching() then m = m * cfg("plantedMult") end
     end
     return m
@@ -170,7 +173,6 @@ end
 function K.FireRateMult(ply, wep, mode)
     if not isPly(ply) then return 1 end
     local m = 1
-    if K.PISTOLS[wep:GetClass()] and K.Has(ply, "pistol_prof") then m = m * cfg("pistolRate") end
     if wep:GetClass() == K.DC15X and K.Has(ply, "bolt_drills") then m = m * cfg("boltDrillsRate") end
     if wep:GetClass() == "rhylib_dc15s" and wep.FireRate and K.Has(ply, "rapid_fire") then
         m = m * cfg("rapidFireRPM") / wep.FireRate
@@ -191,7 +193,9 @@ function K.ReloadMult(ply, wep, cell)
 end
 
 function K.MagBonus(ply, magId)
-    if magId == "mag_medium" and isPly(ply) and K.Has(ply, "ext_mags") then return cfg("extMagBonus") end
+    if not isPly(ply) then return 0 end
+    if magId == "mag_medium" and K.Has(ply, "ext_mags") then return cfg("extMagBonus") end
+    if magId == "mag_small" and K.Has(ply, "light_mags") then return cfg("lightMagBonus") end
     return 0
 end
 
@@ -294,10 +298,18 @@ function K.JetCfg(ply, key, v)
     return v
 end
 
--- Thruster dodge: Alt + a direction. Predicted; cooldown in DTFloat 25.
+-- Dashes: Thruster dodge (Airborne) and Sidestep (Officer). Sprint +
+-- left / right / back + Jump (a forward sprint-jump stays a jump), or
+-- Alt + any direction. Sidestep only from the ground. Predicted;
+-- cooldown in DTFloat 25.
 local DT_DODGE = 25
 Rhylib.Hook.Add("SetupMove", "skills.dodge", function(ply, mv)
-    if not mv:KeyPressed(IN_WALK) or not K.Has(ply, "thruster_dodge") then return end
+    local alt = mv:KeyPressed(IN_WALK)
+    if not (alt or (mv:KeyPressed(IN_JUMP) and mv:KeyDown(IN_SPEED))) then return end
+    if not alt and mv:GetSideSpeed() == 0 and mv:GetForwardSpeed() >= 0 then return end
+    local thruster = K.Has(ply, "thruster_dodge")
+    if not thruster and not K.Has(ply, "sidestep") then return end
+    if not thruster and not ply:OnGround() then return end
     if not ply:Alive() or ply:GetMoveType() ~= MOVETYPE_WALK or ply:WaterLevel() >= 2 then return end
     local Med = Rhylib.Medical
     if Med and Med.IsDown and (Med.IsDown(ply) or (Med.Dragging and Med.Dragging(ply))) then return end
@@ -311,15 +323,18 @@ Rhylib.Hook.Add("SetupMove", "skills.dodge", function(ply, mv)
     if f * f + s * s < 1 then return end
 
     local J = Rhylib.Jetpack
-    if J and J.Has and J.Has(ply) then
+    local speed, cooldown = cfg("dodgeSpeed"), cfg("dodgeCooldown")
+    if thruster and J and J.Has and J.Has(ply) then
         local fuel = ply:GetDTFloat(J.DT_FUEL)
         if ply:GetDTBool(J.DT_LOCKED) or fuel < cfg("dodgeFuel") then return end
         ply:SetDTFloat(J.DT_FUEL, fuel - cfg("dodgeFuel"))
     else
+        local cost = thruster and cfg("dodgeStamina") or cfg("sidestepStamina")
+        if not thruster then speed, cooldown = cfg("sidestepSpeed"), cfg("sidestepCooldown") end
         local St = Rhylib.Stamina
         if St and St.Get then
-            if St.Get(ply) < cfg("dodgeStamina") then return end
-            if SERVER then St.Drain(ply, cfg("dodgeStamina")) end
+            if St.Get(ply) < cost then return end
+            if SERVER then St.Drain(ply, cost) end
         end
     end
 
@@ -328,13 +343,12 @@ Rhylib.Hook.Add("SetupMove", "skills.dodge", function(ply, mv)
     dir.z = 0
     dir:Normalize()
     local vel = mv:GetVelocity()
-    local speed = cfg("dodgeSpeed")
     vel.x, vel.y = dir.x * speed, dir.y * speed
     if ply:OnGround() then
         vel.z = math.max(vel.z, 160)   -- a hop (over 140 leaves the ground), so friction doesn't eat it
         ply:SetGroundEntity(NULL)
     end
     mv:SetVelocity(vel)
-    ply:SetDTFloat(DT_DODGE, now + cfg("dodgeCooldown"))
+    ply:SetDTFloat(DT_DODGE, now + cooldown)
     if SERVER then ply:EmitSound("ambient/machines/thumper_dust.wav", 60, 140, 0.5) end
 end, -150)

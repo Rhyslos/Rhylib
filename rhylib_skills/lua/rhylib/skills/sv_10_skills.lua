@@ -14,7 +14,7 @@
     (droid poppers without Droid popper), Spring legs jump power,
     Reinforced max health.
     Damage taken (EntityTakeDamage 95, before armour): Hard landings,
-    Blast hardened, Aerial stability, Juggernaut, Under fire, Adrenaline.
+    Blast hardened, Aerial stability, Juggernaut, Under fire.
     Death from above: OnPlayerHitGround.
 ]]
 
@@ -263,8 +263,6 @@ Rhylib.Hook.Add("EntityTakeDamage", "skills.resist", function(ent, dmg)
     if not ent:IsPlayer() or ent.rhylibDown then return end
     if bit.band(dmg:GetDamageType(), DMG_DIRECT) ~= 0 then return end   -- (bleeding, bleed-out)
     local m = 1
-    -- Adrenaline (a revive from a Combat medic): half damage for a while.
-    if (ent.rhylibAdrenaline or 0) > CurTime() then m = m * 0.5 end
     local set = K.Set(ent)
     if next(set) ~= nil then
         local t = dmg:GetDamageType()

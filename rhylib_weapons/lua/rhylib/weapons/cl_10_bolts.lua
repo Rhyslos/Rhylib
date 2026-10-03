@@ -100,10 +100,10 @@ function Bolts.Spawn(shooter, origin, dir, speed, colorIndex)
 end
 
 -- Called by the weapon on the shooter's own client (first prediction only).
-function Bolts.FireLocal(owner, weapon, origin, dir)
-    local speed = weapon.BoltSpeed or 7000
-    if not weapon.Explosive then speed = speed * (Rhylib.Config.Get("weapons", "boltSpeedMult") or 1) end
-    Bolts.Spawn(owner, origin, dir, speed, weapon.BoltColor or 1)
+function Bolts.FireLocal(owner, weapon, origin, dir, opts)
+    local speed = opts and opts.speed or weapon.BoltSpeed or 7000
+    if not weapon.Explosive and not (opts and opts.speed) then speed = speed * (Rhylib.Config.Get("weapons", "boltSpeedMult") or 1) end
+    Bolts.Spawn(owner, origin, dir, speed, opts and opts.color or weapon.BoltColor or 1)
 end
 
 Rhylib.Net.ReceiveBatch("wep.shot", function()

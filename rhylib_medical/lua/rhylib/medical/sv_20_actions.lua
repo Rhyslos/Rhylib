@@ -21,9 +21,9 @@
       revive kit     medics. One per revive.
       field items    splint, burn gel, painkillers, bacta stim (anyone, H
                      menu), blood pack (medics, E menu on a downed player).
-    Skills (Med.Skill): Steady hands and Quick revive shorten the timers,
-    Hands-on revive needs no kit, Adrenaline and Full recovery change
-    how revived players get up.
+    Skills (Med.Skill): Steady hands (treatments) and Quick revive
+    (revives) shorten the timers, Hands-on revive needs no kit, Efficient
+    care spends less first aid charge.
 
     Started by the kit weapons (left click: someone else, right click:
     yourself, selfMult times longer), the E menu on a downed player
@@ -94,6 +94,7 @@ end
 
 -- Spend charge from the next first aid kit (an empty kit is used up).
 function Med.SpendCharge(ply, amount)
+    if Med.Skill(ply, "efficient_care") then amount = amount * Med.Cfg("efficientCare") end
     local max = chargeMax()
     local Inv = inventory()
     if not Inv then
@@ -159,7 +160,7 @@ local function kitOf(a) return a.kit or KIT[a.kind] end
 
 local TREAT_TIME = {
     [Med.FIRST_AID] = "firstAidLimbTime", [Med.MEDKIT] = "medkitLimbTime", [Med.SPLINT] = "splintTime",
-    [Med.BURN_GEL] = "burnGelTime", [Med.PAINKILLER] = "pillTime", [Med.BACTA_STIM] = "pillTime",
+    [Med.BURN_GEL] = "burnGelTime", [Med.PAINKILLER] = "pillTime",
 }
 
 local function baseDuration(kind, self, kit)
@@ -178,7 +179,7 @@ end
 
 local function duration(helper, kind, self, kit)
     local d = baseDuration(kind, self, kit)
-    if Med.Skill(helper, "steady_hands") then d = d * Med.Cfg("steadyMult") end
+    if not Med.REVIVES[kind] and Med.Skill(helper, "steady_hands") then d = d * Med.Cfg("steadyMult") end
     if Med.REVIVES[kind] and Med.Skill(helper, "quick_revive") then d = d * Med.Cfg("quickReviveMult") end
     return d
 end
@@ -337,19 +338,8 @@ local function stopBleeding(t, all)
     Med.MarkInjuries(t)
 end
 
--- A revive by helper: Adrenaline and Full recovery change how they get up.
 local function revive(helper, t, hp)
-    local full = Med.Skill(helper, "full_recovery")
-    if full then hp = t:GetMaxHealth() end
-    if Med.Skill(helper, "adrenaline") then
-        hp = math.max(hp, t:GetMaxHealth() * Med.Cfg("adrenalineHealth"))
-        t.rhylibAdrenaline = CurTime() + Med.Cfg("adrenalineTime")
-    end
     Med.Revive(t, hp, helper)
-    if full and Med.ClearInjuries then
-        Med.ClearInjuries(t)
-        t:SetNW2Float("rhylib_painkill", 0)
-    end
 end
 
 local function finishAct(helper, a)

@@ -83,6 +83,13 @@ SWEP.DualPropVMPos = nil            -- "dual" mode: a second prop floating at th
 SWEP.DualPropVMAng = Angle(0, 0, 0)
 SWEP.DualPropWMPos = nil            -- "dual" mode: a second prop on the left hand (forward, right, up)
 SWEP.DualPropWMAng = Angle(0, 0, 0)
+SWEP.DualCarrierVM = nil            -- "dual" mode viewmodel with two guns and hands (their gun bones hidden, props drawn on them)
+SWEP.DualBonePos = Vector(0, 0, 0)  -- prop offset on each of its gun bones (forward, right, up)
+SWEP.DualBoneAng = Angle(0, 0, 0)
+SWEP.DualMags = 2                   -- "dual" mode holds this many magazines (one per pistol)
+SWEP.DualVMOffset = nil             -- viewmodel offset with the two-gun viewmodel (right, forward, up)
+SWEP.DualBoneL = nil                -- the two-gun viewmodel's gun bones (nil = found by name)
+SWEP.DualBoneR = nil
 
 -- Magazine types this gun takes, preferred first (ids from W.MagTypes).
 SWEP.Mags = { "mag_small" }
@@ -211,8 +218,41 @@ function SWEP:ActiveHoldType(modeIndex)
 end
 
 function SWEP:OnFireModeChanged(_, _, new)
+    self:ApplyDualViewModel(self.FireModes[new] == "dual")
+    if SERVER then
+        -- Out of dual: a second pistol's worth of rounds goes back to the pouch.
+        timer.Simple(0, function() if IsValid(self) and self.TrimClip then self:TrimClip() end end)
+    end
     if self:IsLowered() then return end
     self:SetHoldType(self:ActiveHoldType(new))
+end
+
+-- Is the two-gun viewmodel usable? (checked once)
+function SWEP:HasDualCarrier()
+    if self.dualCarrierOK == nil then
+        self.dualCarrierOK = self.DualCarrierVM and self.PropModel and util.IsValidModel(self.DualCarrierVM) or false
+    end
+    return self.dualCarrierOK
+end
+
+-- Two-gun viewmodel on (dual) or back to the normal one.
+function SWEP:ApplyDualViewModel(dual)
+    local o = self:GetOwner()
+    if not (IsValid(o) and o:IsPlayer() and o:GetActiveWeapon() == self) or not self:HasDualCarrier() then return end
+    local vm = o:GetViewModel()
+    if not IsValid(vm) then return end
+    local want = dual and self.DualCarrierVM or self.ViewModel
+    if vm:GetModel() ~= want then
+        vm:SetWeaponModel(want, self)
+        self:SendWeaponAnim(ACT_VM_DRAW)
+    end
+end
+
+function SWEP:DualViewModelOn()
+    if not self:HasDualCarrier() or self:GetFireModeName() ~= "dual" then return false end
+    local o = self:GetOwner()
+    local vm = IsValid(o) and o:IsPlayer() and o:GetViewModel()
+    return IsValid(vm) and vm:GetModel() == self.DualCarrierVM
 end
 
 -- rhylib_skills (nil without it: nothing is gated).
@@ -272,6 +312,10 @@ end
 function SWEP:ModeAllowed(i)
     local name = self.FireModes[i]
     if not name then return true end
+    if name == "stun" then   -- military police only (rhylib_mp)
+        local MP = Rhylib.MP
+        return MP and MP.IsMP and MP.IsMP(self:GetOwner()) or false
+    end
     local K = skills()
     if not (K and K.ModeAllowed) then return true end
     return K.ModeAllowed(self:GetOwner(), self, name)
@@ -337,11 +381,31 @@ function SWEP:GetMagSize()
     local m = self:GetMag()
     local n = m and self:MagRounds(m) or self.Primary.ClipSize
     if self.ClipCap then n = math.min(n, self.ClipCap) end
+    if self:GetFireModeName() == "dual" then n = n * (self.DualMags or 2) end   -- (one magazine per pistol)
     return n
+end
+
+if SERVER then
+    -- A clip over the current size (left dual mode) gives the rest back.
+    function SWEP:TrimClip()
+        local m = self:GetMag()
+        local size = self:GetMagSize()
+        local extra = self:Clip1() - size
+        if not m or extra <= 0 or self:InfiniteAmmo() then return end
+        local o = self:GetOwner()
+        self:SetClip1(size)
+        if not IsValid(o) or not o:IsPlayer() then return end
+        local full = self:MagRounds(m)
+        while extra > 0 do
+            Rhylib.Weapons.Pouch.Add(o, m.id, math.min(1, extra / full), true, self.magIssued)
+            extra = extra - full
+        end
+    end
 end
 
 function SWEP:Deploy()
     self:SetAiming(false)
+    if self:GetFireModeName() == "dual" then self:ApplyDualViewModel(true) end
     return true
 end
 
@@ -474,11 +538,16 @@ end
 -- Rounds per minute right now (burst, dual and skills).
 function SWEP:CurrentFireRate()
     local mode = self:GetFireModeName()
+    if mode == "stun" then return self.StunFireRate end
     local rate = (mode == "burst" and self.BurstFireRate) or self.FireRate
     local K = skills()
     if K and K.FireRateMult then rate = rate * K.FireRateMult(self:GetOwner(), self, mode) end
     return rate
 end
+
+-- The MP "stun" fire mode: slow blue rings that do no damage (rhylib_mp).
+local STUN_OPTS = { stun = true, color = 6, speed = 2600 }
+SWEP.StunFireRate = 75   -- one ring every 0.8 s
 
 -- One shot: spread, recoil, ammo, sound and the bolt.
 function SWEP:FireShot()
@@ -505,8 +574,14 @@ function SWEP:FireShot()
         self:SetCell(math.max(0, self:GetCell() - 1 / shots))
     end
 
-    self:EmitSound(self.FireSound, 80, util.SharedRandom("rhylib.pitch", 96, 104), 1, CHAN_WEAPON)
-    self:SendWeaponAnim(ACT_VM_PRIMARYATTACK)
+    local stun = self:GetFireModeName() == "stun"
+    self:EmitSound(stun and "weapons/stunstick/spark2.wav" or self.FireSound, 80, util.SharedRandom("rhylib.pitch", 96, 104), 1, CHAN_WEAPON)
+    -- Dual pistols take turns (left on odd rounds left).
+    if self:DualViewModelOn() and self:Clip1() % 2 == 1 then
+        self:SendWeaponAnim(ACT_VM_SECONDARYATTACK)
+    else
+        self:SendWeaponAnim(ACT_VM_PRIMARYATTACK)
+    end
     -- The third-person firing gesture (SWEP.PlayerFireAnim = false turns it
     -- off, for guns whose hold type's gesture looks wrong).
     if self.PlayerFireAnim ~= false then owner:SetAnimation(PLAYER_ATTACK1) end
@@ -532,10 +607,11 @@ function SWEP:FireShot()
             d = da:Forward() + da:Right() * (math.cos(pa) * off) - da:Up() * (math.sin(pa) * off)
             d:Normalize()
         end
+        local opts = stun and STUN_OPTS or nil
         if SERVER then
-            Rhylib.Weapons.Bolts.Fire(owner, self, origin, d, damage)
+            Rhylib.Weapons.Bolts.Fire(owner, self, origin, d, stun and 0 or damage, opts)
         elseif IsFirstTimePredicted() then
-            Rhylib.Weapons.Bolts.FireLocal(owner, self, origin, d)
+            Rhylib.Weapons.Bolts.FireLocal(owner, self, origin, d, opts)
         end
     end
 end
@@ -745,6 +821,15 @@ if SERVER then
             local clip = math.max(self:Clip1(), 0)
             local full = self:MagRounds(m)
             local rounds = math.floor(best * full + 0.5)
+            -- Dual pistols: one more magazine per extra pistol, if there is one.
+            if self:GetFireModeName() == "dual" then
+                for _ = 2, self.DualMags or 2 do
+                    local more, moreIssued = Pouch.TakeBest(owner, m.id)
+                    if not more then break end
+                    rounds = rounds + math.floor(more * full + 0.5)
+                    if moreIssued then issued = true end   -- (any issued magazine keeps the rounds issued)
+                end
+            end
             local oldIssued = self.magIssued
             self.magIssued = issued
             self:SetMagType(m.index)
@@ -760,10 +845,20 @@ if SERVER then
                 -- ClipCap: what doesn't fit stays in the new magazine (back
                 -- first, it frees the room it came from).
                 local load = math.min(rounds, cap)
-                if rounds > load then Pouch.Add(owner, m.id, (rounds - load) / full, true, issued) end
+                local spare = rounds - load
+                while spare > 0 do
+                    Pouch.Add(owner, m.id, math.min(1, spare / full), true, issued)
+                    spare = spare - full
+                end
                 -- The old magazine goes back with what's left in it (still
                 -- issued if it came from an armoury).
-                if old and clip > 0 then Pouch.Add(owner, old.id, math.min(1, clip / self:MagRounds(old)), true, oldIssued) end
+                if old and clip > 0 then
+                    local ofull = self:MagRounds(old)
+                    while clip > 0 do   -- (a dual clip can be more than one magazine)
+                        Pouch.Add(owner, old.id, math.min(1, clip / ofull), true, oldIssued)
+                        clip = clip - ofull
+                    end
+                end
                 self:SetClip1(load)
             end
         elseif kind == RELOAD_CELL then
@@ -806,9 +901,17 @@ function SWEP:SetInventoryData(data)
     local m = W.MagByIndex[data.mag or 0]
     if not (m and self:TakesMag(m.id)) then m = W.MagTypes[self:FirstMagFor(self:GetOwner())] end
     if m then self:SetMagType(m.index) end
-    self:SetClip1(math.min(data.clip or self:GetMagSize(), self:GetMagSize()))
-    if self.UsesCell then self:SetCell(data.cell or 1) end
+    -- (mode first: dual pistols hold two magazines)
     if data.mode and self.FireModes[data.mode] and self:ModeAllowed(data.mode) then self:SetFireMode(data.mode) end
+    local want = data.clip or self:GetMagSize()
+    if SERVER and want > self:GetMagSize() then
+        -- (saved in dual mode, which isn't allowed now: the rest goes back as magazines)
+        self:SetClip1(want)
+        timer.Simple(0, function() if IsValid(self) then self:TrimClip() end end)
+    else
+        self:SetClip1(math.min(want, self:GetMagSize()))
+    end
+    if self.UsesCell then self:SetCell(data.cell or 1) end
     if data.safe then self:SetSafety(true) end
     -- An issued gun's own magazine and cell count as issued too.
     self.magIssued = data.magIssued or data.issued or nil
@@ -997,7 +1100,8 @@ if CLIENT then
         self.aimFrac = math.Approach(self.aimFrac or 0, (self:GetAiming() or self.rhylibAimPreview) and 1 or 0, ft * 6)
         self.safeFrac = math.Approach(self.safeFrac or 0, self:IsLowered() and 1 or 0, ft / (self.SafeBlendTime or 0.2))
 
-        local o = self.rhylibCarrier and self:CarrierPose("VMOffset")
+        local dual = self:DualViewModelOn()
+        local o = dual and self.DualVMOffset or (not dual and self.rhylibCarrier and self:CarrierPose("VMOffset"))
         if o then pos = pos + ang:Right() * o.x + ang:Forward() * o.y + ang:Up() * o.z end
         if self.rhylibCarrier and self.SafePose then self.ViewModelFOV = self:CarrierPose("CarrierFOV") end
 
@@ -1190,9 +1294,68 @@ if CLIENT then
     -- on that bone in PostDrawViewModel. Otherwise the placeholder isn't
     -- drawn and the prop floats in its place. Both inside the viewmodel
     -- pass (viewmodel FOV, bob, sway, aim offset).
+    -- Two-gun viewmodel: every bone named like its guns is hidden, and a
+    -- prop is drawn on the left and the right gun bone.
+    local function dualBones(vm, wep)
+        local key = vm:GetModel()
+        if vm.rhylibDualKey == key then return vm.rhylibDualBones end
+        local info = { hide = {} }
+        for i = 0, (vm:GetBoneCount() or 0) - 1 do
+            local n = string.lower(vm:GetBoneName(i) or "")
+            local gunPart = string.find(n, "elite", 1, true) or string.find(n, "weapon", 1, true) and not string.find(n, "hand", 1, true)
+                and not string.find(n, "arm", 1, true) and not string.find(n, "finger", 1, true) and not string.find(n, "wrist", 1, true)
+                and not string.find(n, "bip", 1, true)
+            if gunPart then
+                info.hide[#info.hide + 1] = i
+                -- The gun itself: the shortest name with left / right in it.
+                if string.find(n, "left", 1, true) and (not info.left or #n < info.leftLen) then info.left, info.leftLen = i, #n end
+                if string.find(n, "right", 1, true) and (not info.right or #n < info.rightLen) then info.right, info.rightLen = i, #n end
+            end
+        end
+        -- Named in the weapon (SWEP.DualBoneL / DualBoneR) wins over the guess.
+        if wep and wep.DualBoneL then info.left = vm:LookupBone(wep.DualBoneL) or info.left end
+        if wep and wep.DualBoneR then info.right = vm:LookupBone(wep.DualBoneR) or info.right end
+        vm.rhylibDualKey, vm.rhylibDualBones = key, info
+        return info
+    end
+
+    local function dualShrink(vm, on, wep)
+        if not on then
+            -- Exactly the bones shrunk before (the model may have changed since).
+            local n = vm:GetBoneCount() or 0
+            for _, i in ipairs(vm.rhylibDualShrunk or {}) do
+                if i < n then vm:ManipulateBoneScale(i, ONE) end
+            end
+            vm.rhylibDualShrunk = nil
+            return
+        end
+        local info = dualBones(vm, wep)
+        for _, i in ipairs(info.hide) do vm:ManipulateBoneScale(i, SHRINK) end
+        vm.rhylibDualShrunk = info.hide
+    end
+
+    -- Bone list of the current viewmodel (for tuning the dual carrier).
+    concommand.Add("rhylib_vm_bones", function()
+        local vm = LocalPlayer():GetViewModel()
+        if not IsValid(vm) then return end
+        print("Bones of " .. tostring(vm:GetModel()))
+        for i = 0, (vm:GetBoneCount() or 0) - 1 do print(i, vm:GetBoneName(i)) end
+    end)
+
+    Rhylib.Hook.Add("PreDrawViewModel", "weapons.dualreset", function(vm, ply, wep)
+        if IsValid(vm) and vm.rhylibDualShrunk and not (IsValid(wep) and wep.DualViewModelOn and wep:DualViewModelOn()) then
+            dualShrink(vm, false)
+        end
+    end)
+
     function SWEP:PreDrawViewModel(vm)
         if self:Scoped() then return true end   -- looking through the scope: no gun, no hands
         if not self.PropModel or self.PropFirstPerson == false then return end
+        if self:DualViewModelOn() then
+            if vm.rhylibShrunk then unshrink(vm) end
+            dualShrink(vm, true, self)
+            return
+        end
         if self:UsesCarrier() then
             shrink(self, vm)
             self:HoldReloadFrame(vm)
@@ -1203,6 +1366,24 @@ if CLIENT then
     end
 
     function SWEP:PostDrawViewModel(vm)
+        if self.PropModel and not self:Scoped() and self:DualViewModelOn() then
+            local info = dualBones(vm, self)
+            for side, b in pairs({ right = info.right, left = info.left }) do
+                local m = b and vm:GetBoneMatrix(b)
+                if m then
+                    local ent = self:GetPropEntity(side == "left" and "propVML" or "propVM", self.PropBoneScale or self.PropScale)
+                    if ent then
+                        local pos, ang = offsetTransform(m:GetTranslation(), m:GetAngles(), self.DualBonePos, self.DualBoneAng)
+                        ent:SetPos(pos)
+                        ent:SetAngles(ang)
+                        ent:SetupBones()
+                        ent:DrawModel()
+                        if side == "right" then self.propMuzzleVM = ent:LocalToWorld(self.PropMuzzle) end
+                    end
+                end
+            end
+            return
+        end
         if self.PropModel and not self:Scoped() then drawDualVM(self, vm) end
         if not self.PropModel or not self:UsesCarrier() then return end
         local b = carrierBone(self, vm)

@@ -22,7 +22,7 @@ local A = Rhylib.Armor
 
 local Config = Rhylib.Config
 Config.Register("armor", "mitigation", { 0.15, 0.30, 0.45, 0.60 }, "Share of damage blocked per tier, last quarter first (placeholders)")
-Config.Register("armor", "drain", 1, "Armour lost per point of incoming damage, before mitigation")
+Config.Register("armor", "drain", 0.5, "Armour lost per point of incoming damage, before mitigation (0.5: a full bar lasts twice as long)")
 Config.Register("armor", "spawnArmor", 100, "Armour players spawn with (a DarkRP job's armor = N overrides it)")
 Config.Register("armor", "bypass", bit.bor(DMG_FALL, DMG_DROWN, DMG_POISON, DMG_RADIATION), "Damage types armour ignores (same as the engine's list)")
 

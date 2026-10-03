@@ -316,8 +316,6 @@ local function wontHelp(kit, p, hurtHP, helper, patient)
         if p.splint then return "Already splinted: the med bay can set it" end
     elseif kit == Med.BURN_GEL then
         if not (p and p.burn > 0) then return "No burns there" end
-    elseif kit == Med.BACTA_STIM then
-        if not hurtHP then return (patient and patient:Nick() or "They") .. " is at full health" end
     elseif kit == Med.FIRST_AID then
         -- Only a splinted bone left, away from the med bay: nothing to gain.
         if p and p.splint and not hurtHP and p.dmg <= 0 and p.bleed == 0 and p.burn <= 0
@@ -385,9 +383,6 @@ function Med.TreatPart(helper, patient, limb, kit)
         elseif kit == Med.PAINKILLER then
             patient:SetNW2Float("rhylib_painkill", CurTime() + cfg("painkillerTime"))
             Med.Note(helper, "Painkillers given")
-        elseif kit == Med.BACTA_STIM then
-            patient:SetHealth(math.min(patient:GetMaxHealth(), patient:Health() + cfg("stimHeal")))
-            Med.Note(helper, "Bacta stim given")
         end
     end
     hook.Run("Rhylib.PlayerHealed", patient, helper)

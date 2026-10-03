@@ -13,8 +13,10 @@ ENT.Spawnable = true
 ENT.AdminOnly = true
 
 function ENT:Initialize()
-    self:SetModel("models/props_combine/combine_interface001.mdl")
     if SERVER then
+        local m = Rhylib.Config.Get("mp", "terminalModel")
+        if not (isstring(m) and util.IsValidModel(m)) then m = "models/props_combine/combine_interface001.mdl" end
+        self:SetModel(m)
         self:PhysicsInit(SOLID_VPHYSICS)
         self:SetMoveType(MOVETYPE_VPHYSICS)
         self:SetSolid(SOLID_VPHYSICS)

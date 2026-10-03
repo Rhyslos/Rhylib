@@ -135,7 +135,7 @@ Menus.AddSetting("HUD", {
     title = "First-person HUD",
     desc = "How the hotbar and ammo look in first person",
     kind = "choice", convar = "rhylib_hud_firstperson",
-    options = { { "", "Server default" }, { "f5", "F5 tiles" }, { "f4", "F4 strip" }, { "console", "Console" }, { "thirdperson", "Third-person" } },
+    options = { { "", "Server default" }, { "f5", "F5 tiles" }, { "f4", "F4 strip" }, { "thirdperson", "Third-person" } },
     get = function()
         local v = cvGet("rhylib_hud_firstperson")
         local HUD = Rhylib.HUD

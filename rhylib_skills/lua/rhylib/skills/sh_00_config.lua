@@ -44,7 +44,7 @@ K.CATEGORIES = {
           { id = "marksman", name = "Marksman", desc = "Long-range engagements" },
           { id = "heavy", name = "Heavy", desc = "The Z-6, the shotgun and soaking hits" },
       } },
-    { id = "officer", name = "Officer", desc = "Pistols and leading (more coming later)", specs = {} },
+    { id = "officer", name = "Officer", desc = "Sidearms, footwork and leading (more coming later)", specs = {} },
     { id = "airborne", name = "Airborne", desc = "Jetpacks, hard landings and getting in close (indoors too)", specs = {} },
     { id = "medic", name = "Medic", desc = "Medic jobs only: revives, treatment and the med bay", medicOnly = true,
       specs = {
@@ -69,7 +69,7 @@ K.NODES = {
       desc = "Medium magazines hold 70 rounds instead of 60 when you load them.", needs = { "quick_hands" } },
 
     { id = "droid_popper", cat = "trooper", tier = 3, cost = 2, name = "Droid popper",
-      desc = "You can carry and throw droid poppers (EMP grenades). Nobody else can even pick them up.",
+      desc = "You can carry and throw droid poppers (EMP grenades; E + R switches impact / timed). Nobody else can even pick them up.",
       needsGroups = { { "run_gun", "point_blank" }, { "full_auto", "ext_mags" } } },
 
     { id = "light_kit", cat = "trooper", spec = "assault", tier = 4, cost = 3, name = "Light kit",
@@ -83,7 +83,7 @@ K.NODES = {
     { id = "gun_runner", cat = "trooper", spec = "assault", branch = "shock", tier = 5, cost = 3, name = "Gun runner",
       desc = "The Z-6 weighs half and barely slows you while its barrels spin.", needs = { "light_kit" } },
     { id = "steady_barrels", cat = "trooper", spec = "assault", branch = "shock", tier = 6, cost = 5, name = "Steady barrels",
-      desc = "Z-6 spread and kick cut by more than half, even while sprinting.", needs = { "gun_runner" } },
+      desc = "While sprinting with the Z-6: spread and kick cut by more than half.", needs = { "gun_runner" } },
 
     { id = "eff_cells", cat = "trooper", spec = "autorifleman", tier = 4, cost = 3, name = "Efficient cells",
       desc = "Power cells last 25% longer in your guns.", needs = { "droid_popper" } },
@@ -91,7 +91,7 @@ K.NODES = {
       desc = "+6 kg carry limit, 25% less stamina penalty from weight, and a cell rack (5 power cells).",
       needs = { "droid_popper" } },
     { id = "ammo_pack", cat = "trooper", spec = "autorifleman", tier = 5, cost = 5, name = "Ammo pack",
-      desc = "Use ammo packs: they top up a teammate's magazines and hand out full ones for any blaster.",
+      desc = "Carry and use ammo packs: they top up a teammate's magazines and hand out full ones for any blaster.",
       needs = { "eff_cells", "load_bearer" } },
 
     -- Support
@@ -124,14 +124,20 @@ K.NODES = {
       desc = "DP-24: +30% pellet damage, 20% tighter cone. Guns 4 cells long or shorter weigh half.", needs = { "planted" } },
     { id = "juggernaut", cat = "support", spec = "heavy", tier = 5, cost = 5, name = "Juggernaut", icon = "shield",
       desc = "15% less damage from everything.", needs = { "ammo_belt", "shotgun_drills" } },
+    { id = "suppression", cat = "support", spec = "heavy", tier = 6, cost = 3, name = "Suppression", icon = "barrels",
+      desc = "(Not working yet) Droids near one you hit with the Z-6 aim worse for a few seconds.", needs = { "juggernaut" } },
 
     -- Officer
     { id = "pistol_prof", cat = "officer", tier = 1, cost = 2, name = "Pistol proficiency",
-      desc = "DC-17: 10% faster fire and 20% less spread." },
-    { id = "dual_dc17", cat = "officer", tier = 2, cost = 3, name = "Dual DC-17",
-      desc = "Wield two DC-17s (E + R): 70% faster fire, so magazines empty faster.", needs = { "pistol_prof" } },
-    { id = "crits", cat = "officer", tier = 2, cost = 3, name = "Critical hits",
-      desc = "10% of your hits do 50% more damage.", needs = { "pistol_prof" } },
+      desc = "DC-17: 20% less spread." },
+    { id = "light_mags", cat = "officer", tier = 2, cost = 2, name = "Light mags", icon = "mag",
+      desc = "Small magazines hold 50 rounds instead of 30 when you load them.", needs = { "pistol_prof" } },
+    { id = "sidestep", cat = "officer", tier = 2, cost = 2, name = "Sidestep", icon = "dodge",
+      desc = "Sprint + left, right or back + Jump (or Alt + any direction): a short dash from the ground. Costs stamina, 2.5 s cooldown.", needs = { "pistol_prof" } },
+    { id = "dual_dc17", cat = "officer", tier = 3, cost = 3, name = "Dual DC-17",
+      desc = "Draw a second DC-17 (E + R): two magazines loaded, shots alternate between hands.", needs = { "light_mags" } },
+    { id = "crits", cat = "officer", tier = 3, cost = 3, name = "Critical hits",
+      desc = "10% of your hits do 50% more damage.", needs = { "sidestep" } },
 
     -- Airborne (jetpack: 15 s of flight with any Airborne skill, 10 s without)
     { id = "hard_landings", cat = "airborne", tier = 1, cost = 1, name = "Hard landings",
@@ -143,7 +149,7 @@ K.NODES = {
     { id = "afterburner", cat = "airborne", tier = 3, cost = 2, name = "Afterburner",
       desc = "Jetpack climbs, steers and flies 25% faster.", needs = { "extended_tanks" } },
     { id = "thruster_dodge", cat = "airborne", tier = 3, cost = 3, name = "Thruster dodge",
-      desc = "Alt + a direction: a quick dash (2 s cooldown). Costs jetpack fuel, or stamina without one.",
+      desc = "Sprint + left, right or back + Jump (or Alt + any direction): a quick dash, also in the air. 2 s cooldown; costs jetpack fuel, or stamina without one.",
       needs = { "spring_legs" } },
     { id = "blast_hardened", cat = "airborne", tier = 4, cost = 3, name = "Blast hardened",
       desc = "30% less damage from explosions.", needs = { "afterburner", "thruster_dodge" } },
@@ -159,23 +165,23 @@ K.NODES = {
     { id = "hands_on", cat = "medic", tier = 2, cost = 2, name = "Hands-on revive",
       desc = "Revive with no kit at all (E menu). Very slow, and they get up with 15 health.", needs = { "field_drag" } },
     { id = "steady_hands", cat = "medic", tier = 2, cost = 2, name = "Steady hands",
-      desc = "Every treatment and revive is 15% faster.", needs = { "field_drag" } },
+      desc = "Treatments (not revives) are 15% faster.", needs = { "field_drag" } },
 
     { id = "quick_revive", cat = "medic", spec = "combat_medic", tier = 3, cost = 2, name = "Quick revive",
-      desc = "Revives take 30% less time.", needs = { "hands_on", "steady_hands" } },
+      desc = "Revives take 20% less time.", needs = { "hands_on", "steady_hands" } },
     { id = "under_fire", cat = "medic", spec = "combat_medic", tier = 4, cost = 3, name = "Under fire",
-      desc = "30% less damage while you revive or treat someone.", needs = { "quick_revive" } },
+      desc = "20% less damage while you revive or treat someone.", needs = { "quick_revive" } },
     { id = "deep_pockets", cat = "medic", spec = "combat_medic", tier = 4, cost = 3, name = "Deep pockets",
-      desc = "Medkit stacks hold 3 more.", needs = { "quick_revive" } },
+      desc = "Medkit stacks hold 2 more.", needs = { "quick_revive" } },
     { id = "triage", cat = "medic", spec = "combat_medic", tier = 4, cost = 3, name = "Triage",
       desc = "Downed markers reach twice as far, show who is helping and flash when time runs short.",
       needs = { "quick_revive" } },
-    { id = "adrenaline", cat = "medic", spec = "combat_medic", tier = 5, cost = 5, name = "Adrenaline",
-      desc = "People you revive get up with at least half health and take half damage for 5 s.",
+    { id = "medevac", cat = "medic", spec = "combat_medic", tier = 5, cost = 5, name = "Medevac", icon = "drag",
+      desc = "A downed player's bleed-out pauses while you drag them to cover.",
       needs = { "under_fire" } },
 
     { id = "chem_bench", cat = "medic", spec = "chemist", tier = 3, cost = 2, name = "Chemistry",
-      desc = "Use a chemistry bench to turn medical supplies into stims, gels, painkillers, splints and more.",
+      desc = "Use a chemistry bench to turn medical supplies into gels, painkillers, splints, blood packs and medkits.",
       needs = { "hands_on", "steady_hands" } },
     { id = "field_surgeon", cat = "medic", spec = "chemist", tier = 4, cost = 3, name = "Field surgeon",
       desc = "Your first aid kit fully sets bones and heals burns anywhere, not just in the med bay.",
@@ -184,8 +190,8 @@ K.NODES = {
       desc = "The bench makes two of everything.", needs = { "chem_bench" } },
     { id = "bacta_specialist", cat = "medic", spec = "chemist", tier = 4, cost = 3, name = "Bacta specialist",
       desc = "Bacta tanks near you heal twice as fast.", needs = { "chem_bench" } },
-    { id = "full_recovery", cat = "medic", spec = "chemist", tier = 5, cost = 5, name = "Full recovery",
-      desc = "Your revives bring people back at full health with every injury cleared.",
+    { id = "efficient_care", cat = "medic", spec = "chemist", tier = 5, cost = 5, name = "Efficient care", icon = "flask",
+      desc = "Your first aid kits use a third less charge.",
       needs = { "field_surgeon" } },
 }
 

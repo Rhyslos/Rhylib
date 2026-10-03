@@ -13,6 +13,10 @@
     With a locker, crate or armoury open, it shows on the right. Drag items
     between the two. Under the Back slot: Combine munitions.
 
+    The grid column is never taller than the main grid plus a backpack
+    (or the screen); a longer one (cell rack, ammo belt) or a big
+    storage scrolls with the mouse wheel.
+
     Along the bottom: the hotbar (4 slots, 6 with a backpack). Drag an item
     onto a slot to put it there (keys 1-4 / 1-6 then pick it), drag it off
     or right-click the slot to empty it.
@@ -248,16 +252,37 @@ function PANEL:Relayout()
     -- Combine munitions button, under the Back slot.
     self.combineRect = { x = slotX, y = top + slotSize + self.gap * 3, w = slotSize, h = math.floor(label * 1.4) }
 
+    -- Tallest a column may be: the main grid plus a backpack, and never
+    -- off the screen. Anything longer scrolls (mouse wheel).
+    local bp = Items.defs.backpack
+    local bpH = bp and bp.grid and bp.grid[2] or 3
+    local maxH = self:SpanPx(main.h) + label + self:SpanPx(bpH)
+    maxH = math.max(self:SpanPx(2), math.min(maxH, ScrH() - top - label - self.cell - self.footer - pad * 3 - self.gap * 4))
+    local ownView = math.min(gridsH, maxH)
+    self.cols = { own = { x = gridX, w = gridsW, top = top, view = ownView, content = gridsH } }
+    for _, r in ipairs(self.regions) do
+        if not r.slot then r.col, r.baseY = "own", r.y end
+    end
+    self.backLabelBase = self.backLabelY
+
     -- An open locker, crate or armoury: to the right of your grids.
     local width = gridX + gridsW + pad
     local ext = Inv.cont[EXT]
-    local contentH = math.max(gridsH, self:SpanPx(3))
+    local contentH = math.max(ownView, self:SpanPx(3))
     if ext then
         local extX = gridX + gridsW + pad * 2
-        self.regions[#self.regions + 1] = { cid = EXT, x = extX, y = top, gw = ext.w, gh = ext.h, title = Inv.ext and Inv.ext.title }
+        local extH = self:SpanPx(ext.h)
+        local extView = math.min(extH, maxH)
+        self.regions[#self.regions + 1] = { cid = EXT, x = extX, y = top, gw = ext.w, gh = ext.h, title = Inv.ext and Inv.ext.title, col = "ext", baseY = top }
+        self.cols.ext = { x = extX, w = self:SpanPx(ext.w), top = top, view = extView, content = extH }
         width = extX + self:SpanPx(ext.w) + pad
-        contentH = math.max(contentH, self:SpanPx(ext.h))
+        contentH = math.max(contentH, extView)
     end
+    self.scroll = self.scroll or {}
+    for k, c in pairs(self.cols) do
+        self.scroll[k] = math.Clamp(self.scroll[k] or 0, 0, math.max(0, c.content - c.view))
+    end
+    self:ApplyScroll()
 
     -- The model fills the full height of the content.
     self.model:SetPos(pad, top)
@@ -273,12 +298,34 @@ function PANEL:Relayout()
     self:Center()  -- stays centred when a backpack grid appears or disappears
 end
 
+-- Scrolled columns: where each grid is drawn right now.
+function PANEL:ApplyScroll()
+    for _, r in ipairs(self.regions or {}) do
+        if r.col then r.y = r.baseY - (self.scroll[r.col] or 0) end
+    end
+    if self.backLabelBase then self.backLabelY = self.backLabelBase - (self.scroll.own or 0) end
+end
+
+function PANEL:OnMouseWheeled(delta)
+    local mx = self:CursorPos()
+    for k, c in pairs(self.cols or {}) do
+        if mx >= c.x - self.pad and mx <= c.x + c.w + self.pad and c.content > c.view then
+            self.scroll[k] = math.Clamp((self.scroll[k] or 0) - delta * self.step, 0, c.content - c.view)
+            self:ApplyScroll()
+            return true
+        end
+    end
+end
+
 -- Region and cell under panel coordinates. Grids allow a small margin so
 -- items can be dragged against the edge.
 function PANEL:HitTest(mx, my, margin)
     margin = margin or 0
     for _, r in ipairs(self.regions) do
-        if r.slot then
+        local c = r.col and self.cols and self.cols[r.col]
+        if c and (my < c.top - margin or my > c.top + c.view + margin) then
+            -- (scrolled out of view)
+        elseif r.slot then
             if mx >= r.x and mx <= r.x + r.pw and my >= r.y and my <= r.y + r.ph then
                 return r, 0, 0
             end
@@ -455,10 +502,34 @@ function PANEL:Paint(pw, ph)
     draw.SimpleText("Drag to move · Ctrl+drag takes one · R rotates · Right-click for options · Drag out to drop",
         self:Font(12), self.pad, ph - self.footer * 0.5 - self.pad * 0.25, COL_LABEL, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
 
-    label(self, Inv.cont[BACK] and "Backpack" or "No backpack worn", self.rightX, self.backLabelY)
-
     local dragUid = self.drag and self.drag.inst.uid
-    for _, r in ipairs(self.regions) do self:PaintRegion(r, dragUid) end
+    local sx, sy = self:LocalToScreen(0, 0)
+    for k, c in pairs(self.cols or {}) do
+        -- Each column clipped to its view (labels above it included).
+        local x0 = c.x - self.pad * 0.5
+        -- (scrolled: nothing above the view, or items would show in the label strip)
+        local topY = (self.scroll[k] or 0) > 0 and c.top or c.top - self.label
+        render.SetScissorRect(sx + x0, sy + topY, sx + c.x + c.w + self.pad * 0.5, sy + c.top + c.view + 4, true)
+        if k == "own" then label(self, Inv.cont[BACK] and "Backpack" or "No backpack worn", self.rightX, self.backLabelY) end
+        for _, r in ipairs(self.regions) do
+            if r.col == k then self:PaintRegion(r, dragUid) end
+        end
+        render.SetScissorRect(0, 0, 0, 0, false)
+        -- Scroll bar on the right edge.
+        if c.content > c.view then
+            local bx = c.x + c.w + math.floor(self.pad * 0.25)
+            local bw = math.max(2, math.floor(3 * s))
+            surface.SetDrawColor(255, 255, 255, 20)
+            surface.DrawRect(bx, c.top, bw, c.view)
+            local h = math.max(math.floor(c.view * c.view / c.content), math.floor(20 * s))
+            local y = c.top + math.floor((c.view - h) * (self.scroll[k] or 0) / (c.content - c.view))
+            surface.SetDrawColor(UI.Colors.accent.r, UI.Colors.accent.g, UI.Colors.accent.b, 200)
+            surface.DrawRect(bx, y, bw, h)
+        end
+    end
+    for _, r in ipairs(self.regions) do
+        if not r.col then self:PaintRegion(r, dragUid) end
+    end
 
     self.buttons = {}
     self:PaintHotbar()
@@ -532,7 +603,7 @@ function PANEL:PaintExtControls()
     local bh = math.floor(self.label * 0.85)
     local bw = math.floor(80 * s)
     local right = r.x + self:SpanPx(r.gw)
-    local y = r.y - self.label * 0.5 - bh * 0.5
+    local y = (r.baseY or r.y) - self.label * 0.5 - bh * 0.5
     self:Button(right - bw, y, bw, bh, ext.locked and "Unlock" or "Lock", function()
         hook.Run("Rhylib.StorageControl", "lock")
     end)

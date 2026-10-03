@@ -61,6 +61,14 @@ local function ammoStock()
     return out
 end
 
+local function gearStock()
+    local out = {}
+    for _, id in ipairs(Config.Get("armoury", "gearStock") or {}) do
+        if Rhylib.Items.defs[id] then out[#out + 1] = id end
+    end
+    return out
+end
+
 function A.FillCrate(ent, storage)
     storage.items = {}
     if ent.CrateMag then
@@ -140,6 +148,8 @@ function A.Setup(ent)
         return I.CreateStorage(ent, { kind = "depot", w = 6, title = "Weapons armoury", stock = weaponStock() })
     elseif kind == "ammo" then
         return I.CreateStorage(ent, { kind = "depot", w = 6, title = "Ammo cabinet", stock = ammoStock() })
+    elseif kind == "gear" then
+        return I.CreateStorage(ent, { kind = "depot", w = 6, title = "Gear cabinet", stock = gearStock() })
     elseif kind == "spec" then
         storage = I.CreateStorage(ent, { kind = "grid", w = 1, h = 1, title = ent.PrintName, variant = specVariant })
         storage.specKind = ent.SpecKind

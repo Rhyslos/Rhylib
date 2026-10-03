@@ -295,12 +295,34 @@ function Med.StartDrag(ply, target)
     if stab then Med.Cancel(stab) end
     target:SetNW2Entity("rhylib_dragBy", ply)
     ply:SetNW2Entity("rhylib_dragging", target)
+    -- Medevac (Combat medic): the bleed-out waits while you drag them.
+    if Med.Skill(ply, "medevac") and not Med.StabilisedBy(target) then
+        target:SetNW2Float("rhylib_downLeft", Med.TimeLeft(target))
+        target:SetNW2Entity("rhylib_stabBy", ply)
+        target.rhylibDragPause = ply
+    end
 end
 
 function Med.StopDrag(ply)
     local target = ply:GetNW2Entity("rhylib_dragging")
     if IsValid(target) and target:GetNW2Entity("rhylib_dragBy") == ply then
         target:SetNW2Entity("rhylib_dragBy", NULL)
+    end
+    -- (Medevac pause ends with the drag)
+    if IsValid(target) and target.rhylibDragPause == ply then
+        target.rhylibDragPause = nil
+        if target.rhylibDown and target:GetNW2Entity("rhylib_stabBy") == ply then
+            -- Someone reviving or stabilising them meanwhile takes the pause over.
+            for h, a in pairs(Med.acts or {}) do
+                if h ~= ply and a.target == target and (Med.REVIVES[a.kind] or a.kind == Med.A_STAB) then
+                    target:SetNW2Entity("rhylib_stabBy", h)
+                    a.paused = true
+                    return
+                end
+            end
+            target:SetNW2Float("rhylib_downEnd", CurTime() + target:GetNW2Float("rhylib_downLeft", 0))
+            target:SetNW2Entity("rhylib_stabBy", NULL)
+        end
     end
     if ply:GetNW2Entity("rhylib_dragging") ~= NULL then ply:SetNW2Entity("rhylib_dragging", NULL) end
 end

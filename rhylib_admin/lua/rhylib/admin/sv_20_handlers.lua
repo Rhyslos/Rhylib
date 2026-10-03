@@ -418,15 +418,48 @@ local function isPlacement(e)
     local c = e:GetClass()
     local A = Rhylib.Armoury
     if A and A.CLASSES and A.CLASSES[c] then return true end
+    if Rhylib.PLACEMENT_CLASSES and Rhylib.PLACEMENT_CLASSES[c] then return true end
     return c == "rhylib_jail_cell" or c == "rhylib_jail_terminal" or c == "rhylib_bn_computer" or c == "rhylib_med_holotable"
+end
+
+-- Perma props (PermaProps addons, sandbox persistence) stay too.
+local function isPerma(e)
+    return e.PermaProps or e.PermaProps_ID or e:GetNWBool("PermaProps", false) or e:GetPersistent() or e.rhylibPerma or false
+end
+
+-- What a full cleanup may take: things spawned during play (not part of
+-- the map, not carried, not a lying player's body, not a placement).
+local TAKE_PREFIX = { "prop_physics", "prop_ragdoll", "prop_vehicle", "spawned_", "sent_", "gmod_wire_", "edit_" }
+local TAKE_CLASS = { rhylib_world_item = true, rhylib_grenade = true, gmod_button = true, gmod_lamp = true, gmod_light = true,
+    gmod_balloon = true, gmod_thruster = true, gmod_wheel = true, gmod_hoverball = true, gmod_emitter = true,
+    gmod_dynamite = true, gmod_cameraprop = true, gmod_turret = true }
+local KEEP_CLASS = { gmod_hands = true, gmod_gamerules = true, predicted_viewmodel = true, viewmodel = true, rhylib_rope = true }
+local function cleanable(e)
+    if e:CreatedByMap() or e:IsPlayer() or isPlacement(e) or isPerma(e) then return false end
+    local c = e:GetClass()
+    if KEEP_CLASS[c] or string.sub(c, 1, 17) == "rhylib_test_dummy" then return false end
+    if e:GetNW2Bool("rhylib_lyingRag", false) then return false end
+    if e:IsWeapon() and IsValid(e:GetOwner()) then return false end
+    local parent = e:GetParent()
+    if IsValid(parent) and (parent:IsPlayer() or parent:GetClass() == "predicted_viewmodel") then return false end
+    if e.rhylibSpawner ~= nil or e:IsNPC() or e:IsNextBot() or e:IsVehicle() or e:IsWeapon() or TAKE_CLASS[c] then return true end
+    for _, p in ipairs(TAKE_PREFIX) do
+        if string.sub(c, 1, #p) == p then return true end
+    end
+    return false
 end
 
 H.cleanup = function(caller, t)
     local only = IsValid(t) and t or nil
     local n = 0
     for _, e in ipairs(ents.GetAll()) do
-        local sp = e.rhylibSpawner
-        if sp ~= nil and (not only or sp == only) and not e:IsWeapon() and not isPlacement(e) then
+        local take
+        if only then
+            take = e.rhylibSpawner == only and not e:IsWeapon() and not isPlacement(e) and not isPerma(e)
+        else
+            take = cleanable(e)
+        end
+        if take then
             e:Remove()
             n = n + 1
         end
@@ -814,6 +847,17 @@ end
 H.cleardecals = function(caller)
     toClients(2)
     return name(caller) .. " cleared decals"
+end
+
+-- Jail cell rings (rhylib_mp) off or on for everyone (kept across maps).
+Rhylib.Hook.Add("InitPostEntity", "admin.hidecells", function()
+    SetGlobal2Bool("rhylib_hideCells", Rhylib.Data.Get("admin", "hideCells") == 1)
+end)
+H.hidecells = function(caller)
+    local hide = not GetGlobal2Bool("rhylib_hideCells", false)
+    SetGlobal2Bool("rhylib_hideCells", hide)
+    Rhylib.Data.Set("admin", "hideCells", hide and 1 or 0)
+    return name(caller) .. (hide and " hid the jail cells" or " showed the jail cells")
 end
 
 H.freezeprops = function(caller)

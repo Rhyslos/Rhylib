@@ -36,7 +36,7 @@ Config.Register("admin", "ranks", {
                 "freezeprops", "cleardecals", "call", "rhylib.chat.event", "rhylib.weapons.infammo" } },
     { id = "moderator", name = "Moderator", level = 50, color = Color(90, 170, 240), inherits = { "trialmod" },
       perms = { "ban", "slay", "teleport", "noclip", "god", "cloak", "notarget", "hp", "armor", "bans", "setjob",
-                "jail", "unjail", "revive", "heal", "stopsound", "freezeprops", "cleardecals", "ignite" } },
+                "jail", "unjail", "revive", "heal", "stopsound", "freezeprops", "cleardecals", "ignite", "hidecells" } },
     { id = "admin", name = "Admin", level = 70, color = Color(230, 80, 80), inherits = { "moderator", "gamemaster" },
       perms = { "permaban", "banid", "unban", "rank", "roster", "charreset", "unwarn", "money" } },
     { id = "superadmin", name = "Superadmin", level = 90, color = Color(200, 90, 230), perms = { "*" } },

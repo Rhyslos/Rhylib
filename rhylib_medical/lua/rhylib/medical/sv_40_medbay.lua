@@ -24,7 +24,9 @@ Rhylib.Net.Register("chem.open")
 
 local function inside(tank)
     local mins, maxs = tank:OBBMins(), tank:OBBMaxs()
-    return tank:LocalToWorld(Vector((mins.x + maxs.x) * 0.5, (mins.y + maxs.y) * 0.5, mins.z + 2))
+    local off = cfg("tankOffset")
+    if not isvector(off) then off = Vector(0, 0, 2) end
+    return tank:LocalToWorld(Vector((mins.x + maxs.x) * 0.5, (mins.y + maxs.y) * 0.5, mins.z) + off)
 end
 
 -- A free spot next to the tank, front first.
@@ -239,10 +241,112 @@ end)
 Rhylib.Hook.Add("PlayerDisconnected", "medical.craft", function(ply) crafting[ply] = nil end)
 
 --------------------------------------------------------------------------
+-- Med sofa: lie down (looks only). The lying body (rhylib_core Lying)
+-- is laid flat along the sofa, face up, and frozen. E or Jump gets up.
+--------------------------------------------------------------------------
+
+local function sofaUp(ply, quiet)
+    local sofa = ply.rhylibSofa
+    if not sofa then return end
+    ply.rhylibSofa = nil
+    ply.rhylibSofaLeft = CurTime()
+    ply:SetNW2Entity("rhylib_sofa", NULL)
+    if IsValid(sofa) and sofa.rhylibUser == ply then sofa.rhylibUser = nil end
+    -- (downed or stunned meanwhile: their system owns the body now)
+    local L = Rhylib.Lying
+    local MP = Rhylib.MP
+    local stunned = MP and MP.IsStunned and MP.IsStunned(ply)
+    if not quiet and L and L.End and not ply.rhylibDown and not stunned then
+        L.End(ply)
+        if IsValid(sofa) then
+            ply:SetPos(sofa:GetPos() + sofa:GetForward() * (sofa:OBBMaxs().x + 24) + Vector(0, 0, 4))
+            if L.Unstick then L.Unstick(ply) end
+        end
+    end
+end
+Med.SofaUp = sofaUp
+
+function Med.SofaUse(sofa, ply)
+    if ply.rhylibSofa == sofa then return sofaUp(ply) end
+    if CurTime() - (ply.rhylibSofaLeft or 0) < 0.6 then return end
+    if IsValid(sofa.rhylibUser) and sofa.rhylibUser.rhylibSofa == sofa then
+        return Med.Note(ply, sofa.rhylibUser:Nick() .. " is lying there")
+    end
+    local L = Rhylib.Lying
+    if not (L and L.Begin and L.Ragdoll) then return end
+    if not ply:Alive() or ply.rhylibDown or ply.rhylibTank or Med.Dragging(ply) or L.Ragdoll(ply) then return end
+    local MP = Rhylib.MP
+    if MP and MP.IsCuffed and (MP.IsCuffed(ply) or MP.IsStunned(ply)) then return end
+    Med.Cancel(ply)
+
+    -- Long side of the sofa, and the point on top of it.
+    local mins, maxs = sofa:OBBMins(), sofa:OBBMaxs()
+    local alongX = (maxs.x - mins.x) >= (maxs.y - mins.y)
+    local axis = alongX and sofa:GetForward() or sofa:GetRight()
+    local top = sofa:LocalToWorld(Vector((mins.x + maxs.x) * 0.5, (mins.y + maxs.y) * 0.5, mins.z + cfg("sofaHeight")))
+
+    L.Begin(ply)
+    local rag = L.Ragdoll(ply)
+    if not IsValid(rag) then return end
+    -- The standing pose turned flat: the player's up runs along the sofa,
+    -- their front faces the ceiling; feet near one end.
+    local from = Angle(0, ply:EyeAngles().y, 0)
+    local to = Vector(0, 0, 1):AngleEx(axis)
+    local origin = ply:GetPos()
+    local half = (alongX and (maxs.x - mins.x) or (maxs.y - mins.y)) * 0.5
+    local base = top - axis * math.min(half - 6, 36)
+    for i = 0, rag:GetPhysicsObjectCount() - 1 do
+        local phys = rag:GetPhysicsObjectNum(i)
+        if IsValid(phys) then
+            local lp, la = WorldToLocal(phys:GetPos(), phys:GetAngles(), origin, from)
+            local wp, wa = LocalToWorld(lp, la, base, to)
+            phys:SetPos(wp)
+            phys:SetAngles(wa)
+            phys:SetVelocity(Vector(0, 0, 0))
+            phys:EnableMotion(false)
+        end
+    end
+    rag.rhylibFrozen = true   -- (so a drag, if they go down here, unfreezes it)
+    ply.rhylibSofa = sofa
+    ply.rhylibSofaIn = CurTime()
+    sofa.rhylibUser = ply
+    ply:SetNW2Entity("rhylib_sofa", sofa)
+end
+
+Rhylib.Hook.Add("KeyPress", "medical.sofa", function(ply, key)
+    if ply.rhylibSofa and (key == IN_JUMP or key == IN_USE) and CurTime() - (ply.rhylibSofaIn or 0) > 0.6 then
+        sofaUp(ply)
+    end
+end)
+
+timer.Create("Rhylib.Medical.Sofas", 1, 0, function()
+    for _, ply in ipairs(player.GetAll()) do
+        local s = ply.rhylibSofa
+        local L = Rhylib.Lying
+        local MP = Rhylib.MP
+        if s and ((L and L.Ragdoll and not L.Ragdoll(ply)) or (MP and MP.IsStunned and MP.IsStunned(ply))) then
+            sofaUp(ply, true)   -- (stunned or got up some other way: their system owns the body)
+        elseif s and (not IsValid(s) or not ply:Alive() or ply:GetPos():DistToSqr(s:GetPos()) > 200 * 200) then
+            sofaUp(ply)
+        end
+    end
+end)
+
+local function sofaQuiet(ply) if ply.rhylibSofa then sofaUp(ply, true) end end
+Rhylib.Hook.Add("PlayerDeath", "medical.sofa", sofaQuiet)
+Rhylib.Hook.Add("PlayerSilentDeath", "medical.sofa", sofaQuiet)
+Rhylib.Hook.Add("PlayerSpawn", "medical.sofa", sofaQuiet)
+Rhylib.Hook.Add("PlayerDisconnected", "medical.sofa", sofaQuiet)
+Rhylib.Hook.Add("Rhylib.PlayerDowned", "medical.sofa", sofaQuiet)
+
+--------------------------------------------------------------------------
 -- Placements (bacta tanks and benches stay on the map)
 --------------------------------------------------------------------------
 
-local CLASSES = { "rhylib_bacta_tank", "rhylib_chem_bench" }
+local CLASSES = { "rhylib_bacta_tank", "rhylib_chem_bench", "rhylib_med_sofa" }
+-- (rhylib_admin's cleanup leaves these alone)
+Rhylib.PLACEMENT_CLASSES = Rhylib.PLACEMENT_CLASSES or {}
+for _, c in ipairs(CLASSES) do Rhylib.PLACEMENT_CLASSES[c] = true end
 
 local function savePlaces()
     local rows = {}
@@ -279,6 +383,6 @@ concommand.Add("rhylib_medical_save", function(ply)
     Rhylib.Perms.Check(ply, "rhylib.medical.admin", function(ok)
         local function reply(m) if IsValid(ply) then ply:ChatPrint(m) else print(m) end end
         if not ok then return reply("You don't have permission for rhylib_medical_save") end
-        reply("Saved " .. savePlaces() .. " bacta tanks and chemistry benches for " .. game.GetMap())
+        reply("Saved " .. savePlaces() .. " bacta tanks, chemistry benches and med sofas for " .. game.GetMap())
     end)
 end)

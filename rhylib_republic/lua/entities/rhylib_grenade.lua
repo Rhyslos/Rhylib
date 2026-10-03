@@ -16,7 +16,7 @@ ENT.Base = "base_anim"
 ENT.PrintName = "Grenade"
 ENT.Spawnable = false
 
-local KIND = { fuse = 1, impact = 2, emp = 3 }
+local KIND = { fuse = 1, impact = 2, emp = 3, emp_impact = 4 }   -- (4: EMP on impact)
 
 ENT.Radius = 300        -- frag: blast radius
 ENT.Damage = 140        -- frag: damage at the centre
@@ -64,7 +64,7 @@ if SERVER then
         end
         local k = KIND[self.kind or "fuse"] or 1
         self:SetKind(k)
-        self:SetBoom(k == 2 and 0 or CurTime() + (self.fuse or 3))
+        self:SetBoom((k == 2 or k == 4) and 0 or CurTime() + (self.fuse or 3))
         self.armed = CurTime() + 0.15
         self.dieAt = CurTime() + 20   -- an impact one that never hits anything
     end
@@ -75,7 +75,8 @@ if SERVER then
             self:EmitSound("physics/metal/metal_grenade_impact_hard" .. math.random(1, 3) .. ".wav", 70)
         end
         -- Can't remove inside the physics callback: blow up on the next think.
-        if self:GetKind() == 2 and CurTime() >= self.armed and data.HitEntity ~= self.thrower then
+        local k = self:GetKind()
+        if (k == 2 or k == 4) and CurTime() >= self.armed and data.HitEntity ~= self.thrower then
             self.boomNow = true
             self:NextThink(CurTime())
         end
@@ -97,7 +98,7 @@ if SERVER then
         self.done = true
         local pos = self:Centre()
         local attacker = IsValid(self.thrower) and self.thrower or self
-        if self:GetKind() == 3 then
+        if self:GetKind() == 3 or self:GetKind() == 4 then
             self:Emp(pos, attacker)
         else
             local ed = EffectData()
@@ -223,7 +224,7 @@ if CLIENT then
         local left = boom > 0 and math.max(boom - CurTime(), 0) or 1
         local rate = boom > 0 and Lerp(math.Clamp(left / 3, 0, 1), 12, 3) or 4
         if math.sin(CurTime() * rate * math.pi) > 0 then
-            local emp = self:GetKind() == 3
+            local emp = self:GetKind() == 3 or self:GetKind() == 4
             render.SetMaterial(GLOW)
             render.DrawSprite(self:Centre(), 14, 14, emp and Color(90, 170, 255) or Color(255, 60, 40))
         end

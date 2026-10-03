@@ -14,8 +14,14 @@ end
 local band, bnot, bor = bit.band, bit.bnot, bit.bor
 local STRIP = bor(IN_ATTACK, IN_ATTACK2, IN_RELOAD, IN_DUCK, IN_SPEED, IN_WALK)
 
+-- Lying on a med sofa (NW2Entity rhylib_sofa).
+function Med.OnSofa(ply)
+    local s = ply:GetNW2Entity("rhylib_sofa")
+    return IsValid(s) and s or nil
+end
+
 Rhylib.Hook.Add("StartCommand", "medical.tank", function(ply, cmd)
-    if not Med.InTank(ply) then return end
+    if not (Med.InTank(ply) or Med.OnSofa(ply)) then return end
     cmd:SetButtons(band(cmd:GetButtons(), bnot(STRIP)))
     cmd:ClearMovement()
 end)

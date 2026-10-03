@@ -11,6 +11,11 @@
     rhylib_dummy_move still|walk|run (admins): every dummy stands still,
     or walks / runs back and forth (turning every 2.5 s), for testing
     falls and moving targets.
+
+    Hits show as damage numbers over the dummy (net dummy.dmg to players
+    within 1500 units). The tough dummy (rhylib_test_dummy_tough) takes
+    no damage at all: no injuries, never goes down; it only shows what a
+    hit would have done (after armour).
 ]]
 
 AddCSLuaFile()
@@ -22,13 +27,53 @@ ENT.Category = "Rhylib Medical"
 ENT.Spawnable = true
 ENT.AdminOnly = true
 
-local MODEL = "models/aussiwozzi/cgi/base/unassigned_cpt.mdl"
+local MODEL = "models/ct_trp/pm_ct_trp.mdl"
+local MODEL_FALLBACK = "models/aussiwozzi/cgi/base/unassigned_cpt.mdl"
 local MARKER = "models/hunter/blocks/cube025x025x025.mdl"
+ENT.BotName = "Test dummy"
+ENT.Tough = false
 
 if CLIENT then
     function ENT:Draw() end  -- the marker is invisible; the bot is what you see
+
+    -- Damage numbers: rise and fade over the dummy's head.
+    local pops = {}
+    Rhylib.Net.Receive("dummy.dmg", function()
+        local who = net.ReadEntity()
+        local amount = net.ReadUInt(12)
+        local head = net.ReadBool()
+        if not IsValid(who) then return end
+        local jitter = Vector(math.Rand(-8, 8), math.Rand(-8, 8), 0)
+        pops[#pops + 1] = { pos = who:GetPos() + Vector(0, 0, 76) + jitter, n = amount, head = head, t = RealTime() }
+        if #pops > 40 then table.remove(pops, 1) end
+    end)
+
+    local COL, COL_HEAD = Color(240, 240, 235), Color(255, 120, 90)
+    Rhylib.Hook.Add("HUDPaint", "dummy.dmg", function()
+        if #pops == 0 then return end
+        local now = RealTime()
+        local i = 1
+        while i <= #pops do
+            local p = pops[i]
+            local age = now - p.t
+            if age > 1.2 then
+                table.remove(pops, i)
+            else
+                local sp = (p.pos + Vector(0, 0, age * 30)):ToScreen()
+                if sp.visible then
+                    local col = p.head and COL_HEAD or COL
+                    local a = 255 * math.min(1, (1.2 - age) / 0.4)
+                    draw.SimpleTextOutlined(tostring(p.n), Rhylib.UI.Font(p.head and 24 or 20, 800), sp.x, sp.y,
+                        Color(col.r, col.g, col.b, a), TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, Color(0, 0, 0, a * 0.8))
+                end
+                i = i + 1
+            end
+        end
+    end)
     return
 end
+
+Rhylib.Net.Register("dummy.dmg")
 
 local count = 0
 
@@ -58,7 +103,7 @@ function ENT:Initialize()
     end
     count = count + 1
     -- (pcall: the engine errors instead of returning nil in some setups)
-    local ok, bot = pcall(player.CreateNextBot, "Test dummy " .. count)
+    local ok, bot = pcall(player.CreateNextBot, self.BotName .. " " .. count)
     if not ok or not IsValid(bot) then
         local why = (not ok and string.find(tostring(bot), "singleplayer", 1, true))
             and "needs a multiplayer game. Start your local game with 2 or more player slots."
@@ -82,7 +127,7 @@ function ENT:PlaceBot()
     if not IsValid(bot) then return end
     if not bot:Alive() then bot:Spawn() end
     bot:StripWeapons()
-    bot:SetModel(MODEL)
+    bot:SetModel(util.IsValidModel(MODEL) and MODEL or MODEL_FALLBACK)
     bot:SetPos(self:GetPos())
     bot:SetEyeAngles(self:GetAngles())
     bot:SetVelocity(-bot:GetVelocity())
@@ -137,7 +182,7 @@ end, 100)
 
 Rhylib.Hook.Add("PlayerSetModel", "dummy.model", function(ply)
     if ply:IsBot() and dummyOf(ply) then
-        ply:SetModel(MODEL)
+        ply:SetModel(util.IsValidModel(MODEL) and MODEL or MODEL_FALLBACK)
         return true
     end
 end)
@@ -158,4 +203,40 @@ Rhylib.Hook.Add("PlayerDisconnected", "dummy.cleanup", function(ply)
         ent.bot = nil
         ent:Remove()
     end
+end)
+
+-- Damage numbers to players nearby.
+local function showDamage(bot, amount, head)
+    local n = math.floor(amount + 0.5)
+    if n <= 0 then return end
+    local near = {}
+    for _, p in ipairs(player.GetHumans()) do
+        if p:GetPos():DistToSqr(bot:GetPos()) < 1500 * 1500 then near[#near + 1] = p end
+    end
+    if #near == 0 then return end
+    Rhylib.Net.Start("dummy.dmg")
+    net.WriteEntity(bot)
+    net.WriteUInt(math.min(n, 4095), 12)
+    net.WriteBool(head)
+    net.Send(near)
+end
+
+local function isHead(ply)
+    return (ply.rhylibHitGroup or ply:LastHitGroup()) == HITGROUP_HEAD
+end
+
+-- Tough dummy: shows the hit (after armour at 100) and takes none of it.
+Rhylib.Hook.Add("EntityTakeDamage", "dummy.tough", function(ent, dmg)
+    if not (ent:IsPlayer() and ent:IsBot()) then return end
+    local d = dummyOf(ent)
+    if not (d and d.Tough) then return end
+    showDamage(ent, dmg:GetDamage(), isHead(ent))
+    return true
+end, 140)
+
+Rhylib.Hook.Add("PostEntityTakeDamage", "dummy.numbers", function(ent, dmg, took)
+    if not took or not (ent:IsPlayer() and ent:IsBot()) or ent.rhylibBleedTick then return end
+    local d = dummyOf(ent)
+    if not d or d.Tough then return end
+    showDamage(ent, dmg:GetDamage(), isHead(ent))
 end)

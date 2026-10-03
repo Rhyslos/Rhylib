@@ -1,7 +1,7 @@
 --[[
     Jail cell marker (admins place it where a prisoner should stand, then
     rhylib_mp_save). Invisible to normal players; MPs and admins see a
-    faint ring.
+    faint ring, unless an admin hid them all (!hidecells).
 ]]
 
 AddCSLuaFile()
@@ -36,6 +36,7 @@ else
     local col = Color(120, 200, 255, 120)
     function ENT:Draw()
         local ply = LocalPlayer()
+        if GetGlobal2Bool("rhylib_hideCells", false) then return end   -- (admin command hidecells)
         if not (ply:IsAdmin() or (Rhylib.MP and Rhylib.MP.IsMP(ply))) then return end
         render.SetMaterial(matRing)
         render.DrawQuadEasy(self:GetPos() + Vector(0, 0, 1), Vector(0, 0, 1), 48, 48, col, 0)

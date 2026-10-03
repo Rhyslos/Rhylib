@@ -71,7 +71,7 @@ SWEP.FireSound = "weapons/airboat/airboat_gun_energy1.wav"
 SWEP.Mags = { "mag_small" }
 
 SWEP.Grapple = true
-SWEP.FireModes = { "semi", "auto" }
+SWEP.FireModes = { "semi", "auto", "stun" }   -- (stun: military police only)
 
 SWEP.UsesCell = true
 SWEP.CellShots = 500

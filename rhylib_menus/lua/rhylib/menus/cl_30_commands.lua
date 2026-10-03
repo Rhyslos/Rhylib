@@ -110,7 +110,7 @@ end
 Menus.AddCommand("Server", {
     id = "hud.layout", order = 10,
     title = "Default first-person HUD", desc = "For players who haven't picked their own",
-    choices = { { "f5", "F5" }, { "f4", "F4" }, { "console", "Console" }, { "thirdperson", "3rd person" } },
+    choices = { { "f5", "F5" }, { "f4", "F4" }, { "thirdperson", "3rd person" } },
     current = function() return Rhylib.HUD and Rhylib.HUD.ServerLayout and Rhylib.HUD.ServerLayout() end,
     run = function(arg) RunConsoleCommand("rhylib_hud_layout", arg) end,
 })

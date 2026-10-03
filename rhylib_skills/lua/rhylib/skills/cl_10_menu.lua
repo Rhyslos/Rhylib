@@ -98,8 +98,8 @@ local ICONS = {
     hard_landings = "down", extended_tanks = "fuel", spring_legs = "spring", afterburner = "flame",
     thruster_dodge = "dodge", blast_hardened = "shield", aerial_stability = "up", death_from_above = "burst",
     field_drag = "drag", hands_on = "heart", steady_hands = "clock", quick_revive = "cross", under_fire = "shield",
-    deep_pockets = "pocket", triage = "eye", adrenaline = "syringe", chem_bench = "flask", field_surgeon = "bone",
-    batch_brewing = "stack", bacta_specialist = "drop", full_recovery = "star",
+    deep_pockets = "pocket", triage = "eye", chem_bench = "flask", field_surgeon = "bone",
+    batch_brewing = "stack", bacta_specialist = "drop",
 }
 
 local function iconOf(n) return n.icon or ICONS[n.id] or "star" end

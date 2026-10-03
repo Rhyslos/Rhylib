@@ -44,7 +44,8 @@ Config.Register("inventory", "issuedDropLife", 300, "Seconds before dropped issu
 Config.Register("inventory", "worldItemMax", 300, "Most dropped items on the ground at once; the oldest goes first")
 Config.Register("inventory", "worldItemPerPlayer", 15, "Most dropped items one player can have on the ground; their oldest goes first")
 Config.Register("inventory", "autoHotbar", true, "New weapons go into the first free hotbar slot")
-Config.Register("inventory", "combineTime", 0.6, "Combining munitions: seconds per partly used magazine or cell (total between 1 and 8 s)")
+Config.Register("inventory", "combineTime", 1.5, "Combining munitions: seconds per partly used magazine or cell (total at least 3 s, at most combineMax)")
+Config.Register("inventory", "combineMax", 30, "Combining munitions: longest it takes (seconds)")
 
 Inv.states = Inv.states or {}  -- [ply] = state
 Inv.dirty = Inv.dirty or {}    -- [ply] = true
@@ -747,7 +748,7 @@ function Inv.StartCombine(ply)
         Inv.Note(ply, "Nothing to combine: needs 2+ partly used of the same kind")
         return
     end
-    local dur = math.Clamp(n * Config.Get("inventory", "combineTime"), 1, 8)
+    local dur = math.Clamp(n * Config.Get("inventory", "combineTime"), 3, Config.Get("inventory", "combineMax"))
     st.combineEnd = CurTime() + dur
     sendBusy(ply, st.combineEnd)
     timer.Create("Rhylib.Combine." .. ply:EntIndex(), dur, 1, function()

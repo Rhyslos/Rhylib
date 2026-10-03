@@ -3,7 +3,7 @@
     at someone close to see their body instead of yours. Left: the body,
     each part white when fine and redder the more it's hurt, with small
     tags; hover a part for details. Right: your inventory; drag a kit or a
-    field item (splint, burn gel, painkillers, bacta stim) onto a body
+    field item (splint, burn gel, painkillers) onto a body
     part to treat it.
 
     Medics see exact damage, fractures, burns, health and effects.
@@ -276,7 +276,7 @@ function PANEL:Paint(w, h)
     else
         help[2] = { "Medkit: stops bleeding, some health.", UI.Colors.textDim }
         help[3] = { "Splint: holds a bone until the med bay.", UI.Colors.textDim }
-        help[4] = { "Burn gel, painkillers, stims: drag on too.", UI.Colors.textDim }
+        help[4] = { "Burn gel and painkillers: drag on too.", UI.Colors.textDim }
     end
     for i, l in ipairs(help) do
         draw.SimpleText(l[1], font(13), ex, hy + s(2) + i * s(20), l[2], TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)

@@ -56,7 +56,7 @@ SWEP.FireSound = "weapons/airboat/airboat_gun_energy1.wav"
 
 SWEP.Mags = { "mag_small" }
 SWEP.Grapple = true     -- grapple fire mode while carrying a grapple hook
-SWEP.FireModes = { "semi", "dual" }
+SWEP.FireModes = { "semi", "dual", "stun" }   -- (stun: military police only)
 SWEP.SkillModes = { dual = "dual_dc17" }     -- (rhylib_skills: Officer)
 SWEP.DualHoldType = "duel"
 -- Dual: the second pistol (first guesses, tune in game).
@@ -64,6 +64,13 @@ SWEP.DualPropVMPos = Vector(14, -9, -6)      -- floating at the left of the view
 SWEP.DualPropVMAng = Angle(0, 0, 0)
 SWEP.DualPropWMPos = Vector(3, 1.5, -1)      -- left hand
 SWEP.DualPropWMAng = Angle(0, 0, 180)
+-- Dual in first person: GMod's Counter-Strike dual pistols with hands; both
+-- of its guns are hidden and a DC-17 drawn on each (offsets are guesses;
+-- rhylib_vm_bones lists the bones). Floats as above if the model is missing.
+SWEP.DualCarrierVM = "models/weapons/cstrike/c_pist_elite.mdl"
+SWEP.DualBonePos = Vector(0, 0, 0)
+SWEP.DualBoneAng = Angle(0, 0, 0)
+SWEP.DualMags = 2
 
 SWEP.UsesCell = false
 SWEP.StartMags = 4

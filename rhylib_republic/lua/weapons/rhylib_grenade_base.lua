@@ -4,7 +4,8 @@
     (none in rhylib_infammo test mode) and spawns rhylib_grenade.
 
     SWEP.ImpactMode = true: E + R switches it between timed (fuse) and
-    impact; the choice is the player's NW2Bool rhylib_nadeImpact.
+    impact; the choice is a player NW2Bool per grenade type (ImpactKey).
+    An EMP in impact mode is kind "emp_impact".
     SWEP.RequiresSkill: a skill (rhylib_skills) needed to throw it.
     SWEP.GrenadeKind: "fuse" (explodes FuseTime after the throw), "impact"
     (explodes on the first hit) or "emp" (fuse; kills Rhylib droids in
@@ -69,10 +70,16 @@ function SWEP:Deploy()
     return true
 end
 
+-- Each grenade type remembers its own mode (thermal: rhylib_nadeImpact).
+function SWEP:ImpactKey()
+    local c = self:GetClass()
+    return c == "rhylib_thermal" and "rhylib_nadeImpact" or ("rhylib_nadeImpact_" .. c)
+end
+
 -- Impact mode on (E + R, for ImpactMode grenades)?
 function SWEP:IsImpact()
     local o = self:GetOwner()
-    return self.ImpactMode and IsValid(o) and o:GetNW2Bool("rhylib_nadeImpact") or false
+    return self.ImpactMode and IsValid(o) and o:GetNW2Bool(self:ImpactKey()) or false
 end
 
 -- May the owner throw it (SWEP.RequiresSkill)?
@@ -87,10 +94,10 @@ function SWEP:Think()
     -- E + R: timed / impact.
     local o = self:GetOwner()
     if SERVER and self.ImpactMode and IsValid(o) and o:KeyPressed(IN_RELOAD) and o:KeyDown(IN_USE) then
-        local on = not o:GetNW2Bool("rhylib_nadeImpact")
-        o:SetNW2Bool("rhylib_nadeImpact", on)
+        local on = not o:GetNW2Bool(self:ImpactKey())
+        o:SetNW2Bool(self:ImpactKey(), on)
         o:EmitSound("weapons/smg1/switch_single.wav", 60)
-        o:ChatPrint(on and "Thermal detonator: impact" or "Thermal detonator: timed (" .. self.FuseTime .. " s)")
+        o:ChatPrint(self.PrintName .. (on and ": impact" or (": timed (" .. self.FuseTime .. " s)")))
     end
     if self:GetNeedDraw() and CurTime() >= self:GetLastThrow() + self.RedrawTime then
         self:SetNeedDraw(false)
@@ -135,7 +142,7 @@ function SWEP:Throw(force, lift)
     if not IsValid(g) then return end
     g:SetPos(pos)
     g:SetAngles(ang)
-    g.kind = self:IsImpact() and "impact" or self.GrenadeKind
+    g.kind = self:IsImpact() and (self.GrenadeKind == "emp" and "emp_impact" or "impact") or self.GrenadeKind
     g.fuse = self.FuseTime
     g.thrower = o
     g:SetOwner(o)

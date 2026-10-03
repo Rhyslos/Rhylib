@@ -23,14 +23,13 @@ Config.Register("hud", "iconRange", 1500, "How far away speaking and typing icon
 Rhylib.HUD.Layouts = {
     f5 = "Curve tiles over a wide ammo plate",
     f4 = "Ammo strip on an even hotbar row",
-    console = "Console plate next to the ammo box",
     thirdperson = "The third-person HUD (no helmet visor)",
 }
-Rhylib.HUD.LAYOUT_ORDER = { "f5", "f4", "console", "thirdperson" }
+Rhylib.HUD.LAYOUT_ORDER = { "f5", "f4", "thirdperson" }
 Rhylib.HUD.DEFAULT_LAYOUT = "f5"
 
 local choiceVar = CLIENT and CreateClientConVar("rhylib_hud_firstperson", "", true, false,
-    "First-person HUD: f5, f4, console or thirdperson (empty = the server's default)")
+    "First-person HUD: f5, f4 or thirdperson (empty = the server's default)")
 
 -- The server's default layout.
 function Rhylib.HUD.ServerLayout()

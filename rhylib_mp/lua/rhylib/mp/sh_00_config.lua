@@ -2,7 +2,7 @@
     Military police: stun weapons, stun baton, handcuffs, searching, and a
     jail with cells and sentences.
 
-      Stun        a stun ring (stun guns, SWEP.Stun) or a baton hit makes
+      Stun        a stun ring (the MP "stun" fire mode) or a baton hit makes
                   the target collapse for stunTime seconds: they lie still
                   and can be cuffed.
       Cuffs       an MP cuffs a stunned or downed player (handcuffs LMB),
@@ -34,6 +34,7 @@ local Config = Rhylib.Config
 Config.Register("mp", "stunTime", 8, "Seconds a stun hit keeps someone down")
 Config.Register("mp", "stunImmune", 3, "Seconds after getting up before they can be stunned again")
 Config.Register("mp", "batonRange", 85, "Stun baton reach (units)")
+Config.Register("mp", "terminalModel", "models/reizer_props/srsp/sci_fi/console_01/console_01.mdl", "Jail terminal model (HL2 console if missing)")
 Config.Register("mp", "batonDelay", 1.2, "Seconds between baton swings")
 Config.Register("mp", "cuffRange", 85, "How close you must be to cuff or uncuff")
 Config.Register("mp", "cuffTime", 1.5, "Seconds to put cuffs on")

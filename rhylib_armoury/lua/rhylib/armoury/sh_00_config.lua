@@ -37,6 +37,7 @@ A.MODELS = {
     medcrate = "models/reizer_props/srsp/sci_fi/crate_03/crate_03.mdl",
     specWeapons = "models/reizer_props/srsp/sci_fi/armory_02/armory_02.mdl",
     specGear = "models/reizer_props/srsp/sci_fi/armory_02_2/armory_02_2.mdl",
+    gear = "models/reizer_props/srsp/sci_fi/armory_02_1/armory_02_1.mdl",
 }
 
 -- Every armoury entity class, for saving and loading placements.
@@ -50,6 +51,7 @@ A.CLASSES = {
     rhylib_med_crate = true,
     rhylib_spec_weapons = true,
     rhylib_spec_gear = true,
+    rhylib_gear_cabinet = true,
 }
 A.CRATES = { "rhylib_crate_small", "rhylib_crate_medium", "rhylib_crate_large", "rhylib_med_crate" }
 
@@ -57,6 +59,7 @@ A.AMMO_STOCK = { "mag_small", "mag_medium", "mag_large", "cell", "rocket", "grap
 
 local Config = Rhylib.Config
 Config.Register("armoury", "weapons", {}, "Weapon classes in the armoury, in order. Empty = every Rhylib weapon")
+Config.Register("armoury", "gearStock", { "backpack", "jetpack" }, "Gear cabinet: equipment it hands out (endless, issued)")
 Config.Register("armoury", "lockerW", 6, "Personal locker width in cells")
 Config.Register("armoury", "lockerH", 6, "Personal locker height in cells")
 Config.Register("armoury", "crateW", 5, "Supply crate width in cells")
@@ -65,7 +68,7 @@ Config.Register("armoury", "crateH", 4, "Supply crate height in cells")
 Config.Register("armoury", "medCrate", {
     { "rhylib_medkit", 10 }, { "rhylib_firstaid", 2 }, { "rhylib_revivekit", 3 },
     { "rhylib_antiviral", 2 }, { "rhylib_antidote", 2 }, { "rhylib_antibiotics", 2 },
-    { "rhylib_splint", 4 }, { "rhylib_burngel", 3 }, { "rhylib_painkiller", 4 }, { "rhylib_bactastim", 4 },
+    { "rhylib_splint", 4 }, { "rhylib_burngel", 3 }, { "rhylib_painkiller", 4 },
     { "rhylib_bloodpack", 2 }, { "rhylib_med_supplies", 10 },
 }, "What a medical crate is filled with: { item, count }")
 
@@ -74,7 +77,7 @@ Config.Register("armoury", "medCrate", {
 -- Items listed here are kept out of the normal weapons armoury.
 Config.Register("armoury", "roles", {
     trooper = { weapons = {}, gear = { "sw_datapad" } },
-    mp = { weapons = { "rhylib_dc17_stun", "rhylib_dc15s_stun" }, gear = { "rhylib_stunbaton", "rhylib_handcuffs" } },
+    mp = { weapons = {}, gear = { "rhylib_stunbaton", "rhylib_handcuffs" } },   -- (stun is a fire mode for MPs)
     medic = { weapons = {}, gear = { "rhylib_medkit", "rhylib_firstaid", "rhylib_revivekit", "rhylib_antiviral", "rhylib_antidote", "rhylib_antibiotics",
         "rhylib_med_supplies" } },
 }, "Specialist armoury stock per role: { weapons = {...}, gear = {...} }")

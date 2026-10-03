@@ -25,7 +25,7 @@
     Medicines (antiviral, antidote, antibiotics, ...) are items with no
     effect yet.
     Field items (H menu, drag onto a part; anyone): splint (a broken bone
-    holds until the med bay), burn gel, painkillers, bacta stim. Medics:
+    holds until the med bay), burn gel, painkillers. Medics:
     blood pack (E menu on a downed player, more bleed-out time). Medical
     supplies are what Chemists turn into all of these at a chemistry
     bench (sv_40_medbay.lua).
@@ -79,31 +79,32 @@ Config.Register("medical", "markerRange", 2500, "Downed markers show within this
 Config.Register("medical", "dragSpeedSkill", 180, "Field drag: top speed while dragging")
 Config.Register("medical", "handReviveTime", 25, "Hands-on revive: seconds")
 Config.Register("medical", "handReviveHealth", 15, "Hands-on revive: health they get up with")
-Config.Register("medical", "steadyMult", 0.85, "Steady hands: treatment and revive time multiplier")
-Config.Register("medical", "quickReviveMult", 0.7, "Quick revive: revive time multiplier")
-Config.Register("medical", "deepPockets", 3, "Deep pockets: extra medkits per stack")
+Config.Register("medical", "steadyMult", 0.85, "Steady hands: treatment time multiplier (not revives)")
+Config.Register("medical", "quickReviveMult", 0.8, "Quick revive: revive time multiplier")
+Config.Register("medical", "deepPockets", 2, "Deep pockets: extra medkits per stack")
+Config.Register("medical", "efficientCare", 0.67, "Efficient care: first aid kit charge used multiplier")
 Config.Register("medical", "triageFlash", 30, "Triage: markers flash under this many seconds left")
-Config.Register("medical", "adrenalineTime", 5, "Adrenaline: seconds of half damage after a revive")
-Config.Register("medical", "adrenalineHealth", 0.5, "Adrenaline: least health after a revive, as a share of max")
 Config.Register("medical", "medBayRange", 400, "Med bay: this close to a bacta tank or medical holotable")
 Config.Register("medical", "medBayClasses", { "rhylib_bacta_tank", "rhylib_med_holotable" }, "Entities that make a med bay around them")
 Config.Register("medical", "splintTime", 4, "Seconds to splint a fracture")
 Config.Register("medical", "burnGelTime", 3, "Seconds to apply burn gel")
 Config.Register("medical", "burnGel", 60, "Burns that burn gel removes")
-Config.Register("medical", "pillTime", 1.5, "Seconds to give painkillers or a bacta stim")
+Config.Register("medical", "pillTime", 1.5, "Seconds to give painkillers")
 Config.Register("medical", "painkillerTime", 60, "Painkillers: seconds that hurt limbs and burns don't slow you")
-Config.Register("medical", "stimHeal", 30, "Bacta stim: health")
 Config.Register("medical", "bloodPackTime", 4, "Seconds to hook up a blood pack")
 Config.Register("medical", "bloodPackAdd", 60, "Blood pack: seconds added to a downed player's bleed-out")
-Config.Register("medical", "tankModel", "models/props_combine/breenpod.mdl", "Bacta tank model (a missing model falls back to a fridge)")
+Config.Register("medical", "tankModel", "models/props/cydi/bactatank1.mdl", "Bacta tank model (a missing model falls back to a fridge)")
+Config.Register("medical", "tankOffset", Vector(0, 0, 2), "Bacta tank: where the occupant stands, from the bottom centre of the model")
+Config.Register("medical", "sofaModel", "models/reizer_props/alysseum_project/medicine_obj/med_sofa_01/med_sofa_01.mdl", "Med sofa model")
+Config.Register("medical", "sofaHeight", 22, "Med sofa: height of the lying surface above the model's bottom")
 Config.Register("medical", "tankHeal", 5, "Bacta tank: health per second")
 Config.Register("medical", "tankRepair", 8, "Bacta tank: body part damage and burns healed per second")
 Config.Register("medical", "tankSetBones", 8, "Bacta tank: seconds inside before fractures are set")
 Config.Register("medical", "tankSpecialist", 300, "Bacta specialist: tanks within this range of you heal twice as fast")
-Config.Register("medical", "benchModel", "models/props_c17/FurnitureTable001a.mdl", "Chemistry bench model")
+Config.Register("medical", "benchModel", "models/fyu/cedi/misc/v4/misc_30.mdl", "Chemistry bench model")
 Config.Register("medical", "craftTime", 3, "Chemistry bench: seconds per batch")
 Config.Register("medical", "chemRecipes", {
-    { "rhylib_bactastim", 1 }, { "rhylib_burngel", 1 }, { "rhylib_painkiller", 1 },
+    { "rhylib_burngel", 1 }, { "rhylib_painkiller", 1 },
     { "rhylib_splint", 1 }, { "rhylib_bloodpack", 2 }, { "rhylib_medkit", 2 },
 }, "Chemistry bench recipes: { item, medical supplies it takes }")
 
@@ -147,23 +148,21 @@ Med.SUPPLIES = "rhylib_med_supplies"
 Med.SPLINT = "rhylib_splint"
 Med.BURN_GEL = "rhylib_burngel"
 Med.PAINKILLER = "rhylib_painkiller"
-Med.BACTA_STIM = "rhylib_bactastim"
 Med.BLOOD_PACK = "rhylib_bloodpack"
 
 -- H menu treatments: kind (3 bits on the wire) <-> item.
 Med.TREAT_FIRSTAID, Med.TREAT_MEDKIT = 0, 1
-Med.TREAT_ITEMS = { [0] = Med.FIRST_AID, [1] = Med.MEDKIT, [2] = Med.SPLINT, [3] = Med.BURN_GEL, [4] = Med.PAINKILLER, [5] = Med.BACTA_STIM }
+Med.TREAT_ITEMS = { [0] = Med.FIRST_AID, [1] = Med.MEDKIT, [2] = Med.SPLINT, [3] = Med.BURN_GEL, [4] = Med.PAINKILLER }
 Med.TREAT_KIND = {}
 for k, v in pairs(Med.TREAT_ITEMS) do Med.TREAT_KIND[v] = k end
 -- Anyone may use these (first aid kits and blood packs are for medics).
-Med.ANYONE = { [Med.MEDKIT] = true, [Med.SPLINT] = true, [Med.BURN_GEL] = true, [Med.PAINKILLER] = true, [Med.BACTA_STIM] = true }
+Med.ANYONE = { [Med.MEDKIT] = true, [Med.SPLINT] = true, [Med.BURN_GEL] = true, [Med.PAINKILLER] = true }
 
 Med.ITEMS = {
     { Med.SUPPLIES, "Medical supplies", "Chemists turn these into medicine at a chemistry bench", 10, 0.2, "models/items/healthkit.mdl" },
     { Med.SPLINT, "Splint", "Holds a broken bone until the med bay (drag onto the part)", 3, 0.3, "models/props_debris/wood_board04a.mdl" },
     { Med.BURN_GEL, "Burn gel", "Takes most of the burns off a part", 3, 0.2, "models/healthvial.mdl" },
     { Med.PAINKILLER, "Painkillers", "Hurt limbs and burns don't slow you for a minute", 5, 0.1, "models/healthvial.mdl" },
-    { Med.BACTA_STIM, "Bacta stim", "+30 health, quickly", 5, 0.1, "models/healthvial.mdl" },
     { Med.BLOOD_PACK, "Blood pack", "Medics: buys a downed player another minute (E menu)", 3, 0.4, "models/healthvial.mdl" },
 }
 

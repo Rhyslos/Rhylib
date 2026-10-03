@@ -99,9 +99,10 @@ Admin.COMMANDS = {
 
     -- Server / events
     { id = "map", name = "Change map", cat = "Server", args = { { "map", "Map", "map" } }, desc = "Pick from a list (or !map part-of-name); 10 s countdown" },
-    { id = "cleanup", name = "Clean up spawned things", cat = "Server", target = "opt", args = {}, desc = "Everything players spawned (props, entities, NPCs...), or one player's with a target (^ = yours)" },
+    { id = "cleanup", name = "Clean up spawned things", cat = "Server", target = "opt", args = {}, desc = "Everything that isn't part of the map, a saved placement or a perma prop; or one player's things with a target (^ = yours)" },
     { id = "cancelmap", name = "Cancel map change", cat = "Server", perm = "map", args = {} },
     { id = "restartmap", name = "Restart map", cat = "Server", perm = "map", args = {}, aliases = { "maprestart" }, desc = "Reloads this map after a 10 s countdown" },
+    { id = "hidecells", name = "Show / hide jail cells", cat = "Server", args = {}, desc = "Hides the jail cell rings for everyone (again to show them)" },
     { id = "freezeprops", name = "Freeze all props", cat = "Server", args = {}, aliases = { "nolag" }, desc = "Stops every moving prop (lag)" },
     { id = "cleardecals", name = "Clear decals", cat = "Server", args = {}, desc = "Blood, scorch marks and client death ragdolls, for everyone" },
     { id = "announce", name = "Announcement", cat = "Server", args = { { "text", "Text", "text", need = true } }, aliases = { "a" }, desc = "A banner for everyone" },
@@ -125,7 +126,7 @@ Admin.SECTIONS = {
     server = {
         { "Map", { "map", "restartmap", "cancelmap" } },
         { "Announcements & sound", { "announce", "playsound", "stopsound" } },
-        { "Cleanup", { "cleanup", "freezeprops", "cleardecals" } },
+        { "Cleanup", { "cleanup", "freezeprops", "cleardecals", "hidecells" } },
         { "Staff", { "who", "unspectate" } },
     },
     skip = { call = true, endcall = true, unban = true },

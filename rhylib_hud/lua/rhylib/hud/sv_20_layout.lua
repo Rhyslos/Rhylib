@@ -2,7 +2,7 @@
     The server's default first-person HUD layout (players can pick their
     own in the pause menu's settings):
         rhylib_hud_layout            shows the current one and the choices
-        rhylib_hud_layout <name>     switches (f5, f4, console, thirdperson)
+        rhylib_hud_layout <name>     switches (f5, f4, thirdperson)
     Saved, so it survives restarts.
 ]]
 

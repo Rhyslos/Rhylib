@@ -96,7 +96,7 @@ local function applyHit(bolt, tr)
     local L = Rhylib.Lying
     local rag = L and L.Owner and L.Owner(ent) and ent or nil
     if rag then ent = L.Owner(rag) end
-    -- Stun bolts (SWEP.Stun): no damage; rhylib_mp decides what a hit does.
+    -- Stun bolts (SWEP.Stun or the "stun" fire mode): no damage; rhylib_mp decides what a hit does.
     if bolt.stun then
         if ent:IsPlayer() then hook.Run("Rhylib.StunHit", ent, bolt.owner, bolt.weapon) end
         return
@@ -261,7 +261,7 @@ function Bolts.Fire(owner, weapon, origin, dir, damage, opts)
         damage = damage or weapon.Damage,
         die = CurTime() + (opts and opts.life or weapon.BoltLife or Config.Get("weapons", "boltLife")),
         explosive = weapon.Explosive,
-        stun = weapon.Stun,
+        stun = weapon.Stun or (opts and opts.stun) or nil,
         onHit = opts and opts.onHit,
         onExpire = opts and opts.onExpire,
     }
