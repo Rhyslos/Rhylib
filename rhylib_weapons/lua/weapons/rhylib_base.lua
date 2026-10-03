@@ -87,6 +87,17 @@ SWEP.DualCarrierVM = nil            -- "dual" mode viewmodel with two guns and h
 SWEP.DualBonePos = Vector(0, 0, 0)  -- prop offset on each of its gun bones (forward, right, up)
 SWEP.DualBoneAng = Angle(0, 0, 0)
 SWEP.DualMags = 2                   -- "dual" mode holds this many magazines (one per pistol)
+SWEP.NoAim = false                  -- true: right mouse doesn't aim (the riot shield bashes instead)
+SWEP.CarrierHideBones = nil         -- more carrier bones to hide (e.g. a built-in shield): { "bone", ... }
+-- Extra props, each drawn on a bone in first and third person:
+-- { key, model, vmBone, vmPos, vmAng, vmScale, wmBone, wmPos, wmAng, wmScale }
+SWEP.ExtraProps = nil
+SWEP.CarrierInvisible = false       -- true: the carrier itself isn't drawn, only the hands (an HL2 c_ model as
+                                    -- arms only); CarrierBone is then a hand bone and is not shrunk
+SWEP.CarrierBoneMods = nil          -- carrier bone moves every frame: { ["bone"] = { pos = Vector, ang = Angle } }
+SWEP.WorldBoneMods = nil            -- the holder's bone turns in third person (client side, not while lowered):
+                                    -- { ["bone"] = Angle }
+SWEP.FireAct = nil                  -- viewmodel activity per shot (nil = ACT_VM_PRIMARYATTACK, false = none)
 SWEP.DualVMOffset = nil             -- viewmodel offset with the two-gun viewmodel (right, forward, up)
 SWEP.DualBoneL = nil                -- the two-gun viewmodel's gun bones (nil = found by name)
 SWEP.DualBoneR = nil
@@ -170,7 +181,7 @@ SWEP.CarrierVM = nil                -- c_ viewmodel whose hands hold the prop in
 SWEP.CarrierBone = nil              -- its gun bone: shrunk, the prop sits on it
 SWEP.CarrierBoneMove = nil          -- optional Vector: ManipulateBonePosition for that bone
 SWEP.PropBonePos = Vector(0, 0, 0)  -- prop from the carrier bone: forward, right, up
-SWEP.PropBoneAng = nil               -- (nil = worked out on an idle frame so the prop points
+SWEP.PropBoneAng = nil               -- (nil or false = worked out on an idle frame so the prop points
                                     -- like the floating gun did, PropVMAng; printed to the console)
 SWEP.PropBoneScale = nil            -- first-person prop scale (nil = PropScale)
 SWEP.CarrierFOV = nil               -- viewmodel FOV with the carrier (nil = ViewModelFOV)
@@ -579,8 +590,8 @@ function SWEP:FireShot()
     -- Dual pistols take turns (left on odd rounds left).
     if self:DualViewModelOn() and self:Clip1() % 2 == 1 then
         self:SendWeaponAnim(ACT_VM_SECONDARYATTACK)
-    else
-        self:SendWeaponAnim(ACT_VM_PRIMARYATTACK)
+    elseif self.FireAct ~= false then
+        self:SendWeaponAnim(self.FireAct or ACT_VM_PRIMARYATTACK)
     end
     -- The third-person firing gesture (SWEP.PlayerFireAnim = false turns it
     -- off, for guns whose hold type's gesture looks wrong).
@@ -980,7 +991,7 @@ function SWEP:Think()
     end
 
     local Med = Rhylib.Medical
-    local want = owner:KeyDown(IN_ATTACK2) and not self:IsReloading() and not self:IsLowered()
+    local want = not self.NoAim and owner:KeyDown(IN_ATTACK2) and not self:IsReloading() and not self:IsLowered()
         and not (Med and Med.CanAim and not Med.CanAim(owner))  -- hurt arms can't aim
     if want ~= self:GetAiming() then
         self:SetAiming(want)
@@ -1256,7 +1267,7 @@ if CLIENT then
     local function shrink(self, vm)
         local b = carrierBone(self, vm)
         if vm.rhylibShrunk and vm.rhylibShrunk ~= b then unshrink(vm) end
-        if not b then return end
+        if not b or self.CarrierInvisible then return end
         vm:ManipulateBoneScale(b, SHRINK)
         vm:ManipulateBonePosition(b, self.CarrierBoneMove or ZERO)
         vm.rhylibShrunk = b
@@ -1266,6 +1277,137 @@ if CLIENT then
         if IsValid(vm) and vm.rhylibShrunk and not (IsValid(wep) and wep.UsesCarrier and wep:UsesCarrier()) then
             unshrink(vm)
         end
+    end)
+
+    -- Extra props (ExtraProps) and extra hidden carrier bones (CarrierHideBones).
+    function SWEP:GetExtraEntity(e, side)
+        local key = "rhylibExtra_" .. e.key .. side
+        local ent = self[key]
+        if IsValid(ent) then return ent end
+        if not util.IsValidModel(e.model) then return nil end
+        ent = ClientsideModel(e.model, RENDERGROUP_OPAQUE)
+        if not IsValid(ent) then return nil end
+        ent:SetNoDraw(true)
+        ent:SetModelScale((side == "vm" and e.vmScale or e.wmScale) or 1, 0)
+        self[key] = ent
+        return ent
+    end
+
+    local function drawExtra(self, ent, matrix, pos, ang, scale)
+        scale = scale or 1
+        if ent.rhylibScale ~= scale then
+            ent:SetModelScale(scale, 0)
+            ent.rhylibScale = scale
+        end
+        local p, a = offsetTransform(matrix:GetTranslation(), matrix:GetAngles(), pos or Vector(), ang or Angle())
+        ent:SetPos(p)
+        ent:SetAngles(a)
+        ent:SetupBones()
+        ent:DrawModel()
+    end
+
+    local function extraShrink(self, vm, on)
+        if not on then
+            local n = vm:GetBoneCount() or 0
+            for _, i in ipairs(vm.rhylibExtraShrunk or {}) do
+                if i < n then vm:ManipulateBoneScale(i, ONE) end
+            end
+            vm.rhylibExtraShrunk = nil
+            return
+        end
+        if vm.rhylibExtraShrunk then
+            for _, i in ipairs(vm.rhylibExtraShrunk) do vm:ManipulateBoneScale(i, SHRINK) end
+            return
+        end
+        local list = {}
+        for _, name in ipairs(self.CarrierHideBones or {}) do
+            local b = vm:LookupBone(name)
+            if b then
+                vm:ManipulateBoneScale(b, SHRINK)
+                list[#list + 1] = b
+            end
+        end
+        vm.rhylibExtraShrunk = list
+    end
+
+    Rhylib.Hook.Add("PreDrawViewModel", "weapons.extrareset", function(vm, ply, wep)
+        if IsValid(vm) and vm.rhylibExtraShrunk and not (IsValid(wep) and wep.CarrierHideBones and wep.UsesCarrier and wep:UsesCarrier()) then
+            extraShrink(nil, vm, false)
+        end
+    end)
+
+    -- CarrierInvisible: the carrier drawn with a see-through material (its
+    -- own mesh hidden, the hands are a separate entity and still draw).
+    local INVIS = "!rhylib_vm_invisible"
+    local madeInvis = false
+    local function invisMat()
+        if not madeInvis then
+            madeInvis = true
+            CreateMaterial("rhylib_vm_invisible", "UnlitGeneric", {
+                ["$basetexture"] = "vgui/white", ["$alpha"] = "0", ["$translucent"] = "1",
+            })
+        end
+        return INVIS
+    end
+
+    -- CarrierBoneMods: applied every frame (the server overwrites client bone
+    -- changes), undone for other weapons. The indices touched are kept on the vm.
+    local function boneMods(self, vm, on)
+        if not on then
+            local n = vm:GetBoneCount() or 0
+            for _, i in ipairs(vm.rhylibBoneMods or {}) do
+                if i < n then
+                    vm:ManipulateBonePosition(i, ZERO)
+                    vm:ManipulateBoneAngles(i, angle_zero)
+                end
+            end
+            vm.rhylibBoneMods = nil
+            return
+        end
+        local list = {}
+        for name, m in pairs(self.CarrierBoneMods or {}) do
+            local b = vm:LookupBone(name)
+            if b then
+                vm:ManipulateBonePosition(b, m.pos or ZERO)
+                vm:ManipulateBoneAngles(b, m.ang or angle_zero)
+                list[#list + 1] = b
+            end
+        end
+        vm.rhylibBoneMods = list
+    end
+
+    Rhylib.Hook.Add("PreDrawViewModel", "weapons.invisreset", function(vm, ply, wep)
+        if not IsValid(vm) then return end
+        local carrier = IsValid(wep) and wep.UsesCarrier and wep:UsesCarrier()
+        if vm.rhylibInvis and not (carrier and wep.CarrierInvisible) then
+            vm:SetMaterial("")
+            vm.rhylibInvis = nil
+        end
+        if vm.rhylibBoneMods and not (carrier and wep.CarrierBoneMods) then boneMods(nil, vm, false) end
+    end)
+
+    -- WorldBoneMods: the holder's own bones, client side, for everyone who
+    -- draws them (not while lowered); undone when they switch away.
+    Rhylib.Hook.Add("PrePlayerDraw", "weapons.worldbonemods", function(ply)
+        local w = ply:GetActiveWeapon()
+        local mods = IsValid(w) and w.WorldBoneMods
+        if mods and w.IsLowered and w:IsLowered() then mods = nil end
+        local had = ply.rhylibWorldMods
+        if not mods and not had then return end
+        if had and had ~= mods then
+            for b in pairs(ply.rhylibWorldModBones or {}) do ply:ManipulateBoneAngles(b, angle_zero) end
+            ply.rhylibWorldMods, ply.rhylibWorldModBones = nil, nil
+        end
+        if not mods then return end
+        local bones = {}
+        for name, a in pairs(mods) do
+            local b = ply:LookupBone(name)
+            if b then
+                ply:ManipulateBoneAngles(b, a)
+                bones[b] = true
+            end
+        end
+        ply.rhylibWorldMods, ply.rhylibWorldModBones = mods, bones
     end)
 
     local function drawProp(self, pos, ang, scale)
@@ -1358,6 +1500,12 @@ if CLIENT then
         end
         if self:UsesCarrier() then
             shrink(self, vm)
+            if self.CarrierHideBones then extraShrink(self, vm, true) end
+            if self.CarrierInvisible and vm:GetMaterial() ~= INVIS then
+                vm:SetMaterial(invisMat())
+                vm.rhylibInvis = true
+            end
+            if self.CarrierBoneMods then boneMods(self, vm, true) end
             self:HoldReloadFrame(vm)
             return
         end
@@ -1386,10 +1534,16 @@ if CLIENT then
         end
         if self.PropModel and not self:Scoped() then drawDualVM(self, vm) end
         if not self.PropModel or not self:UsesCarrier() then return end
+        for _, e in ipairs(self.ExtraProps or {}) do
+            local b = e.vmBone and vm:LookupBone(e.vmBone)
+            local m = b and vm:GetBoneMatrix(b)
+            local ent = m and self:GetExtraEntity(e, "vm")
+            if ent then drawExtra(self, ent, m, e.vmPos, e.vmAng, e.vmScale) end
+        end
         local b = carrierBone(self, vm)
         local m = b and vm:GetBoneMatrix(b)
         local pos, ang
-        if m and (self.PropBoneAng == nil or self.rhylibRealign) then self:AlignPropAngle(vm, m:GetAngles()) end
+        if m and (not self.PropBoneAng or self.rhylibRealign) then self:AlignPropAngle(vm, m:GetAngles()) end
         if m and self.PropBoneAng then
             pos, ang = offsetTransform(m:GetTranslation(), m:GetAngles(), self:CarrierPose("PropBonePos"), self:CarrierPose("PropBoneAng"))
         else
@@ -1633,7 +1787,7 @@ if CLIENT then
         local posKey, angKey = carrier and "PropBonePos" or "PropVMPos", carrier and "PropBoneAng" or "PropVMAng"
         -- Own copies, so the edits don't change the shared weapon table.
         w[posKey] = Vector(w[posKey]:Unpack())
-        local hadAng = w.PropBoneAng ~= nil
+        local hadAng = w.PropBoneAng ~= nil and w.PropBoneAng ~= false
         if carrier and not hadAng then w.rhylibRealign = true end
         w[angKey] = Angle((w[angKey] or Angle(0, 0, 0)):Unpack())
         w.AimPos = Vector(w.AimPos:Unpack())
@@ -1762,6 +1916,87 @@ if CLIENT then
         end)
     end)
 
+    -- rhylib_extra_editor: extra props (a riot shield) in first and third
+    -- person, the carrier's arm moves and the holder's arm turns. Edits only
+    -- your copy of the weapon; Copy gives the lines for the weapon file.
+    local extraEditor
+    local function fmtV(v) return string.format("Vector(%g, %g, %g)", v.x, v.y, v.z) end
+    local function fmtA(a) return string.format("Angle(%g, %g, %g)", a.p, a.y, a.r) end
+    concommand.Add("rhylib_extra_editor", function()
+        if IsValid(extraEditor) then extraEditor:Remove() return end
+        local w = LocalPlayer():GetActiveWeapon()
+        if not IsValid(w) or not (w.ExtraProps or w.CarrierBoneMods or w.WorldBoneMods) then
+            print("Hold a weapon with extra props (the riot shield) first")
+            return
+        end
+        -- Own copies, so the edits don't change the shared weapon table.
+        w.ExtraProps = table.Copy(w.ExtraProps or {})
+        w.CarrierBoneMods = w.CarrierBoneMods and table.Copy(w.CarrierBoneMods) or nil
+        w.WorldBoneMods = w.WorldBoneMods and table.Copy(w.WorldBoneMods) or nil
+        local f, label, field = editorFrame("Extras: " .. w:GetClass(), 700, w)
+        extraEditor = f
+        local R, B = 60, 120
+        local function posAng(t, posKey, angKey, what)
+            t[posKey] = Vector((t[posKey] or Vector()):Unpack())
+            t[angKey] = Angle((t[angKey] or Angle()):Unpack())
+            field(what .. " fwd", 0.1, -B, B, function() return t[posKey].x end, function(v) t[posKey].x = v end)
+            field(what .. " right", 0.1, -B, B, function() return t[posKey].y end, function(v) t[posKey].y = v end)
+            field(what .. " up", 0.1, -B, B, function() return t[posKey].z end, function(v) t[posKey].z = v end)
+            field(what .. " pitch", 1, -180, 180, function() return t[angKey].p end, function(v) t[angKey].p = v end)
+            field(what .. " yaw", 1, -180, 180, function() return t[angKey].y end, function(v) t[angKey].y = v end)
+            field(what .. " roll", 1, -180, 180, function() return t[angKey].r end, function(v) t[angKey].r = v end)
+        end
+        for _, e in ipairs(w.ExtraProps) do
+            label(e.key .. ": first person (on " .. tostring(e.vmBone) .. ")")
+            posAng(e, "vmPos", "vmAng", "")
+            field(" size", 0.02, 0.05, 4, function() return e.vmScale or 1 end, function(v) e.vmScale = v end)
+            label(e.key .. ": third person (on " .. tostring(e.wmBone) .. ")")
+            posAng(e, "wmPos", "wmAng", "")
+            field(" size", 0.02, 0.05, 4, function() return e.wmScale or 1 end, function(v) e.wmScale = v end)
+        end
+        for name, m in SortedPairs(w.CarrierBoneMods or {}) do
+            label("First person arm: " .. name)
+            m.pos = Vector((m.pos or Vector()):Unpack())
+            m.ang = Angle((m.ang or Angle()):Unpack())
+            field(" x", 0.1, -R, R, function() return m.pos.x end, function(v) m.pos.x = v end)
+            field(" y", 0.1, -R, R, function() return m.pos.y end, function(v) m.pos.y = v end)
+            field(" z", 0.1, -R, R, function() return m.pos.z end, function(v) m.pos.z = v end)
+            field(" pitch", 1, -180, 180, function() return m.ang.p end, function(v) m.ang.p = v end)
+            field(" yaw", 1, -180, 180, function() return m.ang.y end, function(v) m.ang.y = v end)
+            field(" roll", 1, -180, 180, function() return m.ang.r end, function(v) m.ang.r = v end)
+        end
+        for name in SortedPairs(w.WorldBoneMods or {}) do
+            local mods = w.WorldBoneMods
+            label("Third person arm: " .. name)
+            mods[name] = Angle(mods[name]:Unpack())
+            field(" pitch", 1, -180, 180, function() return mods[name].p end, function(v) mods[name].p = v end)
+            field(" yaw", 1, -180, 180, function() return mods[name].y end, function(v) mods[name].y = v end)
+            field(" roll", 1, -180, 180, function() return mods[name].r end, function(v) mods[name].r = v end)
+        end
+        f.copyButton(function()
+            local out = {}
+            for _, e in ipairs(w.ExtraProps) do
+                out[#out + 1] = string.format('%s = { vmPos = %s, vmAng = %s, vmScale = %g, wmPos = %s, wmAng = %s, wmScale = %g },',
+                    e.key, fmtV(e.vmPos), fmtA(e.vmAng), e.vmScale or 1, fmtV(e.wmPos), fmtA(e.wmAng), e.wmScale or 1)
+            end
+            if w.CarrierBoneMods then
+                out[#out + 1] = "SWEP.CarrierBoneMods = {"
+                for name, m in SortedPairs(w.CarrierBoneMods) do
+                    out[#out + 1] = string.format('    ["%s"] = { pos = %s, ang = %s },', name, fmtV(m.pos), fmtA(m.ang))
+                end
+                out[#out + 1] = "}"
+            end
+            if w.WorldBoneMods then
+                out[#out + 1] = "SWEP.WorldBoneMods = {"
+                for name, a in SortedPairs(w.WorldBoneMods) do
+                    out[#out + 1] = string.format('    ["%s"] = %s,', name, fmtA(a))
+                end
+                out[#out + 1] = "}"
+            end
+            return table.concat(out, "\n")
+        end)
+    end)
+
     local handBone = {}
 
     function SWEP:DrawWorldModel(flags)
@@ -1789,6 +2024,18 @@ if CLIENT then
         ent:DrawModel()
         self.propMuzzleWM = ent:LocalToWorld(self.PropMuzzle)
 
+        for _, e in ipairs(self.ExtraProps or {}) do
+            local key = mdl .. "|" .. (e.wmBone or "")
+            local eb = handBone[key]
+            if eb == nil then
+                eb = e.wmBone and owner:LookupBone(e.wmBone) or false
+                handBone[key] = eb
+            end
+            local em = eb and owner:GetBoneMatrix(eb)
+            local ee = em and self:GetExtraEntity(e, "wm")
+            if ee then drawExtra(self, ee, em, e.wmPos, e.wmAng, e.wmScale) end
+        end
+
         -- "dual" mode: the second gun in the left hand.
         if self.DualPropWMPos and self:GetFireModeName() == "dual" then
             local key = mdl .. "|L"
@@ -1814,5 +2061,11 @@ if CLIENT then
         if IsValid(self.propWM) then self.propWM:Remove() end
         if IsValid(self.propVML) then self.propVML:Remove() end
         if IsValid(self.propWML) then self.propWML:Remove() end
+        for _, e in ipairs(self.ExtraProps or {}) do
+            for _, side in ipairs({ "vm", "wm" }) do
+                local x = self["rhylibExtra_" .. e.key .. side]
+                if IsValid(x) then x:Remove() end
+            end
+        end
     end
 end

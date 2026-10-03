@@ -1,8 +1,9 @@
 --[[
     Skill trees (shared).
 
-    A category (Trooper, Support, Officer, Airborne, Medic) holds nodes;
-    medicOnly categories need Rhylib.Medical.IsMedic. A node can belong
+    A category (Trooper, Support, Officer, Airborne, Medic, Shock Trooper)
+    holds nodes; medicOnly categories need Rhylib.Medical.IsMedic, mpOnly
+    ones Rhylib.MP.IsMP. A node can belong
     to a specialisation (spec) and, inside it, to an end branch (branch);
     nodes without a spec are shared by the whole category.
         { id, cat, spec, branch, tier, cost, name, desc,
@@ -25,7 +26,7 @@ local Config = Rhylib.Config
 
 Config.Register("skills", "freePoints", true, "Every skill is free and can be reset any time (testing)")
 Config.Register("skills", "startPoints", 20, "Skill points everyone has while freePoints is off")
-Config.Register("skills", "onePath", true, "Only one category (Trooper, Support, Officer, Airborne, Medic) at a time")
+Config.Register("skills", "onePath", true, "Only one category (Trooper, Support, Officer, Airborne, Medic, Shock Trooper) at a time")
 
 function K.Cfg(key) return Config.Get("skills", key) end
 
@@ -35,7 +36,7 @@ K.CATEGORIES = {
           { id = "assault", name = "Assault", desc = "Close-range assault",
             branches = {
                 { id = "vanguard", name = "Vanguard", desc = "DC-15S fire rate and momentum" },
-                { id = "shock", name = "Shock trooper", desc = "The Z-6 on the move" },
+                { id = "shock", name = "Spearhead", desc = "The Z-6 on the move" },
             } },
           { id = "autorifleman", name = "Autorifleman", desc = "Sustained fire and the squad's ammo" },
       } },
@@ -51,6 +52,8 @@ K.CATEGORIES = {
           { id = "combat_medic", name = "Combat medic", desc = "Frontline revives" },
           { id = "chemist", name = "Chemist", desc = "Crafting, the med bay and full recoveries" },
       } },
+    { id = "shocktrooper", name = "Shock Trooper", desc = "Military police only: the riot shield, breaching and searches", mpOnly = true,
+      specs = {} },
 }
 
 K.NODES = {
@@ -125,7 +128,7 @@ K.NODES = {
     { id = "juggernaut", cat = "support", spec = "heavy", tier = 5, cost = 5, name = "Juggernaut", icon = "shield",
       desc = "15% less damage from everything.", needs = { "ammo_belt", "shotgun_drills" } },
     { id = "suppression", cat = "support", spec = "heavy", tier = 6, cost = 3, name = "Suppression", icon = "barrels",
-      desc = "(Not working yet) Droids near one you hit with the Z-6 aim worse for a few seconds.", needs = { "juggernaut" } },
+      desc = "Droids near one you hit with the Z-6 aim much worse for 3 s.", needs = { "juggernaut" } },
 
     -- Officer
     { id = "pistol_prof", cat = "officer", tier = 1, cost = 2, name = "Pistol proficiency",
@@ -193,6 +196,30 @@ K.NODES = {
     { id = "efficient_care", cat = "medic", spec = "chemist", tier = 5, cost = 5, name = "Efficient care", icon = "flask",
       desc = "Your first aid kits use a third less charge.",
       needs = { "field_surgeon" } },
+
+    -- Shock Trooper (military police jobs only)
+    { id = "riot_shield", cat = "shocktrooper", tier = 1, cost = 1, name = "Riot shield",
+      desc = "Carry the riot shield: a DC-15S fired from the hip behind a shield that stops bolts from the front." },
+    { id = "shield_bash", cat = "shocktrooper", tier = 2, cost = 2, name = "Shield bash",
+      desc = "Right click with the riot shield: stun a player in front of you, or knock a droid back.", needs = { "riot_shield" } },
+    { id = "escort_drills", cat = "shocktrooper", tier = 2, cost = 2, name = "Escort drills",
+      desc = "No slowdown while you escort a prisoner.", needs = { "riot_shield" } },
+    { id = "breaching", cat = "shocktrooper", tier = 3, cost = 3, name = "Breaching charge",
+      desc = "Thermal detonators get a third mode (E + R): stick it on a door or wall. 6 s fuse, small blast, and doors nearby are forced open for 5 minutes.",
+      needs = { "shield_bash" } },
+    { id = "thorough_search", cat = "shocktrooper", tier = 3, cost = 2, name = "Thorough search",
+      desc = "Your search rolls are 20% higher, so hidden contraband turns up more often.", needs = { "escort_drills" } },
+    { id = "shock_assault", cat = "shocktrooper", tier = 4, cost = 3, name = "Shock Assault",
+      desc = "Hits don't push you around or knock the wind out of you: you take the damage and keep moving.",
+      needs = { "breaching", "thorough_search" } },
+    { id = "hold_line", cat = "shocktrooper", tier = 5, cost = 3, name = "Hold the line",
+      desc = "20% less damage while your riot shield is up and another MP is near you.", needs = { "shock_assault" } },
+    { id = "flash_charge", cat = "shocktrooper", tier = 5, cost = 3, name = "Flash charge",
+      desc = "Carry flash charges: players in sight of the flash are stunned, droids aim much worse for a few seconds.",
+      needs = { "shock_assault" } },
+    { id = "phalanx", cat = "shocktrooper", tier = 6, cost = 5, name = "Phalanx",
+      desc = "Your raised shield also stops bolts aimed at teammates right behind you.",
+      needs = { "hold_line", "flash_charge" } },
 }
 
 -- Lookups (rebuilt on refresh).
@@ -268,6 +295,10 @@ function K.CanLearn(ply, set, id)
     if cat and cat.medicOnly then
         local Med = Rhylib.Medical
         if not (Med and Med.IsMedic and Med.IsMedic(ply)) then return false, "Medics only" end
+    end
+    if cat and cat.mpOnly then
+        local MP = Rhylib.MP
+        if not (MP and MP.IsMP and MP.IsMP(ply)) then return false, "Military police only" end
     end
     local cats, specs, branches = K.Commitments(set)
     if K.Cfg("onePath") then

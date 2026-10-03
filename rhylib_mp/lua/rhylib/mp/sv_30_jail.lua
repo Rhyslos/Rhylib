@@ -7,20 +7,28 @@
       - the sentence counts down only while they're online, and survives
         reconnects and map changes (Data "mp_jail" / SteamID64)
       - a prisoner who leaves the cell area is put back
-      - on release (time up, or an MP at a terminal) they respawn and get
-        their evidence back, minus anything an MP destroyed
+      - when the time is up (or an MP releases them early) they stay in
+        the cell, "awaiting processing"
+      - processing (an MP at the terminal, or processAuto seconds later):
+        they respawn at the property locker (rhylib_property_locker) and
+        their evidence waits in it for them, minus contraband
+        (rhylib_inventory config contraband) and anything an MP
+        withheld. No locker on the map: straight into their inventory.
 
     Messages (all checked: MP, near the terminal):
       mp.term     server -> MP  the terminal's lists
       mp.jail     MP -> server  terminal, prisoner, minutes, reason
-      mp.release  MP -> server  terminal, prisoner
-      mp.destroy  MP -> server  terminal, prisoner, evidence index
+      mp.release  MP -> server  terminal, prisoner (serving: end the
+                                sentence; awaiting: process them)
+      mp.destroy  MP -> server  terminal, prisoner, evidence index:
+                                withhold it / give it back (toggle)
 ]]
 
 local MP = Rhylib.MP
 local Data = Rhylib.Data
 
-MP.jailed = MP.jailed or {}   -- [ply] = record { ends, why, by, cell, evidence = { {id,count,data} } }
+MP.jailed = MP.jailed or {}   -- [ply] = record { ends, why, by, cell, awaiting, processAt,
+                              --   evidence = { {id, count, data, c, withheld} } }
 local jailed = MP.jailed
 
 Rhylib.Net.Register("mp.term")
@@ -35,6 +43,8 @@ local function save(ply)
     -- Stored as seconds left, so time only passes while they're online.
     Data.Set("mp_jail", sid(ply), {
         left = math.max(0, rec.ends - CurTime()), why = rec.why, by = rec.by, evidence = rec.evidence,
+        awaiting = rec.awaiting or nil,
+        processLeft = rec.awaiting and math.max(0, (rec.processAt or 0) - CurTime()) or nil,
     })
 end
 
@@ -81,8 +91,10 @@ end
 
 local function setState(ply)
     local rec = jailed[ply]
-    ply:SetNW2Float("rhylib_jailEnd", rec and rec.ends or 0)
+    -- (awaiting: the end is in the past, so JailLeft is 0 but IsJailed holds)
+    ply:SetNW2Float("rhylib_jailEnd", rec and math.max(rec.ends, 1) or 0)
     ply:SetNW2String("rhylib_jailWhy", rec and rec.why or "")
+    ply:SetNW2Bool("rhylib_jailAwait", rec and rec.awaiting or false)
 end
 
 -- Everything the prisoner carries becomes evidence; issued gear is just removed.
@@ -161,25 +173,78 @@ function MP.Jail(ply, by, minutes, why)
     return true
 end
 
-function MP.Release(ply, by)
+-- Sentence over (time up, or an MP ends it early): wait in the cell to be processed.
+function MP.EndSentence(ply, by)
+    local rec = jailed[ply]
+    if not rec or rec.awaiting then return end
+    rec.awaiting = true
+    rec.ends = math.min(rec.ends, CurTime())
+    rec.processAt = CurTime() + MP.Cfg("processAuto")
+    setState(ply)
+    save(ply)
+    ply:ChatPrint((IsValid(by) and ("Released by " .. by:Nick() .. ".") or "Your sentence is over.")
+        .. " Wait to be processed: an MP at the terminal, or automatically in " .. math.ceil(MP.Cfg("processAuto") / 60) .. " min.")
+end
+
+-- Evidence that goes back: not withheld by an MP, not contraband.
+function MP.Returnable(e)
+    local Items = Rhylib.Items
+    return not e.withheld and not (Items and Items.IsContraband and Items.IsContraband(e.id))
+end
+
+-- The property locker processed prisoners walk out to (the nearest to their cell).
+local function propertyLocker(rec)
+    local best, bestD
+    local from = IsValid(rec.cell) and rec.cell:GetPos() or vector_origin
+    for _, e in ipairs(ents.FindByClass("rhylib_property_locker")) do
+        local d = e:GetPos():DistToSqr(from)
+        if not bestD or d < bestD then best, bestD = e, d end
+    end
+    return best
+end
+
+-- Processed: out of jail, at the property locker with their things in it.
+function MP.Process(ply, by)
     local rec = jailed[ply]
     if not rec then return end
     jailed[ply] = nil
-    -- Evidence back first (backpack before its contents), so the spawn hands out the guns.
+    local back = {}
+    for _, e in ipairs(rec.evidence or {}) do
+        if MP.Returnable(e) then back[#back + 1] = e end
+    end
+    -- Backpack before its contents, so it can hold them.
+    table.sort(back, function(a, b) return (a.c == 3 and 0 or 1) < (b.c == 3 and 0 or 1) end)
+    local locker = propertyLocker(rec)
     local I = inv()
     if I then
-        local ev = rec.evidence or {}
-        local order = {}
-        for i = 1, #ev do order[i] = ev[i] end
-        table.sort(order, function(a, b) return (a.c == 3 and 0 or 1) < (b.c == 3 and 0 or 1) end)
-        for _, e in ipairs(order) do I.AddOrDrop(ply, e.id, e.count, e.data) end
+        local over = back
+        if IsValid(locker) and MP.StoreProperty then over = MP.StoreProperty(ply, back) end
+        for _, e in ipairs(over) do I.AddOrDrop(ply, e.id, e.count, e.data) end
         if I.Save then I.Save(ply) end
     end
     Data.Delete("mp_jail", sid(ply))
     setState(ply)
     ply:Spawn()
-    ply:ChatPrint(IsValid(by) and ("Released by " .. by:Nick()) or "Your sentence is over")
+    if IsValid(locker) then
+        timer.Simple(0.1, function()
+            if not (IsValid(ply) and IsValid(locker)) or jailed[ply] then return end
+            local pos = locker:GetPos() + locker:GetForward() * 50 + Vector(0, 0, 4)
+            ply:SetPos(pos)
+            ply:SetEyeAngles((locker:GetPos() - pos):Angle())
+        end)
+    end
+    local kept = #(rec.evidence or {}) - #back
+    ply:ChatPrint((IsValid(by) and ("Processed by " .. by:Nick() .. ". ") or "Processed. ")
+        .. (IsValid(locker) and "Your things are in the property locker" or "Your things are back")
+        .. (kept > 0 and (" (" .. kept .. " kept as evidence)") or "") .. ".")
     hook.Run("Rhylib.PlayerReleased", ply, by)
+end
+
+-- One step: serving -> awaiting -> processed.
+function MP.Release(ply, by)
+    local rec = jailed[ply]
+    if not rec then return end
+    if rec.awaiting then MP.Process(ply, by) else MP.EndSentence(ply, by) end
 end
 
 -- Time up, or wandered off.
@@ -190,10 +255,13 @@ timer.Create("Rhylib.MP.Jail", 1, 0, function()
     for ply, rec in pairs(jailed) do
         if not IsValid(ply) then
             jailed[ply] = nil
-        elseif now >= rec.ends then
-            MP.Release(ply)
-        elseif ply:Alive() and IsValid(rec.cell) and ply:GetPos():DistToSqr(rec.cell:GetPos()) > r * r then
-            putInCell(ply)
+        elseif rec.awaiting and now >= (rec.processAt or 0) then
+            MP.Process(ply)
+        else
+            if not rec.awaiting and now >= rec.ends then MP.EndSentence(ply) end
+            if ply:Alive() and IsValid(rec.cell) and ply:GetPos():DistToSqr(rec.cell:GetPos()) > r * r then
+                putInCell(ply)
+            end
         end
     end
 end)
@@ -213,11 +281,16 @@ Rhylib.Hook.Add("PlayerLoadout", "mp.jail", function(ply)
     if jailed[ply] then return true end  -- no job weapons in jail
 end)
 
--- Rejoining: pick the sentence back up (or hand back evidence if it's over).
+-- Rejoining: pick the sentence (or the wait for processing) back up.
 Rhylib.Hook.Add("PlayerInitialSpawn", "mp.jail", function(ply)
     local rec = Data.Get("mp_jail", sid(ply))
     if not istable(rec) then return end
-    if (rec.left or 0) > 0 then
+    -- (time ran out just before they left: awaiting too, so nothing is lost)
+    if rec.awaiting or ((rec.left or 0) <= 0 and istable(rec.evidence) and #rec.evidence > 0) then
+        jailed[ply] = { ends = CurTime(), why = rec.why or "", by = rec.by or "?", evidence = rec.evidence or {},
+            awaiting = true, processAt = CurTime() + math.min(rec.processLeft or MP.Cfg("processAuto"), MP.Cfg("processAuto")) }
+        setState(ply)
+    elseif (rec.left or 0) > 0 then
         jailed[ply] = { ends = CurTime() + rec.left, why = rec.why or "", by = rec.by or "?", evidence = rec.evidence or {} }
         setState(ply)
     else
@@ -282,11 +355,15 @@ function MP.OpenTerminal(mp, term)
         local rec = jailed[p]
         net.WriteEntity(p)
         net.WriteString(rec.why)
+        net.WriteBool(rec.awaiting or false)
+        net.WriteFloat(rec.awaiting and (rec.processAt or 0) or 0)
         local ev = rec.evidence or {}
         net.WriteUInt(math.min(#ev, 63), 6)
         for j = 1, math.min(#ev, 63) do
             net.WriteUInt(Items and Items.NetId(ev[j].id) or 0, Items and Items.NET_BITS or 10)
             net.WriteUInt(math.Clamp(ev[j].count or 1, 0, 255), 8)
+            net.WriteBool(ev[j].withheld or false)
+            net.WriteBool(Items and Items.IsContraband and Items.IsContraband(ev[j].id) or false)
         end
     end
     net.Send(mp)
@@ -332,7 +409,7 @@ Rhylib.Net.Receive("mp.destroy", function(mp)
         MP.OpenTerminal(mp, term)
         return
     end
-    table.remove(rec.evidence, i)
+    e.withheld = not e.withheld or nil
     save(p)
     MP.OpenTerminal(mp, term)
 end, { rate = 6, burst = 6 })
@@ -341,7 +418,9 @@ end, { rate = 6, burst = 6 })
 -- Placements
 --------------------------------------------------------------------------
 
-local CLASSES = { "rhylib_jail_cell", "rhylib_jail_terminal" }
+local CLASSES = { "rhylib_jail_cell", "rhylib_jail_terminal", "rhylib_property_locker" }
+Rhylib.PLACEMENT_CLASSES = Rhylib.PLACEMENT_CLASSES or {}
+for _, c in ipairs(CLASSES) do Rhylib.PLACEMENT_CLASSES[c] = true end
 
 concommand.Add("rhylib_mp_save", function(ply)
     Rhylib.Perms.Check(ply, "rhylib.mp.admin", function(ok)
@@ -357,7 +436,7 @@ concommand.Add("rhylib_mp_save", function(ply)
             end
         end
         Data.Set("mp_places", game.GetMap(), list)
-        local msg = "Saved " .. #list .. " jail cells and terminals for " .. game.GetMap()
+        local msg = "Saved " .. #list .. " jail cells, terminals and property lockers for " .. game.GetMap()
         if IsValid(ply) then ply:ChatPrint(msg) else print(msg) end
     end)
 end)

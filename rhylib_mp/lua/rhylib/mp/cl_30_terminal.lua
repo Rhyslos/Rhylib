@@ -1,8 +1,8 @@
 --[[
     Jail terminal window (MPs). Left: cuffed prisoners at the terminal,
     with sentence minutes and a reason. Right: who is in jail now, time
-    left, release, and their evidence (destroy items so they aren't
-    returned).
+    left (or awaiting processing), Release / Process, and their evidence:
+    Withhold keeps an item from being returned; contraband never is.
 ]]
 
 local MP = Rhylib.MP
@@ -21,12 +21,15 @@ Rhylib.Net.Receive("mp.term", function()
     for i = 1, net.ReadUInt(6) do
         local p = net.ReadEntity()
         local why = net.ReadString()
+        local awaiting = net.ReadBool()
+        local processAt = net.ReadFloat()
         local ev = {}
         for j = 1, net.ReadUInt(6) do
             local netId = net.ReadUInt(Items and Items.NET_BITS or 10)
-            ev[j] = { netId = netId, def = Items and Items.FromNet(netId), count = net.ReadUInt(8) }
+            ev[j] = { netId = netId, def = Items and Items.FromNet(netId), count = net.ReadUInt(8),
+                withheld = net.ReadBool(), contraband = net.ReadBool() }
         end
-        jailed[i] = { ply = p, why = why, evidence = ev }
+        jailed[i] = { ply = p, why = why, awaiting = awaiting, processAt = processAt, evidence = ev }
     end
     MP.ShowTerminal(term, cand, jailed)
 end)
@@ -124,10 +127,11 @@ function MP.ShowTerminal(term, cand, jailed)
             K.SetCol(K.C.header)
             surface.DrawRect(0, 0, w, h)
             if not IsValid(p) then return end
-            draw.SimpleText(p:Nick() .. "   " .. fmt(MP.JailLeft(p)), K.Font(15, 700), s(10), s(14), K.C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+            local state = j.awaiting and ("AWAITING PROCESSING (auto in " .. fmt(j.processAt - CurTime()) .. ")") or fmt(MP.JailLeft(p))
+            draw.SimpleText(p:Nick() .. "   " .. state, K.Font(15, 700), s(10), s(14), K.C.text, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
             draw.SimpleText(j.why, K.Font(12), s(10), s(34), K.C.textDim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         end
-        local rel = K.Button(head, "Release", function()
+        local rel = K.Button(head, j.awaiting and "Process" or "Release", function()
             Rhylib.Net.Start("mp.release")
             net.WriteEntity(term)
             net.WriteEntity(p)
@@ -138,11 +142,11 @@ function MP.ShowTerminal(term, cand, jailed)
         rel:DockMargin(0, s(10), s(8), s(10))
         for idx, e in ipairs(j.evidence) do
             local name = (e.def and e.def.name or "Item") .. (e.count > 1 and (" x" .. e.count) or "")
-            local row = K.Row(sp, name)
+            local row = K.Row(sp, name .. (e.contraband and "   (contraband: kept)" or e.withheld and "   (withheld)" or ""))
             row:Dock(TOP)
             row:DockMargin(s(16), 0, s(8), s(2))
             row.right:SetWide(s(110))
-            local b = K.Button(row.right, "Destroy", function()
+            local b = K.Button(row.right, e.withheld and "Return it" or "Withhold", function()
                 Rhylib.Net.Start("mp.destroy")
                 net.WriteEntity(term)
                 net.WriteEntity(p)
@@ -150,7 +154,7 @@ function MP.ShowTerminal(term, cand, jailed)
                 net.WriteUInt(e.netId or 0, Items and Items.NET_BITS or 10)
                 net.WriteUInt(e.count, 8)
                 net.SendToServer()
-            end, { small = true, danger = true })
+            end, { small = true, danger = not e.withheld, enabled = function() return not e.contraband end })
             b:Dock(FILL)
         end
     end

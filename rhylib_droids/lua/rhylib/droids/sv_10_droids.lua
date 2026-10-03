@@ -32,6 +32,29 @@ function D.Targets()
     return targets
 end
 
+-- Worse aim for a while: the aim cone times mult (flash charges, the
+-- Heavy Suppression skill). Each multiplier keeps its own timer; the
+-- strongest one still running counts.
+function D.Suppress(droid, secs, mult)
+    if not IsValid(droid) then return end
+    droid.rhylibSupp = droid.rhylibSupp or {}
+    droid.rhylibSupp[mult] = math.max(droid.rhylibSupp[mult] or 0, CurTime() + secs)
+end
+
+function D.SuppressMult(droid)
+    local t = droid.rhylibSupp
+    if not t then return 1 end
+    local now, m = CurTime(), 1
+    for mult, ends in pairs(t) do
+        if ends > now then
+            if mult > m then m = mult end
+        else
+            t[mult] = nil
+        end
+    end
+    return m
+end
+
 -- Droids don't shoot each other to pieces.
 Rhylib.Hook.Add("EntityTakeDamage", "droids.friendly", function(ent, dmg)
     if not ent.IsRhylibDroid then return end

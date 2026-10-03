@@ -96,6 +96,15 @@ local function applyHit(bolt, tr)
     local L = Rhylib.Lying
     local rag = L and L.Owner and L.Owner(ent) and ent or nil
     if rag then ent = L.Owner(rag) end
+    -- Riot shields (sh_60_shield.lua): a bolt from the front stops on the shield.
+    if ent:IsPlayer() and Rhylib.Weapons.ShieldBlocks and Rhylib.Weapons.ShieldBlocks(ent, bolt.dir) then
+        local fx = EffectData()
+        fx:SetOrigin(tr.HitPos)
+        fx:SetNormal(-bolt.dir)
+        util.Effect("MetalSpark", fx, true, true)
+        ent:EmitSound("physics/metal/metal_solid_impact_bullet" .. math.random(1, 4) .. ".wav", 70)
+        return
+    end
     -- Stun bolts (SWEP.Stun or the "stun" fire mode): no damage; rhylib_mp decides what a hit does.
     if bolt.stun then
         if ent:IsPlayer() then hook.Run("Rhylib.StunHit", ent, bolt.owner, bolt.weapon) end

@@ -190,7 +190,10 @@ Rhylib.Hook.Add("PostEntityTakeDamage", "medical.injuries", function(ply, dmg, t
         if not limb or group == HITGROUP_GENERIC then limb = RANDOM_LIMB[math.random(#RANDOM_LIMB)] end
         hurt(ply, t, limb, amount, bit.band(dtype, bit.bor(DMG_BULLET, DMG_SLASH, DMG_CLUB, DMG_GENERIC, DMG_BUCKSHOT, DMG_SNIPER)) ~= 0 or dtype == 0, now)
         -- Torso hits knock the wind out of you.
-        if limb == "torso" and Rhylib.Stamina and Rhylib.Stamina.Drain then
+        -- (not with the Shock Assault skill)
+        local K = Rhylib.Skills
+        if limb == "torso" and Rhylib.Stamina and Rhylib.Stamina.Drain
+            and not (K and K.Has and K.Has(ply, "shock_assault")) then
             Rhylib.Stamina.Drain(ply, amount * cfg("torsoStaminaHit"))
         end
     end

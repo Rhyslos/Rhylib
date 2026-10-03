@@ -26,6 +26,9 @@ Config.Register("droids", "e5Damage", 12, "E-5 damage per bolt")
 Config.Register("droids", "e5RPM", 300, "E-5 shots per minute within a burst")
 Config.Register("droids", "e5Spread", 2.5, "E-5 inaccuracy cone (degrees), more against moving targets")
 
+Config.Register("droids", "flashSuppress", 3, "Flash charge: droid aim cone multiplier while dazzled")
+Config.Register("droids", "flashTime", 5, "Flash charge: seconds droids stay dazzled")
+
 function D.Cfg(k) return Config.Get("droids", k) end
 
 D.B1_MODEL = "models/npc_b1/npc_droid_cis_b1_h.mdl"

@@ -25,6 +25,8 @@ Rhylib.Hook.Add("HUDPaint", "mp.status", function()
     elseif MP.IsCuffed(ply) then
         local by = MP.EscortedBy(ply)
         title, sub, col = "CUFFED", by and ("Escorted by " .. by:Nick()) or "", COL_CUFF
+    elseif MP.IsJailed(ply) and ply:GetNW2Bool("rhylib_jailAwait", false) then
+        title, sub, col = "AWAITING PROCESSING", "An MP at the jail terminal will process you out", COL_CUFF
     elseif MP.IsJailed(ply) then
         title, sub, col = "JAILED  " .. fmt(MP.JailLeft(ply)), ply:GetNW2String("rhylib_jailWhy", ""), COL_CUFF
     else

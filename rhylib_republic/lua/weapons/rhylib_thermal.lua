@@ -7,3 +7,4 @@ SWEP.Spawnable = true
 SWEP.GrenadeKind = "fuse"
 SWEP.FuseTime = 3
 SWEP.ImpactMode = true   -- E + R switches between timed and impact
+SWEP.BreachMode = true   -- and breaching charge (rhylib_skills Breaching charge)

@@ -247,6 +247,13 @@ function Inv.GiveTarget()
     if IsValid(e) and e:IsPlayer() and e:Alive() then return e end
 end
 
+-- Hide / unhide a contraband item from searches (rhylib_mp).
+function Inv.RequestHide(inst)
+    Rhylib.Net.Start("inv.hide")
+    net.WriteUInt(inst.uid, Items.UID_BITS)
+    net.SendToServer()
+end
+
 function Inv.RequestUse(inst)
     Rhylib.Net.Start("inv.use")
     net.WriteUInt(inst.uid, Items.UID_BITS)

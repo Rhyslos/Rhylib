@@ -6,17 +6,29 @@
       emp     fuse; kills Rhylib droids (Rhylib.Droids.active) in range
               and in sight, stuns players there (rhylib_mp MP.Stun), no
               damage to anything else
+      breach  a breaching charge stuck to a surface (rhylib_grenade_base
+              breach mode): beeps when placed and faster and faster over
+              the last 3 s, then a small blast (riot shields facing it
+              block it, rhylib_weapons sh_60_shield) that forces doors
+              nearby open and holds them open for a while
+      flash   fuse; players in range and in sight are stunned (rhylib_mp),
+              droids aim worse for a few seconds (Rhylib.Droids.Suppress)
     Blinks (red, blue for EMP) faster as the fuse runs down.
 ]]
 
 AddCSLuaFile()
+
+local Config = Rhylib.Config
 
 ENT.Type = "anim"
 ENT.Base = "base_anim"
 ENT.PrintName = "Grenade"
 ENT.Spawnable = false
 
-local KIND = { fuse = 1, impact = 2, emp = 3, emp_impact = 4 }   -- (4: EMP on impact)
+local KIND = { fuse = 1, impact = 2, emp = 3, emp_impact = 4, breach = 5, flash = 6 }   -- (4: EMP on impact)
+ENT.KIND_BREACH = 5
+
+ENT.FlashRadius = 450   -- flash charge: players and droids within this
 
 ENT.Radius = 300        -- frag: blast radius
 ENT.Damage = 140        -- frag: damage at the centre
@@ -38,6 +50,29 @@ end
 if SERVER then
     function ENT:Initialize()
         self:SetModel("models/jajoff/sps/cgiweapons/tc13j/thermalgrenade.mdl")
+        if self.kind == "breach" then
+            -- Stuck where it was placed: no physics, moves with a door.
+            -- (the physics mesh is only measured, so the model is drawn
+            -- centred on the spot like a thrown one)
+            local c = Vector(0, 0, 0)
+            self:PhysicsInit(SOLID_VPHYSICS)
+            local mesh = self:GetPhysicsObject()
+            if IsValid(mesh) then
+                local mn, mx = mesh:GetAABB()
+                c = (mn + mx) * 0.5
+            end
+            self:PhysicsDestroy()
+            self:SetOffset(c)
+            self:SetBall(true)
+            self:SetMoveType(MOVETYPE_NONE)
+            self:SetSolid(SOLID_NONE)
+            self:SetKind(5)
+            self:SetBoom(CurTime() + (self.fuse or 6))
+            if IsValid(self.stuckTo) then self:SetParent(self.stuckTo) end
+            self.dieAt = CurTime() + 60
+            self.nextBeep = 0
+            return
+        end
         -- The model's bounds are far bigger than the grenade, and its own
         -- collision mesh bounces like a cylinder. So: measure that mesh,
         -- then use a ball of its size at its centre (the model is drawn
@@ -89,7 +124,16 @@ if SERVER then
             return
         end
         if CurTime() > self.dieAt then self:Remove() return end
-        self:NextThink(CurTime() + 0.05)
+        -- Breaching charge: a beep when placed, then faster and faster
+        -- over the last 3 s.
+        if self:GetKind() == 5 and CurTime() >= self.nextBeep then
+            local left = boom - CurTime()
+            if self.nextBeep == 0 or left <= 3 then
+                self:EmitSound("buttons/blip1.wav", 75, left <= 1 and 135 or 120)
+            end
+            self.nextBeep = left > 3 and (boom - 3) or (CurTime() + math.max(0.07, 0.5 * left / 3))
+        end
+        self:NextThink(CurTime() + 0.03)
         return true
     end
 
@@ -98,8 +142,13 @@ if SERVER then
         self.done = true
         local pos = self:Centre()
         local attacker = IsValid(self.thrower) and self.thrower or self
-        if self:GetKind() == 3 or self:GetKind() == 4 then
+        local k = self:GetKind()
+        if k == 3 or k == 4 then
             self:Emp(pos, attacker)
+        elseif k == 5 then
+            self:Breach(pos, attacker)
+        elseif k == 6 then
+            self:Flash(pos, attacker)
         else
             local ed = EffectData()
             ed:SetOrigin(pos)
@@ -109,6 +158,95 @@ if SERVER then
             util.Decal("Scorch", pos + Vector(0, 0, 8), pos - Vector(0, 0, 40), self)
         end
         self:Remove()
+    end
+
+    -- Doors held open by breaching charges: [door] = { restore data }.
+    local held = {}
+    local DOOR = { func_door = true, func_door_rotating = true, prop_door_rotating = true }
+
+    local function restoreDoor(door)
+        local h = held[door]
+        held[door] = nil
+        if not (IsValid(door) and h) then return end
+        if h.prop then
+            door:SetKeyValue("returndelay", h.wait)
+        else
+            door:SetKeyValue("wait", h.wait)
+        end
+        door:Fire("Unlock")
+        door:Fire("Close", "", 0.05)
+        if h.locked then door:Fire("Lock", "", 0.1) end
+    end
+
+    local function forceDoor(door, attacker, hold)
+        local prop = door:GetClass() == "prop_door_rotating"
+        if not held[door] then
+            local kv = door:GetKeyValues()
+            held[door] = {
+                prop = prop,
+                wait = tostring((prop and kv.returndelay or kv.wait) or (prop and -1 or 4)),
+                locked = door:GetInternalVariable("m_bLocked") == true,
+            }
+        end
+        door:Fire("Unlock")
+        if prop then
+            door:SetKeyValue("returndelay", "-1")
+            door:Fire("OpenAwayFrom", "!activator", 0, attacker, attacker)
+        else
+            door:SetKeyValue("wait", "-1")
+            door:Fire("Open")
+        end
+        door:Fire("Lock", "", 0.1)   -- (nobody closes it early)
+        timer.Create("Rhylib.Breach." .. door:EntIndex(), hold, 1, function() restoreDoor(door) end)
+    end
+
+    function ENT:Breach(pos, attacker)
+        local ed = EffectData()
+        ed:SetOrigin(pos)
+        ed:SetMagnitude(1)
+        ed:SetScale(1)
+        util.Effect("Explosion", ed, true, true)
+        local r = Config.Get("weapons", "breachRadius")
+        util.BlastDamage(self, attacker, pos, r, Config.Get("weapons", "breachDamage"))
+        util.ScreenShake(pos, 8, 120, 0.6, r * 3)
+        local hold = Config.Get("weapons", "breachHold")
+        local doors = {}
+        local stuck = self:GetParent()
+        if IsValid(stuck) and DOOR[stuck:GetClass()] then doors[stuck] = true end
+        for _, e in ipairs(ents.FindInSphere(pos, Config.Get("weapons", "breachDoors"))) do
+            if IsValid(e) and DOOR[e:GetClass()] then doors[e] = true end
+        end
+        for door in pairs(doors) do forceDoor(door, attacker, hold) end
+    end
+
+    function ENT:Flash(pos, attacker)
+        sound.Play("ambient/explosions/explode_9.wav", pos, 90, 160)
+        sound.Play("ambient/energy/whiteflash.wav", pos, 85, 120)
+        local light = EffectData()
+        light:SetOrigin(pos)
+        util.Effect("cball_explode", light, true, true)
+        local r2 = self.FlashRadius * self.FlashRadius
+        local MP = Rhylib.MP
+        for _, p in ipairs(player.GetAll()) do
+            if p:Alive() then
+                local eye = p:EyePos()
+                if eye:DistToSqr(pos) <= r2 and not util.TraceLine({ start = pos, endpos = eye, mask = MASK_SOLID_BRUSHONLY }).Hit then
+                    p:ScreenFade(SCREENFADE.IN, Color(255, 255, 255, 240), 1.5, 0.5)
+                    if MP and MP.Stun then MP.Stun(p, attacker) end
+                end
+            end
+        end
+        local D = Rhylib.Droids
+        if D and D.Suppress and D.active then
+            for droid in pairs(D.active) do
+                if IsValid(droid) and droid:Health() > 0 then
+                    local c = droid:WorldSpaceCenter()
+                    if c:DistToSqr(pos) <= r2 and not util.TraceLine({ start = pos, endpos = c, mask = MASK_SOLID_BRUSHONLY }).Hit then
+                        D.Suppress(droid, D.Cfg("flashTime"), D.Cfg("flashSuppress"))
+                    end
+                end
+            end
+        end
     end
 
     function ENT:Emp(pos, attacker)
@@ -224,9 +362,10 @@ if CLIENT then
         local left = boom > 0 and math.max(boom - CurTime(), 0) or 1
         local rate = boom > 0 and Lerp(math.Clamp(left / 3, 0, 1), 12, 3) or 4
         if math.sin(CurTime() * rate * math.pi) > 0 then
-            local emp = self:GetKind() == 3 or self:GetKind() == 4
+            local k = self:GetKind()
+            local col = (k == 3 or k == 4) and Color(90, 170, 255) or k == 6 and Color(255, 255, 220) or Color(255, 60, 40)
             render.SetMaterial(GLOW)
-            render.DrawSprite(self:Centre(), 14, 14, emp and Color(90, 170, 255) or Color(255, 60, 40))
+            render.DrawSprite(self:Centre(), 14, 14, col)
         end
     end
 end

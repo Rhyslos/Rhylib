@@ -6,6 +6,10 @@
     SWEP.ImpactMode = true: E + R switches it between timed (fuse) and
     impact; the choice is a player NW2Bool per grenade type (ImpactKey).
     An EMP in impact mode is kind "emp_impact".
+    SWEP.BreachMode = true: with the Breaching charge skill (rhylib_skills)
+    E + R cycles timed -> impact -> breach. In breach mode LMB / RMB stick
+    it to the door or wall you look at (kind "breach": long fuse, small
+    blast, forces doors open; see rhylib_grenade).
     SWEP.RequiresSkill: a skill (rhylib_skills) needed to throw it.
     SWEP.GrenadeKind: "fuse" (explodes FuseTime after the throw), "impact"
     (explodes on the first hit) or "emp" (fuse; kills Rhylib droids in
@@ -19,6 +23,14 @@
 ]]
 
 AddCSLuaFile()
+
+local Config = Rhylib.Config
+Config.Register("weapons", "breachFuse", 6, "Breaching charge: seconds from placing to the blast")
+Config.Register("weapons", "breachRadius", 130, "Breaching charge: blast radius (units, 130 = 2.5 m)")
+Config.Register("weapons", "breachDamage", 70, "Breaching charge: damage at the centre")
+Config.Register("weapons", "breachDoors", 130, "Breaching charge: doors this close are forced open (units)")
+Config.Register("weapons", "breachHold", 300, "Breaching charge: seconds a forced door stays open")
+Config.Register("weapons", "breachReach", 80, "Breaching charge: how far you can reach to place it (units)")
 
 SWEP.Base = "weapon_base"
 SWEP.PrintName = "Grenade"
@@ -76,10 +88,25 @@ function SWEP:ImpactKey()
     return c == "rhylib_thermal" and "rhylib_nadeImpact" or ("rhylib_nadeImpact_" .. c)
 end
 
+-- Breach mode on (E + R, BreachMode grenades with the skill)?
+function SWEP:IsBreach()
+    if not self.BreachMode then return false end
+    local o = self:GetOwner()
+    if not (IsValid(o) and o:GetNW2Bool(self:ImpactKey() .. "_breach")) then return false end
+    local K = Rhylib.Skills
+    return not (K and K.Has) or K.Has(o, "breaching")
+end
+
 -- Impact mode on (E + R, for ImpactMode grenades)?
 function SWEP:IsImpact()
     local o = self:GetOwner()
-    return self.ImpactMode and IsValid(o) and o:GetNW2Bool(self:ImpactKey()) or false
+    return self.ImpactMode and IsValid(o) and o:GetNW2Bool(self:ImpactKey()) and not self:IsBreach() or false
+end
+
+function SWEP:CanBreach()
+    if not self.BreachMode then return false end
+    local K = Rhylib.Skills
+    return not (K and K.Has) or K.Has(self:GetOwner(), "breaching")
 end
 
 -- May the owner throw it (SWEP.RequiresSkill)?
@@ -94,10 +121,28 @@ function SWEP:Think()
     -- E + R: timed / impact.
     local o = self:GetOwner()
     if SERVER and self.ImpactMode and IsValid(o) and o:KeyPressed(IN_RELOAD) and o:KeyDown(IN_USE) then
-        local on = not o:GetNW2Bool(self:ImpactKey())
-        o:SetNW2Bool(self:ImpactKey(), on)
+        -- timed -> impact -> (breach) -> timed
+        local key, bkey = self:ImpactKey(), self:ImpactKey() .. "_breach"
+        local msg
+        if self:IsBreach() then
+            o:SetNW2Bool(bkey, false)
+            o:SetNW2Bool(key, false)
+        elseif o:GetNW2Bool(key) then
+            o:SetNW2Bool(key, false)
+            if self:CanBreach() then o:SetNW2Bool(bkey, true) end
+        else
+            o:SetNW2Bool(bkey, false)
+            o:SetNW2Bool(key, true)
+        end
+        if self:IsBreach() then
+            msg = ": breaching charge (stick it on a door)"
+        elseif self:IsImpact() then
+            msg = ": impact"
+        else
+            msg = ": timed (" .. self.FuseTime .. " s)"
+        end
         o:EmitSound("weapons/smg1/switch_single.wav", 60)
-        o:ChatPrint(self.PrintName .. (on and ": impact" or (": timed (" .. self.FuseTime .. " s)")))
+        o:ChatPrint(self.PrintName .. msg)
     end
     if self:GetNeedDraw() and CurTime() >= self:GetLastThrow() + self.RedrawTime then
         self:SetNeedDraw(false)
@@ -111,8 +156,52 @@ end
 
 function SWEP:Reload() end
 
-function SWEP:PrimaryAttack() self:Throw(self.ThrowForce, 0.05) end
-function SWEP:SecondaryAttack() self:Throw(self.LobForce, 0.25) end
+function SWEP:PrimaryAttack()
+    if self:IsBreach() then self:PlaceBreach() return end
+    self:Throw(self.ThrowForce, 0.05)
+end
+function SWEP:SecondaryAttack()
+    if self:IsBreach() then self:PlaceBreach() return end
+    self:Throw(self.LobForce, 0.25)
+end
+
+-- Breach mode: stick a charge on the surface you look at.
+function SWEP:PlaceBreach()
+    local o = self:GetOwner()
+    if not IsValid(o) or not o:IsPlayer() then return end
+    self:SetNextPrimaryFire(CurTime() + 0.5)
+    self:SetNextSecondaryFire(CurTime() + 0.5)
+    local tr = util.TraceLine({
+        start = o:GetShootPos(), endpos = o:GetShootPos() + o:GetAimVector() * Config.Get("weapons", "breachReach"),
+        filter = o, mask = MASK_SOLID,
+    })
+    local e = tr.Entity
+    local ok = tr.Hit and not tr.HitSky and (tr.HitWorld or (IsValid(e) and not e:IsPlayer() and not e:IsNPC() and not e:IsNextBot()))
+    if not ok then
+        if SERVER then o:ChatPrint("Look at a door or a wall close by to place the charge") end
+        return
+    end
+    self:SetNextPrimaryFire(CurTime() + self.ThrowDelay)
+    self:SetNextSecondaryFire(CurTime() + self.ThrowDelay)
+    self:SetLastThrow(CurTime())
+    self:SetNeedDraw(true)
+    self:SendWeaponAnim(ACT_VM_THROW)
+    o:SetAnimation(PLAYER_ATTACK1)
+    if CLIENT then return end
+    local g = ents.Create("rhylib_grenade")
+    if not IsValid(g) then return end
+    g:SetPos(tr.HitPos + tr.HitNormal * 2)
+    g:SetAngles(tr.HitNormal:Angle())
+    g.kind = "breach"
+    g.fuse = Config.Get("weapons", "breachFuse")
+    g.thrower = o
+    g.stuckTo = IsValid(e) and e or nil
+    g:SetOwner(o)
+    g:SetColor(Color(255, 150, 60))
+    g:Spawn()
+    o:EmitSound("physics/metal/weapon_impact_soft" .. math.random(1, 3) .. ".wav", 65, 110)
+    self:UseOne(o)
+end
 
 -- force: speed along the aim; lift: extra upward share of it.
 function SWEP:Throw(force, lift)
@@ -184,6 +273,8 @@ if CLIENT then
         local text
         if not self:SkillOK() then
             text = "Needs the " .. (self.SkillName or "right") .. " skill"
+        elseif self:IsBreach() then
+            text = "BREACHING CHARGE  ·  E + R"
         elseif self.ImpactMode then
             text = self:IsImpact() and "IMPACT  ·  E + R" or ("TIMED " .. self.FuseTime .. " S  ·  E + R")
         end

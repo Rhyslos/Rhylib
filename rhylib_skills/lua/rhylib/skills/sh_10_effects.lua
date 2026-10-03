@@ -85,6 +85,13 @@ reg("shotgunDamage", 1.3, "Shotgun drills: DP-24 pellet damage multiplier")
 reg("shotgunCone", 0.8, "Shotgun drills: DP-24 pellet cone multiplier")
 reg("sidearmWeight", 0.5, "Shotgun drills: weight multiplier for guns 4 cells long or shorter")
 reg("juggernautMult", 0.85, "Juggernaut: damage multiplier")
+reg("suppressRadius", 300, "Suppression: droids this close to one you hit with the Z-6 aim worse (units)")
+reg("suppressMult", 1.8, "Suppression: droid aim cone multiplier")
+reg("suppressTime", 3, "Suppression: seconds it lasts")
+reg("holdLineMult", 0.8, "Hold the line: damage multiplier with the shield up and another MP near")
+reg("holdLineRange", 200, "Hold the line: how close the other MP must be (units)")
+reg("bashDamage", 30, "Shield bash: damage to droids")
+reg("searchMult", 1.2, "Thorough search: search roll multiplier")
 
 local function cfg(k) return Config.Get("skills", k) end
 

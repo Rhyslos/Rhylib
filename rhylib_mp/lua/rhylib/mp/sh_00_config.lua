@@ -16,15 +16,22 @@
       Jail        admins place cells and a jail terminal (spawn menu,
                   rhylib_mp_save). At the terminal an MP jails a cuffed
                   prisoner nearby: minutes and a reason. Their items go to
-                  evidence (returned on release unless an MP removes them),
-                  they're put in a free cell, and released when the time
-                  is up. Sentences survive reconnects and map changes.
+                  evidence, they're put in a free cell, and when the time
+                  is up they wait there to be processed (an MP at the
+                  terminal, or automatically). Processed prisoners collect
+                  their evidence at the property locker, minus contraband
+                  and anything an MP withheld. Sentences survive
+                  reconnects and map changes.
+      Escort      escorting slows the MP (not with Escort drills).
+      Hiding      players hide up to 3 contraband items; searches roll
+                  for each (sv_20_search).
 
     Who is an MP: a DarkRP job with mp = true (or answer Rhylib.IsMP).
 
     State is NW2 on the player, changed only on events:
       rhylib_stunEnd (CurTime), rhylib_stunYaw, rhylib_cuffed (bool),
-      rhylib_escortBy (entity), rhylib_jailEnd (CurTime), rhylib_jailWhy
+      rhylib_escortBy (entity), rhylib_escorting (entity, on the MP),
+      rhylib_jailEnd (CurTime), rhylib_jailWhy, rhylib_jailAwait (bool)
 ]]
 
 Rhylib.MP = Rhylib.MP or {}
@@ -34,13 +41,17 @@ local Config = Rhylib.Config
 Config.Register("mp", "stunTime", 8, "Seconds a stun hit keeps someone down")
 Config.Register("mp", "stunImmune", 3, "Seconds after getting up before they can be stunned again")
 Config.Register("mp", "batonRange", 85, "Stun baton reach (units)")
+Config.Register("mp", "propertyModel", "models/props_c17/lockers001a.mdl", "Property locker model")
 Config.Register("mp", "terminalModel", "models/reizer_props/srsp/sci_fi/console_01/console_01.mdl", "Jail terminal model (HL2 console if missing)")
 Config.Register("mp", "batonDelay", 1.2, "Seconds between baton swings")
 Config.Register("mp", "cuffRange", 85, "How close you must be to cuff or uncuff")
 Config.Register("mp", "cuffTime", 1.5, "Seconds to put cuffs on")
 Config.Register("mp", "cuffWalk", 110, "Walk speed while cuffed")
 Config.Register("mp", "escortLeash", 60, "How far behind the MP an escorted prisoner walks")
+Config.Register("mp", "escortSlow", 0.75, "Speed multiplier for an MP escorting a prisoner (none with the Escort drills skill)")
 Config.Register("mp", "searchRange", 100, "How close you must be to search someone")
+Config.Register("mp", "searchMemory", 300, "Seconds an MP's search rolls on someone's hidden items are kept (searching again doesn't re-roll)")
+Config.Register("mp", "processAuto", 300, "Seconds after a sentence ends before the prisoner is processed out automatically")
 Config.Register("mp", "maxSentence", 60, "Longest sentence in minutes")
 Config.Register("mp", "jailRadius", 350, "A prisoner further than this from their cell is put back")
 Config.Register("mp", "terminalRange", 400, "Cuffed prisoners this close to a jail terminal can be jailed there")
@@ -63,6 +74,11 @@ function MP.IsCuffed(ply) return ply:GetNW2Bool("rhylib_cuffed", false) end
 function MP.EscortedBy(ply)
     local e = ply:GetNW2Entity("rhylib_escortBy")
     return IsValid(e) and e or nil
+end
+-- The prisoner this MP is escorting, if any.
+function MP.Escorting(ply)
+    local e = ply:GetNW2Entity("rhylib_escorting")
+    if IsValid(e) and e:GetNW2Entity("rhylib_escortBy") == ply then return e end
 end
 function MP.IsJailed(ply) return ply:GetNW2Float("rhylib_jailEnd", 0) > 0 end
 function MP.JailLeft(ply) return math.max(0, ply:GetNW2Float("rhylib_jailEnd", 0) - CurTime()) end

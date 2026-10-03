@@ -78,6 +78,7 @@ end)
 function MP.Cuff(ply, by)
     if not IsValid(ply) or MP.IsCuffed(ply) then return end
     ply:SetNW2Bool("rhylib_cuffed", true)
+    MP.ClearEscorter(ply)
     ply:SetNW2Entity("rhylib_escortBy", NULL)
     MP.cuffed[ply] = true
     stow(ply)
@@ -88,15 +89,30 @@ end
 function MP.Uncuff(ply, by)
     if not IsValid(ply) then return end
     ply:SetNW2Bool("rhylib_cuffed", false)
+    MP.ClearEscorter(ply)
     ply:SetNW2Entity("rhylib_escortBy", NULL)
     MP.cuffed[ply] = nil
     if IsValid(by) then ply:EmitSound("npc/metropolice/gear" .. math.random(1, 6) .. ".wav", 65) end
     hook.Run("Rhylib.PlayerUncuffed", ply, by)
 end
 
+-- ply stops being escorted: their MP points at another prisoner they
+-- still escort, or nobody.
+function MP.ClearEscorter(ply)
+    local by = MP.EscortedBy(ply)
+    if not (by and by:GetNW2Entity("rhylib_escorting") == ply) then return end
+    local other = NULL
+    for p in pairs(MP.cuffed) do
+        if IsValid(p) and p ~= ply and MP.EscortedBy(p) == by then other = p break end
+    end
+    by:SetNW2Entity("rhylib_escorting", other)
+end
+
 function MP.SetEscort(ply, by)
     if not MP.IsCuffed(ply) then return end
+    MP.ClearEscorter(ply)
     ply:SetNW2Entity("rhylib_escortBy", IsValid(by) and by or NULL)
+    if IsValid(by) then by:SetNW2Entity("rhylib_escorting", ply) end
 end
 
 -- Escorts end when the MP is gone, down, cuffed, or far away.

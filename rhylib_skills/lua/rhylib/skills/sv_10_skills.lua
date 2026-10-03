@@ -278,9 +278,40 @@ Rhylib.Hook.Add("EntityTakeDamage", "skills.resist", function(ent, dmg)
             local a = Med and Med.acts and Med.acts[ent]
             if a and a.kind ~= Med.A_STAB then m = m * K.Cfg("underFireMult") end
         end
+        if set.hold_line and K.HoldingLine(ent) then m = m * K.Cfg("holdLineMult") end
+        -- Shock Assault: no push from hits.
+        if set.shock_assault then dmg:SetDamageForce(vector_origin) end
     end
     if m ~= 1 then dmg:ScaleDamage(m) end
 end, 95)
+
+-- Suppression: a Z-6 hit on a droid rattles the droids around it.
+Rhylib.Hook.Add("EntityTakeDamage", "skills.suppress", function(ent, dmg)
+    if not ent.IsRhylibDroid then return end
+    local att, inf = dmg:GetAttacker(), dmg:GetInflictor()
+    if not (IsValid(att) and att:IsPlayer() and IsValid(inf) and inf:GetClass() == K.Z6 and K.Has(att, "suppression")) then return end
+    local D = Rhylib.Droids
+    if not (D and D.Suppress and D.active) then return end
+    local now = CurTime()
+    if (ent.rhylibSuppressCheck or 0) > now then return end   -- (once per 0.25 s per droid hit)
+    ent.rhylibSuppressCheck = now + 0.25
+    local pos, r2 = ent:GetPos(), K.Cfg("suppressRadius") ^ 2
+    for d in pairs(D.active) do
+        if IsValid(d) and d:GetPos():DistToSqr(pos) <= r2 then D.Suppress(d, K.Cfg("suppressTime"), K.Cfg("suppressMult")) end
+    end
+end)
+
+-- Hold the line: shield up and another MP close by.
+function K.HoldingLine(ply)
+    local W, MP = Rhylib.Weapons, Rhylib.MP
+    if not (W and W.ShieldUp and W.ShieldUp(ply) and MP and MP.IsMP) then return false end
+    local r2 = K.Cfg("holdLineRange") ^ 2
+    local pos = ply:GetPos()
+    for _, o in ipairs(player.GetAll()) do
+        if o ~= ply and o:Alive() and MP.IsMP(o) and o:GetPos():DistToSqr(pos) <= r2 then return true end
+    end
+    return false
+end
 
 -- Death from above: a hard landing slams droids (NPCs and NextBots) nearby.
 Rhylib.Hook.Add("OnPlayerHitGround", "skills.slam", function(ply, inWater, _, speed)

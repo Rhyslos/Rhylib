@@ -864,6 +864,33 @@ Rhylib.Net.Receive("inv.drop", function(ply)
     Inv.Drop(ply, uid, single)
 end, { rate = 8, burst = 8 })
 
+-- Hide / unhide contraband from searches (rhylib_mp rolls for each hidden
+-- item). data.hidden is the hider's SteamID64, so it lapses when the item
+-- changes hands.
+Rhylib.Net.Receive("inv.hide", function(ply)
+    if Inv.Locked(ply) then return end
+    local st = Inv.Get(ply)
+    local inst = st.byUid[net.ReadUInt(Items.UID_BITS)]
+    if not inst or inst.c == SLOT_BACK then return end
+    inst.data = inst.data or {}
+    if inst.data.hidden then
+        inst.data.hidden = nil
+    else
+        if not Items.IsContraband(inst.id) then return end
+        local sid, n = ply:SteamID64() or "0", 0
+        for _, o in pairs(st.byUid) do
+            if o.data and o.data.hidden == sid then n = n + 1 end
+        end
+        if n >= Items.HIDE_MAX then
+            Inv.Note(ply, "You can hide " .. Items.HIDE_MAX .. " items at most")
+            sendSet(ply, st, inst)
+            return
+        end
+        inst.data.hidden = sid
+    end
+    update(ply, st, inst)
+end, { rate = 5, burst = 5 })
+
 Rhylib.Net.Receive("inv.use", function(ply)
     if Inv.Locked(ply) then return end
     local inst = Inv.Get(ply).byUid[net.ReadUInt(Items.UID_BITS)]

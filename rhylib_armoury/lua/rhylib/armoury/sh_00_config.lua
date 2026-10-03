@@ -77,7 +77,7 @@ Config.Register("armoury", "medCrate", {
 -- Items listed here are kept out of the normal weapons armoury.
 Config.Register("armoury", "roles", {
     trooper = { weapons = {}, gear = { "sw_datapad" } },
-    mp = { weapons = {}, gear = { "rhylib_stunbaton", "rhylib_handcuffs" } },   -- (stun is a fire mode for MPs)
+    mp = { weapons = { "rhylib_riotshield" }, gear = { "rhylib_stunbaton", "rhylib_handcuffs", "rhylib_flashcharge" } },   -- (stun is a fire mode for MPs)
     medic = { weapons = {}, gear = { "rhylib_medkit", "rhylib_firstaid", "rhylib_revivekit", "rhylib_antiviral", "rhylib_antidote", "rhylib_antibiotics",
         "rhylib_med_supplies" } },
 }, "Specialist armoury stock per role: { weapons = {...}, gear = {...} }")

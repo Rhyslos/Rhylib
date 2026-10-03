@@ -596,7 +596,8 @@ H.unjail = function(caller, t)
     local MP = mp()
     if not (MP and MP.Release) then return nil, "rhylib_mp isn't installed" end
     if not MP.IsJailed(t) then return nil, name(t) .. " isn't jailed" end
-    MP.Release(t, caller)
+    -- (admins skip the wait: processed straight away)
+    if MP.Process then MP.Process(t, caller) else MP.Release(t, caller) end
     return name(caller) .. " released " .. name(t) .. " from jail"
 end
 

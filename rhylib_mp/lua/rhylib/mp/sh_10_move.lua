@@ -41,7 +41,18 @@ Rhylib.Hook.Add("SetupMove", "mp.move", function(ply, mv)
         mv:SetButtons(0)
         return
     end
-    if not MP.IsCuffed(ply) then return end
+    if not MP.IsCuffed(ply) then
+        -- Escorting slows the MP (rhylib_skills Escort drills: not at all).
+        if MP.Escorting(ply) then
+            local K = Rhylib.Skills
+            if not (K and K.Has and K.Has(ply, "escort_drills")) then
+                local m = MP.Cfg("escortSlow")
+                mv:SetMaxClientSpeed(mv:GetMaxClientSpeed() * m)
+                mv:SetMaxSpeed(mv:GetMaxSpeed() * m)
+            end
+        end
+        return
+    end
     mv:SetButtons(band(mv:GetButtons(), bnot(CUFF_STRIP)))
     mv:SetMaxClientSpeed(math.min(mv:GetMaxClientSpeed(), MP.Cfg("cuffWalk")))
     -- Escort: walk toward the MP when too far behind.
@@ -51,7 +62,7 @@ Rhylib.Hook.Add("SetupMove", "mp.move", function(ply, mv)
         to.z = 0
         local dist = to:Length()
         if dist > MP.Cfg("escortLeash") then
-            local speed = math.min(by:GetVelocity():Length2D() + 60, 260)
+            local speed = math.min(by:GetVelocity():Length2D() + 60, 400)
             local v = to / dist * speed
             local cur = mv:GetVelocity()
             mv:SetVelocity(Vector(v.x, v.y, cur.z))

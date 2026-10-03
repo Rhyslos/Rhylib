@@ -155,6 +155,20 @@ local Config = Rhylib.Config
 Config.Register("inventory", "baseCarry", 20, "Carry cap in kg without a backpack")
 Config.Register("inventory", "giveRange", 130, "How close you must be to give someone an item")
 Config.Register("inventory", "backpackWeightMult", 0.7, "Items inside a backpack count at this fraction of their weight")
+Config.Register("inventory", "contraband", {}, "Contraband item ids: players can hide up to 3 of them from searches, and they're never returned from jail")
+
+-- Contraband (config list), cached per change of the list.
+local cbList, cbSet
+function Items.IsContraband(id)
+    local list = Config.Get("inventory", "contraband")
+    if list ~= cbList then
+        cbList, cbSet = list, {}
+        if istable(list) then for _, v in ipairs(list) do cbSet[v] = true end end
+    end
+    return cbSet[id] == true
+end
+
+Items.HIDE_MAX = 3   -- hidden items per player (data.hidden = their SteamID64)
 
 -- state: { cont = { [cid] = { items } } }. Returns weight, cap in kg.
 function Items.Weight(state)
@@ -350,6 +364,7 @@ function Items.WriteInstance(inst)
     net.WriteUInt(math.Clamp(inst.count, 0, 255), Items.COUNT_BITS)
     net.WriteBool(inst.data and inst.data.issued or false)
     net.WriteUInt(inst.hb or 0, 3)  -- hotbar slot, 0 = none
+    net.WriteBool(inst.data and isstring(inst.data.hidden) or false)
     if def and def.fill then
         net.WriteUInt(math.Round(math.Clamp(inst.data and inst.data.fill or 1, 0, 1) * 255), 8)
     end
@@ -365,6 +380,7 @@ function Items.ReadInstance()
     local count = net.ReadUInt(Items.COUNT_BITS)
     local data = { issued = net.ReadBool() or nil }
     local hb = net.ReadUInt(3)
+    data.hidden = net.ReadBool() or nil
     if def and def.fill then data.fill = net.ReadUInt(8) / 255 end
     return { uid = uid, c = c, id = def and def.id, x = x, y = y, rot = rot, count = count, data = data, hb = hb > 0 and hb or nil }
 end

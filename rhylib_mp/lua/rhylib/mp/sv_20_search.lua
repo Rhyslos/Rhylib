@@ -3,6 +3,13 @@
     that player's inventory, backpack and back slot. Taking items needs
     the player to be cuffed; taken items go to the MP's inventory.
 
+    Hidden items: a player can hide up to 3 contraband items (rhylib_inventory,
+    data.hidden). Each search rolls once per hidden item: the MP's
+    U(0, 100) x searchMult (rhylib_skills Thorough search) plus a size
+    bonus against the player's U(0, 100); the MP sees it only if theirs is
+    higher. Rolls are kept for searchMemory seconds per MP and target, so
+    searching again doesn't roll again.
+
     Messages:
       mp.search  client -> server  target (open), or NULL (close)
       mp.list    server -> MP      target, cuffed, then the items
@@ -45,18 +52,55 @@ local function canSearch(mp, target)
 end
 MP.CanSearch = canSearch
 
+MP.searchRolls = MP.searchRolls or {}   -- [mp] = { [target] = { at, found = { [uid] = bool } } }
+
+-- Size bonus for the MP's roll: bigger things are easier to find.
+local function sizeBonus(def)
+    local cells = def and (def.w or 1) * (def.h or 1) or 1
+    if cells >= 5 then return 20 elseif cells >= 3 then return 10 elseif cells >= 2 then return 5 end
+    return 0
+end
+
+local function isHidden(target, o)
+    return o.data and o.data.hidden ~= nil and o.data.hidden == target:SteamID64() and Items.IsContraband(o.id)
+end
+
+-- Does this MP see item o of target? Rolled once, then remembered.
+function MP.SearchFinds(mp, target, o)
+    if not isHidden(target, o) then return true end
+    local byT = MP.searchRolls[mp]
+    if not byT then byT = {} MP.searchRolls[mp] = byT end
+    local r = byT[target]
+    if not r or CurTime() - r.at > MP.Cfg("searchMemory") then
+        r = { at = CurTime(), found = {} }
+        byT[target] = r
+    end
+    local f = r.found[o.uid]
+    if f == nil then
+        local mult = 1
+        local K = Rhylib.Skills
+        if K and K.Has and K.Has(mp, "thorough_search") then mult = K.Cfg("searchMult") or 1.2 end
+        local mine = math.Rand(0, 100) * mult + sizeBonus(Items.defs[o.id])
+        local theirs = math.Rand(0, 100)
+        f = mine > theirs
+        r.found[o.uid] = f
+    end
+    return f
+end
+
 -- Items as rows: uid, item net id, count, fill, container.
 function MP.SendList(mp, target)
     local I = inv()
     if not I then return end
     local st = I.Get(target)
     local list = {}
-    local sig = 0
+    local sig, n = 0, 0
     for _, o in pairs(st.byUid) do
-        list[#list + 1] = o
+        if MP.SearchFinds(mp, target, o) then list[#list + 1] = o end
+        n = n + 1
         sig = sig + o.uid * 7 + (o.count or 1) * 13 + (o.c or 1)
     end
-    MP.searchSig[mp] = sig + #list + (MP.IsCuffed(target) and 1000000 or 0)
+    MP.searchSig[mp] = sig + n + (MP.IsCuffed(target) and 1000000 or 0)
     table.sort(list, function(a, b) return (a.c or 0) * 1000 + a.uid < (b.c or 0) * 1000 + b.uid end)
     Rhylib.Net.Start("mp.list")
     net.WriteEntity(target)
@@ -98,7 +142,7 @@ Rhylib.Net.Receive("mp.take", function(mp)
     if not MP.IsCuffed(target) then return end
     local st = I.Get(target)
     local o = st.byUid[uid]
-    if not o then return end
+    if not o or not MP.SearchFinds(mp, target, o) then return end
     if not Items.CanLeave(st, o) then
         mp:ChatPrint("Empty the backpack first")
         return
@@ -106,6 +150,7 @@ Rhylib.Net.Receive("mp.take", function(mp)
     -- A gun keeps its current clip and cell.
     I.Internal.captureWeapon(target, o)
     local id, count, data = o.id, o.count or 1, table.Copy(o.data or {})
+    data.hidden = nil
     I.Internal.removeInst(target, st, uid)
     I.AddOrDrop(mp, id, count, data)
     MP.SendList(mp, target)
@@ -146,6 +191,8 @@ end)
 Rhylib.Hook.Add("PlayerDisconnected", "mp.search", function(ply)
     MP.searching[ply] = nil
     MP.searchSig[ply] = nil
+    MP.searchRolls[ply] = nil
+    for _, byT in pairs(MP.searchRolls) do byT[ply] = nil end
     for m, t in pairs(MP.searching) do
         if t == ply then MP.searching[m] = nil end
     end

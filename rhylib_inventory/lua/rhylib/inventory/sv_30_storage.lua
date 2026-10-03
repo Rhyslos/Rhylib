@@ -17,6 +17,7 @@
         Inv.CreateStorage(ent, { kind = "depot", title = "Armoury", stock = { "rhylib_dc15s", ... } })
         Inv.OpenStorage(ply, ent)
 
+    noDeposit = true: items can only be taken out (property lockers).
     variant = function(storage, ply) return sub end   -- optional: a different
         storage per player (role armouries). Make subs with Inv.NewStorage
         and keep them in storage.subs[key]; they share the entity.
@@ -111,6 +112,7 @@ function Inv.NewStorage(ent, opts)
         onChanged = opts.onChanged,
         controls = opts.controls,
         variant = opts.variant,
+        noDeposit = opts.noDeposit,
         subs = {},
     }
     if storage.kind == "depot" then layoutDepot(storage) end
@@ -312,6 +314,11 @@ function Inv.Deposit(ply, uid, x, y, rot, single)
         return
     end
     local n = single and 1 or inst.count
+    if storage.noDeposit then
+        Inv.Note(ply, "You can only take things out of here")
+        I.sendSet(ply, st, inst)
+        return
+    end
 
     if storage.kind == "depot" then
         -- Handing stocked gear back: it's just removed.
@@ -349,6 +356,7 @@ function Inv.Deposit(ply, uid, x, y, rot, single)
         sendChange(storage, OP_SET, target)
     elseif Items.Fits(storage.w, storage.h, storage.items, inst.id, x, y, rot) then
         local o = { uid = nextUid(storage), id = inst.id, c = EXT, x = x, y = y, rot = rot, count = n, data = table.Copy(inst.data or {}) }
+        o.data.hidden = nil
         storage.items[o.uid] = o
         sendChange(storage, OP_SET, o)
     else

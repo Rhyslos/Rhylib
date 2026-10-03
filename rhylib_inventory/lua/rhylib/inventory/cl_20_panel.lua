@@ -426,6 +426,9 @@ function PANEL:DrawItemBox(inst, x, y, pw, ph, alpha, endless)
     if corner then
         draw.SimpleText(corner, font, x + pw - pad, y + ph - pad, UI.Colors.text, TEXT_ALIGN_RIGHT, TEXT_ALIGN_BOTTOM)
     end
+    if inst.data and inst.data.hidden and inst.c ~= EXT then
+        draw.SimpleText("HIDDEN", self:Font(11, 700), x + pw - pad, y + ph * 0.5, UI.Colors.textDim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
+    end
 end
 
 function PANEL:ItemRect(r, inst)
@@ -738,6 +741,7 @@ function PANEL:PaintTooltip()
     if def.grid then lines[#lines + 1] = "Adds " .. def.grid[1] .. " x " .. def.grid[2] .. " cells when worn" end
     if def.large then lines[#lines + 1] = "Too large for a backpack" end
     if inst.data and inst.data.issued then lines[#lines + 1] = "Issued: if dropped, disappears after 5 minutes" end
+    if inst.data and inst.data.hidden and inst.c ~= EXT then lines[#lines + 1] = "Hidden: a search may miss it" end
     if inst.c == EXT and Inv.ext and Inv.ext.depot then lines[#lines + 1] = "Endless supply, drag to take (Ctrl: just one)" end
     if inst.hb then
         lines[#lines + 1] = "On the hotbar (" .. inst.hb .. ")"
@@ -840,6 +844,18 @@ function PANEL:OnMousePressed(code)
                 menu:AddOption("Give all to " .. target:Nick(), function() Inv.RequestGive(inst, false, target) end)
             else
                 menu:AddOption("Give to " .. target:Nick(), function() Inv.RequestGive(inst, false, target) end)
+            end
+        end
+        -- Contraband can be hidden from searches (up to Items.HIDE_MAX).
+        if Items.IsContraband(inst.id) and inst.c ~= SLOT_BACK then
+            if inst.data and inst.data.hidden then
+                menu:AddOption("Unhide", function() Inv.RequestHide(inst) end)
+            else
+                local n = 0
+                for _, o in pairs(Inv.byUid) do if o.data and o.data.hidden then n = n + 1 end end
+                if n < Items.HIDE_MAX then
+                    menu:AddOption("Hide (" .. n .. "/" .. Items.HIDE_MAX .. " hidden)", function() Inv.RequestHide(inst) end)
+                end
             end
         end
         menu:AddOption("Drop", function() Inv.RequestDrop(inst) end)

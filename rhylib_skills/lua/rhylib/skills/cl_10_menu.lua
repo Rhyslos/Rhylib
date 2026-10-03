@@ -87,6 +87,15 @@ local GLYPHS = {
     bone = { { "R", .3, .44, .4, .12 }, { "C", .28, .42, .09 }, { "C", .28, .58, .09 }, { "C", .72, .42, .09 }, { "C", .72, .58, .09 } },
     crouch = { { "C", .44, .18, .1 }, { "P", { .34, .32, .54, .32, .6, .6, .4, .6 } }, { "R", .4, .56, .36, .1 },
         { "R", .66, .56, .1, .3 }, { "P", { .32, .58, .44, .58, .4, .86, .28, .86 } }, { "R", .12, .86, .76, .05 } },
+    riot = { { "R", .24, .1, .52, .8 }, { "R", .32, .22, .36, .08, true }, { "R", .46, .38, .08, .4, true } },
+    bash = { { "R", .12, .2, .34, .6 }, { "L", .58, .32, .86, .2, .06 }, { "L", .58, .5, .9, .5, .06 }, { "L", .58, .68, .86, .8, .06 } },
+    cuffs = { { "O", .3, .6, .16, .07 }, { "O", .7, .6, .16, .07 }, { "L", .42, .38, .58, .38, .06 } },
+    door = { { "R", .22, .1, .46, .8 }, { "R", .28, .16, .34, .74, true }, { "C", .56, .52, .04 }, { "B", .8, .28, .14 } },
+    search = { { "O", .42, .42, .24, .07 }, { "L", .6, .6, .86, .86, .1 } },
+    charge = { { "R", .1, .4, .46, .2 }, { "P", { .54, .2, .9, .5, .54, .8 } } },
+    wall = { { "R", .1, .2, .38, .16 }, { "R", .52, .2, .38, .16 }, { "R", .1, .42, .18, .16 }, { "R", .32, .42, .36, .16 },
+        { "R", .72, .42, .18, .16 }, { "R", .1, .64, .38, .16 }, { "R", .52, .64, .38, .16 } },
+    phalanx = { { "R", .06, .22, .26, .6 }, { "R", .37, .16, .26, .6 }, { "R", .68, .22, .26, .6 } },
 }
 
 -- Icon per skill (a node's own `icon` wins).
@@ -100,6 +109,8 @@ local ICONS = {
     field_drag = "drag", hands_on = "heart", steady_hands = "clock", quick_revive = "cross", under_fire = "shield",
     deep_pockets = "pocket", triage = "eye", chem_bench = "flask", field_surgeon = "bone",
     batch_brewing = "stack", bacta_specialist = "drop",
+    riot_shield = "riot", shield_bash = "bash", escort_drills = "cuffs", breaching = "door",
+    thorough_search = "search", shock_assault = "charge", hold_line = "wall", flash_charge = "burst", phalanx = "phalanx",
 }
 
 local function iconOf(n) return n.icon or ICONS[n.id] or "star" end
@@ -316,6 +327,7 @@ local function build(page)
                 "Lines show what each skill needs first.",
             }
             if cat.medicOnly then table.insert(rules, 1, "Medic jobs only.") end
+            if cat.mpOnly then table.insert(rules, 1, "Military police jobs only.") end
             for _, r in ipairs(rules) do
                 Kit.SetCol(C.accent)
                 surface.DrawRect(pad, y + S(6), S(4), S(4))
