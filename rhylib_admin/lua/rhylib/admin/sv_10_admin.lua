@@ -18,7 +18,7 @@
 local Admin = Rhylib.Admin
 local Data = Rhylib.Data
 
-for _, n in ipairs({ "admin.msg", "admin.announce", "admin.list", "admin.countdown" }) do Rhylib.Net.Register(n) end
+for _, n in ipairs({ "admin.msg", "admin.announce", "admin.list", "admin.countdown", "admin.ask", "admin.client" }) do Rhylib.Net.Register(n) end
 
 local LOG_CAP = 300
 local KEY = "admin"
@@ -78,6 +78,7 @@ local function storedRank(sid)
     local r = Data.Get(KEY, sidKey("r", sid))
     return isstring(r) and Admin.RankById(r) and r or nil
 end
+Admin.StoredRank = storedRank
 
 -- Our storage (and owners / the listen host) is the only source of ranks.
 local function applyRank(ply)
@@ -213,6 +214,10 @@ function Admin.Warn(sid, reason, byName)
     return #w
 end
 
+function Admin.ClearWarnings(sid)
+    Data.Delete(KEY, sidKey("w", sid))
+end
+
 function Admin.Warnings(sid)
     local w = Data.Get(KEY, sidKey("w", sid))
     return istable(w) and w or {}
@@ -278,7 +283,7 @@ end
 Admin.handlers = Admin.handlers or {}
 
 local function parseArg(kind, word)
-    if kind == "number" then
+    if kind == "number" or kind == "minutes" or kind == "scale" or kind == "mult" then
         local n = tonumber(word)
         if not n or n ~= n or n == math.huge or n == -math.huge then return nil, "Expected a number, got \"" .. tostring(word) .. "\"" end
         return n
@@ -295,6 +300,27 @@ local function parseArg(kind, word)
     return word
 end
 
+-- A player who left out the target (from = 0) or an argument: their
+-- client asks for the rest with pickers (admin.ask; the menu's AskArgs).
+local function ask(caller, cmd, words, from)
+    if not IsValid(caller) then return false end
+    Rhylib.Net.Start("admin.ask")
+    net.WriteString(cmd.id)
+    net.WriteUInt(from, 4)
+    local n = math.min(#words, 15)
+    net.WriteUInt(n, 4)
+    for k = 1, n do net.WriteString(words[k]) end
+    net.Send(caller)
+    return true
+end
+
+local function hasText(cmd)
+    for _, a in ipairs(cmd.args) do
+        if a[3] == "text" then return true end
+    end
+    return false
+end
+
 -- caller: a player or NULL/nil (console). words: list of strings.
 function Admin.Exec(caller, id, words)
     local cmd = Admin.byAlias[string.lower(id or "")]
@@ -308,8 +334,8 @@ function Admin.Exec(caller, id, words)
     words = words or {}
     local i = 1
 
-    -- Target.
-    local target, sid
+    -- Target (or many, with *).
+    local target, sid, many, selfDefault
     if cmd.target then
         local q = words[1]
         if (q == nil or q == "") and cmd.target == "opt" then
@@ -317,8 +343,24 @@ function Admin.Exec(caller, id, words)
         elseif (q == nil or q == "") and cmd.target == "self" then
             target = caller
             if not IsValid(target) then return Admin.Tell(caller, "Give a player name", true) end
+            selfDefault = true
         elseif q == nil or q == "" then
+            if ask(caller, cmd, {}, 0) then return end
             return Admin.Tell(caller, "Usage: !" .. cmd.id .. " <player>" .. (cmd.args[1] and " ..." or ""), true)
+        elseif q == "*" then
+            if not cmd.mass then return Admin.Tell(caller, "!" .. cmd.id .. " can't be used on everyone", true) end
+            if not full then return Admin.Tell(caller, "You can only use " .. cmd.id .. " on yourself", true) end
+            i = 2
+            many = {}
+            for _, p in ipairs(player.GetAll()) do
+                if p ~= caller and Admin.CanTarget(caller, p) then many[#many + 1] = p end
+            end
+            if #many == 0 then return Admin.Tell(caller, "Nobody you can use it on", true) end
+        elseif cmd.target == "self" and #words <= #cmd.args and not hasText(cmd)
+            and (tonumber(q) or not Admin.FindPlayer(caller, q)) and IsValid(caller) then
+            -- "!hp 50", "!model reset": just the arguments, on yourself.
+            target = caller
+            selfDefault = true
         else
             i = 2
             local err
@@ -330,26 +372,29 @@ function Admin.Exec(caller, id, words)
                 if not target then return Admin.Tell(caller, err, true) end
             end
         end
-        if not full and target ~= caller then
-            return Admin.Tell(caller, "You can only use " .. cmd.id .. " on yourself", true)
-        end
-        if IsValid(target) and not Admin.CanTarget(caller, target) then
-            return Admin.Tell(caller, target:Nick() .. " has the same rank as you or higher", true)
-        end
-        if cmd.target == "id" and not IsValid(target) and sid and IsValid(caller) then
-            -- Offline: their stored rank still counts.
-            local r = Admin.RankById(storedRank(sid) or "user")
-            if isOwnerId(sid) or (r and (r.level or 0) >= Admin.Level(caller)) then
-                return Admin.Tell(caller, "That player has the same rank as you or higher", true)
+        if not many then
+            if not full and target ~= caller then
+                return Admin.Tell(caller, "You can only use " .. cmd.id .. " on yourself", true)
             end
+            if IsValid(target) and not Admin.CanTarget(caller, target) then
+                return Admin.Tell(caller, target:Nick() .. " has the same rank as you or higher", true)
+            end
+            if cmd.target == "id" and not IsValid(target) and sid and caller then
+                -- Offline: their stored rank still counts.
+                local r = Admin.RankById(storedRank(sid) or "user")
+                if isOwnerId(sid) or (r and (r.level or 0) >= Admin.Level(caller)) then
+                    return Admin.Tell(caller, "That player has the same rank as you or higher", true)
+                end
+            end
+            if IsValid(target) and not sid and not target:IsBot() then sid = target:SteamID64() end
         end
-        if IsValid(target) and not sid and target:IsPlayer() and not target:IsBot() then sid = target:SteamID64() end
     end
 
     -- Arguments.
     local args = {}
     for n, a in ipairs(cmd.args) do
         local key, label, kind = a[1], a[2], a[3]
+        local start = i
         local word
         if kind == "text" then
             word = table.concat(words, " ", i)
@@ -358,7 +403,18 @@ function Admin.Exec(caller, id, words)
             word = words[i]
             i = i + 1
         end
-        if (word == nil or word == "") and kind ~= "text" then
+        if (word == nil or word == "") and (kind ~= "text" or a.need) then
+            -- Ask for this one and the rest; keep what was typed before it,
+            -- with the target pinned to who it found (not "@" or a name part).
+            local given = {}
+            for k = 1, start - 1 do given[k] = words[k] end
+            if selfDefault then
+                table.insert(given, 1, "^")   -- (left out = you; keep it that way)
+            elseif cmd.target and not many and given[1] then
+                if IsValid(target) then given[1] = target:IsBot() and target:Nick() or target:SteamID64()
+                elseif sid then given[1] = sid end
+            end
+            if ask(caller, cmd, given, n) then return end
             return Admin.Tell(caller, "Missing " .. string.lower(label) .. " (!" .. cmd.id .. ")", true)
         end
         local v, err = parseArg(kind, word or "")
@@ -368,6 +424,28 @@ function Admin.Exec(caller, id, words)
 
     local fn = Admin.handlers[cmd.id]
     if not fn then return Admin.Tell(caller, "Not available: " .. cmd.id, true) end
+
+    if many then
+        local done, lastErr = 0, nil
+        for _, p in ipairs(many) do
+            if IsValid(p) then
+                local ok, text, err = pcall(fn, caller, p, args, { sid = not p:IsBot() and p:SteamID64() or nil, cmd = cmd, mass = true })
+                if not ok then
+                    ErrorNoHalt("[Rhylib Admin] " .. cmd.id .. ": " .. tostring(text) .. "\n")
+                elseif text then
+                    done = done + 1
+                else
+                    lastErr = err
+                end
+            end
+        end
+        if done == 0 then return Admin.Tell(caller, lastErr or "Nothing happened", true) end
+        local text = nameOf(caller) .. " used " .. cmd.name .. " on everyone (" .. done .. " player" .. (done == 1 and "" or "s") .. ")"
+        echo(text)
+        Admin.Log(text)
+        return
+    end
+
     local ok, text, err = pcall(fn, caller, target, args, { sid = sid, cmd = cmd })
     if not ok then
         ErrorNoHalt("[Rhylib Admin] " .. cmd.id .. ": " .. tostring(text) .. "\n")
@@ -428,15 +506,35 @@ Rhylib.Net.Receive("admin.run", function(ply)
     Admin.Exec(ply, id, words)
 end, { rate = 4, burst = 8 })
 
--- Lists for the staff menu: 1 bans, 2 log, 3 warnings of a SteamID64.
+-- Maps on the server (sorted; menu backgrounds left out). Cached a minute.
+local mapCache, mapAt = nil, 0
+function Admin.MapList()
+    if mapCache and CurTime() - mapAt < 60 then return mapCache end
+    local out = {}
+    for _, f in ipairs(file.Find("maps/*.bsp", "GAME") or {}) do
+        local m = string.lower(string.StripExtension(f))
+        if not string.find(m, "^background") and not string.find(m, "^devtest") then out[#out + 1] = m end
+    end
+    table.sort(out)
+    mapCache, mapAt = out, CurTime()
+    return out
+end
+
+-- Lists for the staff menu: 0 maps, 1 bans, 2 log, 3 warnings of a SteamID64.
 Rhylib.Net.Receive("admin.listget", function(ply)
     local which = net.ReadUInt(2)
     local arg = net.ReadString()
+    if which == 0 and not Admin.Has(ply, "map") then return end
     if which == 1 and not Admin.Has(ply, "bans") and not Admin.Has(ply, "ban") then return end
     if which == 2 and not Admin.Has(ply, "logs") then return end
     if which == 3 and not Admin.Has(ply, "warn") then return end
     local rows = {}
-    if which == 1 then
+    if which == 0 then
+        for k, m in ipairs(Admin.MapList()) do
+            if k > 255 then break end
+            rows[k] = { m, m == string.lower(game.GetMap()) and "1" or "" }
+        end
+    elseif which == 1 then
         for k in pairs(banIndex()) do
             local sid = string.sub(k, 2)
             local b = Admin.GetBan(sid)

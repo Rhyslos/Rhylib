@@ -106,8 +106,9 @@ end)
 --------------------------------------------------------------------------
 
 -- A free standing spot near pos (tries a ring around it).
-local function freeSpot(pos, who)
-    local mins, maxs = Vector(-16, -16, 0), Vector(16, 16, 72)
+local function freeSpot(pos, who, scale)
+    local sc = scale or 1
+    local mins, maxs = Vector(-16, -16, 0) * sc, Vector(16, 16, 72) * sc
     local tries = { Vector(0, 0, 0) }
     for i = 0, 7 do
         local a = i * math.pi / 4
@@ -206,14 +207,14 @@ end
 H["goto"] = function(caller, t)
     if not IsValid(caller) then return nil, "The console can't go anywhere" end
     if caller == t then return nil, "That's you" end
-    moveTo(caller, freeSpot(t:GetPos() - t:GetForward() * 48, { caller, t }))
+    moveTo(caller, freeSpot(t:GetPos() - t:GetForward() * 48, { caller, t }, caller.rhylibScale))
     return name(caller) .. " went to " .. name(t)
 end
 
 H.bring = function(caller, t)
     if not IsValid(caller) then return nil, "The console has nowhere to bring them" end
     if caller == t then return nil, "That's you" end
-    moveTo(t, freeSpot(caller:GetPos() + caller:GetForward() * 64, { caller, t }))
+    moveTo(t, freeSpot(caller:GetPos() + caller:GetForward() * 64, { caller, t }, t.rhylibScale))
     return name(caller) .. " brought " .. name(t)
 end
 
@@ -229,7 +230,7 @@ H.teleport = function(caller, t)
     if not IsValid(caller) then return nil, "The console can't aim" end
     local tr = util.TraceLine({ start = caller:EyePos(), endpos = caller:EyePos() + caller:GetAimVector() * 32768, filter = { caller, t }, mask = MASK_PLAYERSOLID })
     if not tr.Hit then return nil, "Aim at something" end
-    moveTo(t, freeSpot(tr.HitPos + tr.HitNormal * 16, { caller, t }))
+    moveTo(t, freeSpot(tr.HitPos + tr.HitNormal * 16, { caller, t }, t.rhylibScale))
     return name(caller) .. " teleported " .. you(caller, t)
 end
 
@@ -368,27 +369,42 @@ H.charreset = function(caller, t)
 end
 
 -- Server / events.
-local changing
-H.map = function(caller, t, a)
-    local m = string.lower(string.Trim(a.map or ""))
-    if m == "" or not string.match(m, "^[%w_%-]+$") or not file.Exists("maps/" .. m .. ".bsp", "GAME") then return nil, "No map called " .. m end
-    if changing then return nil, "A map change is already counting down (!cancelmap)" end
-    changing = m
+local function startMapChange(caller, m)
+    if timer.Exists("rhylib_admin_map") then return nil, "A map change is already counting down (!cancelmap)" end
     Rhylib.Net.Start("admin.countdown")
     net.WriteString(m)
     net.WriteUInt(10, 6)
     net.Broadcast()
-    timer.Create("rhylib_admin_map", 10, 1, function()
-        changing = nil
-        RunConsoleCommand("changelevel", m)
-    end)
+    timer.Create("rhylib_admin_map", 10, 1, function() RunConsoleCommand("changelevel", m) end)
     return name(caller) .. " is changing the map to " .. m .. " in 10 seconds"
 end
 
+-- Exact name, else the one map whose name contains it.
+H.map = function(caller, t, a)
+    local want = string.lower(string.Trim(a.map or ""))
+    if want == "" or not string.match(want, "^[%w_%-]+$") then return nil, "No map called " .. want end
+    local list = Admin.MapList()
+    local found = {}
+    for _, m in ipairs(list) do
+        if m == want then found = { m } break end
+        if string.find(m, want, 1, true) then found[#found + 1] = m end
+    end
+    if #found == 0 then return nil, "No map matches " .. want end
+    if #found > 1 then
+        local show = {}
+        for k = 1, math.min(5, #found) do show[k] = found[k] end
+        return nil, #found .. " maps match " .. want .. ": " .. table.concat(show, ", ") .. (#found > 5 and ", ..." or "")
+    end
+    return startMapChange(caller, found[1])
+end
+
+H.restartmap = function(caller)
+    return startMapChange(caller, game.GetMap())
+end
+
 H.cancelmap = function(caller)
-    if not changing then return nil, "No map change is counting down" end
+    if not timer.Exists("rhylib_admin_map") then return nil, "No map change is counting down" end
     timer.Remove("rhylib_admin_map")
-    changing = nil
     Rhylib.Net.Start("admin.countdown")
     net.WriteString("")
     net.WriteUInt(0, 6)
@@ -524,4 +540,293 @@ H.who = function(caller)
         end
     end
     if not any then Admin.Tell(caller, "No staff online") end
+end
+
+--------------------------------------------------------------------------
+-- More discipline
+--------------------------------------------------------------------------
+
+local function mp() return Rhylib.MP end
+
+H.jail = function(caller, t, a)
+    local MP = mp()
+    if not (MP and MP.Jail) then return nil, "rhylib_mp isn't installed" end
+    if MP.IsJailed(t) then return nil, name(t) .. " is already jailed" end
+    local minutes = math.floor(a.minutes)
+    if minutes < 1 then return nil, "At least 1 minute" end
+    local ok, err = MP.Jail(t, caller, minutes, a.reason or "")
+    if not ok then return nil, err or ("Couldn't jail " .. name(t)) end
+    return name(caller) .. " jailed " .. name(t) .. " for " .. Admin.FormatMinutes(math.min(minutes, MP.Cfg("maxSentence"))) .. (a.reason ~= "" and (" (" .. a.reason .. ")") or "")
+end
+
+H.unjail = function(caller, t)
+    local MP = mp()
+    if not (MP and MP.Release) then return nil, "rhylib_mp isn't installed" end
+    if not MP.IsJailed(t) then return nil, name(t) .. " isn't jailed" end
+    MP.Release(t, caller)
+    return name(caller) .. " released " .. name(t) .. " from jail"
+end
+
+H.free = function(caller, t)
+    local MP = mp()
+    if not MP then return nil, "rhylib_mp isn't installed" end
+    local did = false
+    if MP.IsCuffed(t) then MP.Uncuff(t, caller) did = true end
+    if MP.IsStunned(t) and MP.EndStun then MP.EndStun(t) did = true end
+    if not did then return nil, name(t) .. " isn't cuffed or stunned" end
+    return name(caller) .. " freed " .. you(caller, t)
+end
+
+H.unwarn = function(caller, t, a, ctx)
+    local n = #Admin.Warnings(ctx.sid)
+    if n == 0 then return nil, "No warnings to clear" end
+    Admin.ClearWarnings(ctx.sid)
+    return name(caller) .. " cleared " .. n .. " warning" .. (n == 1 and "" or "s") .. " of " .. (IsValid(t) and t:Nick() or ctx.sid)
+end
+
+H.slap = function(caller, t)
+    if not t:Alive() then return nil, name(t) .. " is dead" end
+    if t:InVehicle() then t:ExitVehicle() end
+    local push = VectorRand() * 260
+    push.z = math.random(200, 320)
+    t:SetVelocity(push)
+    if t:Health() > 5 then t:SetHealth(t:Health() - 5) end
+    t:EmitSound("physics/body/body_medium_impact_hard" .. math.random(1, 6) .. ".wav", 75)
+    return name(caller) .. " slapped " .. you(caller, t)
+end
+
+H.ignite = function(caller, t)
+    if not t:Alive() then return nil, name(t) .. " is dead" end
+    t:Ignite(10)
+    return name(caller) .. " set " .. you(caller, t) .. " on fire"
+end
+
+H.extinguish = function(caller, t)
+    if not t:IsOnFire() then return nil, name(t) .. " isn't burning" end
+    t:Extinguish()
+    return name(caller) .. " put out " .. you(caller, t)
+end
+
+H.tell = function(caller, t, a)
+    if a.text == "" then return nil, "Say something" end
+    Admin.Tell(t, "From " .. name(caller) .. ": " .. a.text)
+    Admin.Tell(caller, "To " .. t:Nick() .. ": " .. a.text)
+    Admin.Log(name(caller) .. " to " .. t:Nick() .. ": " .. a.text)
+end
+
+H.info = function(caller, t, a, ctx)
+    local sid = ctx.sid
+    local lines = {}
+    local function add(s) lines[#lines + 1] = s end
+    add((IsValid(t) and t:Nick() or "Offline player") .. " · " .. util.SteamIDFrom64(sid) .. " · " .. sid)
+    local r = IsValid(t) and Admin.Rank(t) or Admin.RankById(Admin.StoredRank(sid) or "user")
+    add("Staff rank: " .. (r and r.name or "User"))
+    if IsValid(t) then
+        add("Job: " .. team.GetName(t:Team()) .. " · health " .. t:Health() .. " · armour " .. t:Armor()
+            .. " · online " .. math.floor(t:TimeConnected() / 60) .. " min")
+        local MP = mp()
+        if MP and MP.IsJailed(t) then add("In jail: " .. math.ceil(MP.JailLeft(t) / 60) .. " min left") end
+    end
+    local R = Rhylib.Roster
+    local c = R and R.Char and R.Char(sid)
+    if c then
+        add("Character: " .. tostring(c.num or "?") .. " " .. tostring(c.nick or "")
+            .. ((c.bn or "") ~= "" and (" · " .. c.bn .. " · " .. R.RankName(c.r or 0)) or (c.trained and " · no battalion" or " · cadet")))
+    end
+    local w = Admin.Warnings(sid)
+    add("Warnings: " .. #w .. (#w > 0 and (" (last: " .. (w[#w].reason or "") .. ")") or ""))
+    local b = Admin.GetBan(sid)
+    if b then add("Banned: " .. (b.reason or "") .. " (by " .. (b.byName or "?") .. ")") end
+    for _, l in ipairs(lines) do Admin.Tell(caller, l) end
+end
+
+--------------------------------------------------------------------------
+-- Health
+--------------------------------------------------------------------------
+
+local function med() return Rhylib.Medical end
+
+H.revive = function(caller, t)
+    local Med = med()
+    if not t:Alive() then
+        local pos, ang = t:GetPos(), t:EyeAngles()
+        t:Spawn()
+        timer.Simple(0, function()
+            if IsValid(t) then
+                t:SetPos(freeSpot(pos, { t }))
+                t:SetEyeAngles(Angle(0, ang.y, 0))
+            end
+        end)
+        return name(caller) .. " revived " .. you(caller, t) .. " where they fell"
+    end
+    if Med and Med.IsDown(t) then
+        Med.Revive(t, t:GetMaxHealth(), caller)
+        return name(caller) .. " revived " .. you(caller, t)
+    end
+    return nil, name(t) .. " isn't down or dead"
+end
+
+H.heal = function(caller, t)
+    if not t:Alive() then return nil, name(t) .. " is dead (use !revive)" end
+    local Med = med()
+    if Med and Med.IsDown(t) then Med.Revive(t, t:GetMaxHealth(), caller) end
+    if Med and Med.ClearInjuries then Med.ClearInjuries(t) end
+    t:SetHealth(math.max(t:Health(), t:GetMaxHealth()))
+    local A = Rhylib.Armor
+    local arm = A and A.SpawnArmor and A.SpawnArmor(t) or 100
+    if t:Armor() < arm then t:SetArmor(arm) end
+    t:Extinguish()
+    return name(caller) .. " healed " .. you(caller, t)
+end
+
+H.buddha = function(caller, t)
+    local on = not t.rhylibBuddha
+    t.rhylibBuddha = on or nil
+    return name(caller) .. (on and " enabled" or " disabled") .. " buddha for " .. you(caller, t)
+end
+
+-- Buddha: after armour (100); rhylib_medical skips buddha players (150).
+-- +1: the engine rounds fractional damage up.
+Rhylib.Hook.Add("EntityTakeDamage", "admin.buddha", function(ent, dmg)
+    if ent.rhylibBuddha and ent:IsPlayer() and dmg:GetDamage() + 1 >= ent:Health() then
+        dmg:SetDamage(math.max(0, ent:Health() - 1))
+    end
+end, 140)
+
+local function darkrpMoney(t)
+    return t.getDarkRPVar and t.addMoney and (t:getDarkRPVar("money") or 0)
+end
+
+H.money = function(caller, t, a)
+    local have = darkrpMoney(t)
+    if not have then return nil, "DarkRP money isn't available" end
+    local n = math.floor(a.amount)
+    if n == 0 then return nil, "Give an amount" end
+    if have + n < 0 then n = -have end
+    t:addMoney(n)
+    local fmt = DarkRP and DarkRP.formatMoney or tostring
+    return name(caller) .. (n >= 0 and (" gave " .. fmt(n) .. " to ") or (" took " .. fmt(-n) .. " from ")) .. you(caller, t)
+end
+
+H.setmoney = function(caller, t, a)
+    local have = darkrpMoney(t)
+    if not have then return nil, "DarkRP money isn't available" end
+    local n = math.max(0, math.floor(a.amount))
+    t:addMoney(n - have)
+    local fmt = DarkRP and DarkRP.formatMoney or tostring
+    return name(caller) .. " set the money of " .. you(caller, t) .. " to " .. fmt(n)
+end
+
+--------------------------------------------------------------------------
+-- Events: size, speed, jump, model (until respawn)
+--------------------------------------------------------------------------
+
+local VIEW, VIEW_DUCK = Vector(0, 0, 64), Vector(0, 0, 28)
+
+local function applyScale(t, s)
+    t:SetModelScale(s, 0)
+    t:SetViewOffset(VIEW * s)
+    t:SetViewOffsetDucked(VIEW_DUCK * s)
+    t:SetNW2Float("rhylib_scale", s)
+    if not t.rhylibHullDown then Admin.ScaleHull(t) end
+    t:SetStepSize(18 * math.max(s, 0.5))
+    t.rhylibScale = s ~= 1 and s or nil
+end
+
+H.scale = function(caller, t, a)
+    if not t:Alive() then return nil, name(t) .. " is dead" end
+    local Med, MP = med(), mp()
+    if (Med and Med.IsDown(t)) or (MP and MP.IsStunned(t)) then return nil, name(t) .. " is lying down" end
+    local s = math.Clamp(math.floor(a.size * 100 + 0.5) / 100, 0.2, 5)
+    applyScale(t, s)
+    if s > 1 then t:SetPos(freeSpot(t:GetPos(), { t }, s)) end
+    return name(caller) .. " set the size of " .. you(caller, t) .. " to " .. s
+end
+
+H.speed = function(caller, t, a)
+    local m = math.Clamp(a.mult, 0.1, 10)
+    local base = t.rhylibBaseSpeed
+    if not base then
+        base = { t:GetWalkSpeed(), t:GetRunSpeed(), t:GetSlowWalkSpeed() }
+        t.rhylibBaseSpeed = base
+    end
+    t:SetWalkSpeed(base[1] * m)
+    t:SetRunSpeed(base[2] * m)
+    t:SetSlowWalkSpeed(base[3] * m)
+    if m == 1 then t.rhylibBaseSpeed = nil end
+    return name(caller) .. " set the speed of " .. you(caller, t) .. " to x" .. m
+end
+
+H.jump = function(caller, t, a)
+    local m = math.Clamp(a.mult, 0, 10)
+    t.rhylibBaseJump = t.rhylibBaseJump or t:GetJumpPower()
+    t:SetJumpPower(t.rhylibBaseJump * m)
+    if m == 1 then t.rhylibBaseJump = nil end
+    return name(caller) .. " set the jump of " .. you(caller, t) .. " to x" .. m
+end
+
+H.model = function(caller, t, a)
+    local m = string.lower(string.Trim(a.model or ""))
+    if m == "reset" or m == "default" then
+        hook.Run("PlayerSetModel", t)
+        t:SetupHands()
+        return name(caller) .. " reset the model of " .. you(caller, t)
+    end
+    m = string.gsub(m, "\\", "/")
+    if not string.match(m, "^models/[%w_/%.%-]+%.mdl$") or string.find(m, "..", 1, true) or not util.IsValidModel(m) then
+        return nil, "No model " .. m .. " (models/....mdl)"
+    end
+    t:SetModel(m)
+    t:SetupHands()
+    return name(caller) .. " set the model of " .. you(caller, t) .. " to " .. m
+end
+
+-- Respawning puts size, speed and jump back (the job sets speed and model again).
+Rhylib.Hook.Add("PlayerSpawn", "admin.events", function(ply)
+    if ply.rhylibScale then applyScale(ply, 1) end
+    ply.rhylibBaseSpeed, ply.rhylibBaseJump = nil, nil
+end)
+
+-- Sounds and decals on every client (admin.client: 0 play, 1 stop, 2 decals).
+local function toClients(kind, text)
+    Rhylib.Net.Start("admin.client")
+    net.WriteUInt(kind, 2)
+    net.WriteString(text or "")
+    net.Broadcast()
+end
+
+H.playsound = function(caller, t, a)
+    local s = string.gsub(string.lower(string.Trim(a.sound or "")), "\\", "/")
+    s = string.gsub(s, "^sound/", "")
+    if not string.match(s, "^[%w_/%.%-]+%.[mwo][pag][3vg]$") or string.find(s, "..", 1, true) then
+        return nil, "Sound path like ambient/alarms/klaxon1.wav (.wav, .mp3 or .ogg)"
+    end
+    if not file.Exists("sound/" .. s, "GAME") then return nil, "No sound " .. s .. " on the server" end
+    toClients(0, s)
+    return name(caller) .. " played " .. s
+end
+
+H.stopsound = function(caller)
+    toClients(1)
+    return name(caller) .. " stopped all sounds"
+end
+
+H.cleardecals = function(caller)
+    toClients(2)
+    return name(caller) .. " cleared decals"
+end
+
+H.freezeprops = function(caller)
+    local n = 0
+    for _, e in ipairs(ents.GetAll()) do
+        local c = e:GetClass()
+        if string.sub(c, 1, 12) == "prop_physics" and not isPlacement(e) then
+            local phys = e:GetPhysicsObject()
+            if IsValid(phys) and phys:IsMotionEnabled() then
+                phys:EnableMotion(false)
+                n = n + 1
+            end
+        end
+    end
+    return name(caller) .. " froze " .. n .. " prop" .. (n == 1 and "" or "s")
 end

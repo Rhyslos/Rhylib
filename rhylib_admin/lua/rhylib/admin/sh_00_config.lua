@@ -27,15 +27,18 @@ Config.Register("admin", "ranks", {
     { id = "user", name = "User", level = 0, color = Color(200, 200, 200) },
     { id = "trialmod", name = "Trial Moderator", level = 30, color = Color(120, 200, 140),
       perms = { "goto", "bring", "return", "freeze", "unfreeze", "mute", "unmute", "gag", "ungag", "kick", "warn",
-                "respawn", "logs", "spectate", "noclip.self", "rhylib.chat.admin" } },
+                "respawn", "logs", "spectate", "noclip.self", "info", "tell", "free", "rhylib.chat.admin" } },
     { id = "gamemaster", name = "Gamemaster", level = 40, color = Color(230, 170, 70),
       perms = { "goto", "bring", "return", "teleport", "freeze", "unfreeze", "respawn", "slay",
                 "noclip", "noclip.self", "god", "cloak", "notarget", "hp", "armor", "give", "spawn",
-                "map", "cleanup", "announce", "setjob", "spectate", "rhylib.chat.event", "rhylib.weapons.infammo" } },
+                "map", "cleanup", "announce", "setjob", "spectate", "info", "tell", "revive", "heal", "buddha",
+                "scale", "speed", "jump", "model", "playsound", "stopsound", "slap", "ignite", "free",
+                "freezeprops", "cleardecals", "rhylib.chat.event", "rhylib.weapons.infammo" } },
     { id = "moderator", name = "Moderator", level = 50, color = Color(90, 170, 240), inherits = { "trialmod" },
-      perms = { "ban", "slay", "teleport", "noclip", "god", "cloak", "notarget", "hp", "armor", "bans", "setjob" } },
+      perms = { "ban", "slay", "teleport", "noclip", "god", "cloak", "notarget", "hp", "armor", "bans", "setjob",
+                "jail", "unjail", "revive", "heal", "stopsound", "freezeprops", "cleardecals", "ignite" } },
     { id = "admin", name = "Admin", level = 70, color = Color(230, 80, 80), inherits = { "moderator", "gamemaster" },
-      perms = { "permaban", "banid", "unban", "rank", "roster", "charreset" } },
+      perms = { "permaban", "banid", "unban", "rank", "roster", "charreset", "unwarn", "money" } },
     { id = "superadmin", name = "Superadmin", level = 90, color = Color(200, 90, 230), perms = { "*" } },
     { id = "owner", name = "Owner", level = 100, color = Color(255, 210, 90), perms = { "*" } },
 }, "Staff ranks: { id, name, level, color, inherits = { rank ids }, perms = { permission names } }")
@@ -161,3 +164,25 @@ Rhylib.Hook.Add("CAMI.PlayerHasAccess", "admin.cami", function(actor, priv, call
     callback(ok, "Rhylib")
     return true
 end)
+
+-- !scale size (NW2Float rhylib_scale): hulls aren't networked, so both
+-- sides set them; the client keeps the local player's in step (prediction).
+function Admin.ScaleHull(ply)
+    local s = ply:GetNW2Float("rhylib_scale", 1)
+    if s == 1 then ply:ResetHull() return end
+    ply:SetHull(Vector(-16, -16, 0) * s, Vector(16, 16, 72) * s)
+    ply:SetHullDuck(Vector(-16, -16, 0) * s, Vector(16, 16, 36) * s)
+end
+
+if CLIENT then
+    local applied = 1
+    Rhylib.Hook.Add("Think", "admin.scale", function()
+        local lp = LocalPlayer()
+        if not IsValid(lp) or lp.rhylibHullDown then return end
+        local s = lp:GetNW2Float("rhylib_scale", 1)
+        if s ~= applied then
+            applied = s
+            Admin.ScaleHull(lp)
+        end
+    end)
+end

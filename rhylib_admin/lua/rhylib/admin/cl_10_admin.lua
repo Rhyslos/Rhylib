@@ -4,7 +4,9 @@
     helpers the staff menu uses (rhylib_menus cl_30_commands.lua):
         Admin.Run(id, words)               send a command
         Admin.AskArgs(cmd, done(words))    ask for its arguments (menus / text boxes)
-        Admin.RequestList(which, arg, cb)  1 bans, 2 log, 3 warnings (SteamID64)
+        Admin.RequestList(which, arg, cb)  0 maps, 1 bans, 2 log, 3 warnings (SteamID64)
+        Admin.MapPicker(done(map))         the map window (cl_20_maps.lua)
+        Admin.PickPlayer(cmd, done(word))  a player menu for a command
 ]]
 
 local Admin = Rhylib.Admin
@@ -60,7 +62,7 @@ function Admin.TargetWord(p)
     return p:SteamID64() or p:Nick()
 end
 
--- Choices for an argument kind, or nil (= type it).
+-- Choices for an argument kind, or nil (= type it). "?" = type your own.
 local function choices(kind)
     if kind == "rank" then
         local out = {}
@@ -98,27 +100,87 @@ local function choices(kind)
     elseif kind == "duration" then
         return { { "30m", "30 minutes" }, { "2h", "2 hours" }, { "1d", "1 day" }, { "3d", "3 days" }, { "1w", "1 week" },
             { "perm", "Permanent" }, { "?", "Other..." } }
+    elseif kind == "minutes" then
+        return { { "5", "5 minutes" }, { "10", "10 minutes" }, { "15", "15 minutes" }, { "30", "30 minutes" }, { "?", "Other..." } }
+    elseif kind == "scale" then
+        return { { "0.5", "Small (0.5)" }, { "0.75", "Short (0.75)" }, { "1", "Normal" }, { "1.25", "Tall (1.25)" },
+            { "1.5", "Big (1.5)" }, { "2", "Giant (2)" }, { "?", "Other..." } }
+    elseif kind == "mult" then
+        return { { "0.5", "Half" }, { "1", "Normal" }, { "1.5", "x1.5" }, { "2", "Double" }, { "3", "Triple" }, { "?", "Other..." } }
     end
 end
 
 local HINT = {
     number = "A number", text = "", word = "", class = "Weapon class, e.g. rhylib_dc15a",
-    map = "Map name, e.g. rp_venator", duration = "30m, 2h, 1d, 1w or perm",
+    map = "Map name, e.g. rp_venator", duration = "30m, 2h, 1d, 1w or perm", minutes = "Minutes",
+    scale = "1 = normal", mult = "1 = normal", model = "models/....mdl, or reset",
+    sound = "e.g. ambient/alarms/klaxon1.wav",
 }
 
--- Asks for each argument in turn; done(words).
-function Admin.AskArgs(cmd, done)
+-- Pickers opened from chat need the mouse; it's freed while any is open.
+local askPanels = {}
+local cursorOn = false
+local function track(p)
+    if not IsValid(p) then return p end
+    askPanels[#askPanels + 1] = p
+    if not cursorOn and not vgui.CursorVisible() then
+        cursorOn = true
+        gui.EnableScreenClicker(true)
+        timer.Create("rhylib_admin_ask", 0.2, 0, function()
+            for k = #askPanels, 1, -1 do
+                if not IsValid(askPanels[k]) or not askPanels[k]:IsVisible() then table.remove(askPanels, k) end
+            end
+            if #askPanels == 0 then
+                timer.Remove("rhylib_admin_ask")
+                cursorOn = false
+                gui.EnableScreenClicker(false)
+            end
+        end)
+    end
+    return p
+end
+Admin.TrackAsk = track
+
+-- Pick a player you can use cmd on (players you outrank, you, and * for mass commands).
+function Admin.PickPlayer(cmd, done)
+    local K = Rhylib.Menus and Rhylib.Menus.Kit
+    if not K then return end
+    local me = LocalPlayer()
+    local m = K.Menu()
+    m:AddOption("Myself", function() done("^") end)
+    if cmd.mass then m:AddOption("Everyone", function() done("*") end) end
+    local list = player.GetAll()
+    table.sort(list, function(a, b) return string.lower(a:Nick()) < string.lower(b:Nick()) end)
+    local any = false
+    for _, p in ipairs(list) do
+        if p ~= me and Admin.CanTarget(me, p) then
+            any = true
+            m:AddOption(p:Nick(), function() if IsValid(p) then done(Admin.TargetWord(p)) end end)
+        end
+    end
+    if not any and cmd.target ~= "self" then m:AddOption("(nobody you can pick)", function() end) end
+    m:Open()
+    track(m)
+end
+
+-- Asks for each argument in turn from index `from` (default 1); done(words).
+function Admin.AskArgs(cmd, done, from)
     local K = Rhylib.Menus and Rhylib.Menus.Kit
     local words = {}
     local function step(i)
         local a = cmd.args[i]
         if not a then done(words) return end
+        local function took(w)
+            words[#words + 1] = w
+            step(i + 1)
+        end
         local function typed()
             if not K then return end
-            K.Prompt(cmd.name, a[2] .. (HINT[a[3]] and HINT[a[3]] ~= "" and (" (" .. HINT[a[3]] .. ")") or ""), "", function(text)
-                words[#words + 1] = text
-                step(i + 1)
-            end)
+            track(K.Prompt(cmd.name, a[2] .. (HINT[a[3]] and HINT[a[3]] ~= "" and (" (" .. HINT[a[3]] .. ")") or ""), "", took))
+        end
+        if a[3] == "map" then
+            track(Admin.MapPicker(took))
+            return
         end
         local list = choices(a[3])
         if list and K then
@@ -126,17 +188,52 @@ function Admin.AskArgs(cmd, done)
             for _, c in ipairs(list) do
                 m:AddOption(c[2], function()
                     if c[1] == "?" then typed() return end
-                    words[#words + 1] = c[1]
-                    step(i + 1)
+                    took(c[1])
                 end)
             end
             m:Open()
+            track(m)
         else
             typed()
         end
     end
-    step(1)
+    step(from or 1)
 end
+
+-- The server: a chat command was missing its player (from 0) or arguments.
+Rhylib.Net.Receive("admin.ask", function()
+    local cmd = Admin.byId[net.ReadString()]
+    local from = net.ReadUInt(4)
+    local given = {}
+    for k = 1, net.ReadUInt(4) do given[k] = net.ReadString() end
+    if not cmd then return end
+    local function finish(rest)
+        for _, w in ipairs(rest) do given[#given + 1] = w end
+        Admin.Run(cmd.id, given)
+    end
+    if from == 0 then
+        Admin.PickPlayer(cmd, function(word)
+            given = { word }
+            Admin.AskArgs(cmd, finish, 1)
+        end)
+    else
+        Admin.AskArgs(cmd, finish, from)
+    end
+end)
+
+-- Sounds and decals for everyone (admin.client: 0 play, 1 stop, 2 decals).
+Rhylib.Net.Receive("admin.client", function()
+    local kind = net.ReadUInt(2)
+    local text = net.ReadString()
+    if kind == 0 then
+        surface.PlaySound(text)
+    elseif kind == 1 then
+        RunConsoleCommand("stopsound")
+    elseif kind == 2 then
+        RunConsoleCommand("r_cleardecals")
+        game.RemoveRagdolls()
+    end
+end)
 
 Admin.listCb = Admin.listCb or {}
 function Admin.RequestList(which, arg, cb)

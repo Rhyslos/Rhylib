@@ -203,6 +203,7 @@ end
 Rhylib.Hook.Add("EntityTakeDamage", "medical.down", function(ent, dmg)
     if not ent:IsPlayer() or ent.rhylibDown or not ent:Alive() then return end
     if not Med.Cfg("enabled") then return end
+    if ent.rhylibBuddha then ent.rhylibGoingDown = nil return end   -- (rhylib_admin buddha keeps 1 HP)
     local hp = ent:Health()
     -- +1: the engine rounds fractional damage up, so 99.6 on 100 HP kills.
     if dmg:GetDamage() + 1 < hp then

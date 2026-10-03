@@ -28,6 +28,11 @@ local function getUp(ply)
     if Rhylib.Lying and not ply.rhylibDown then Rhylib.Lying.End(ply) end
 end
 
+-- Ends a stun now (rhylib_admin !free).
+function MP.EndStun(ply)
+    if IsValid(ply) and MP.IsStunned(ply) then getUp(ply) end
+end
+
 -- Collapse for stunTime seconds. by: who stunned them (for logs/hooks).
 function MP.Stun(ply, by)
     if not IsValid(ply) or not ply:Alive() then return end

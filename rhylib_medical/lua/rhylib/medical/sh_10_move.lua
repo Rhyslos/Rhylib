@@ -32,6 +32,8 @@ function Med.ApplyHull(ply, down)
     if down then
         ply:SetHull(HULL_MIN, HULL_MAX)
         ply:SetHullDuck(HULL_MIN, HULL_MAX)
+    elseif Rhylib.Admin and Rhylib.Admin.ScaleHull then
+        Rhylib.Admin.ScaleHull(ply)   -- (keeps an admin !scale size)
     else
         ply:ResetHull()
     end
