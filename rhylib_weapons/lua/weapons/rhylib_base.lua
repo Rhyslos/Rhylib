@@ -306,6 +306,18 @@ function SWEP:TakesMag(id)
     return false
 end
 
+-- The preferred magazine id this owner may load (Heavy feed skips the
+-- Z-6's large ones for others).
+function SWEP:FirstMagFor(owner)
+    local K = skills()
+    if K and K.MagAllowed and IsValid(owner) then
+        for i = 1, #self.Mags do
+            if K.MagAllowed(owner, self, self.Mags[i]) then return self.Mags[i] end
+        end
+    end
+    return self.Mags[1]
+end
+
 -- The loaded magazine type (table from W.MagTypes) or nil.
 function SWEP:GetMag()
     return Rhylib.Weapons.MagByIndex[self:GetMagType()]
@@ -478,9 +490,10 @@ function SWEP:FireShot()
 
     local Spread = Rhylib.Weapons.Spread
     local dir, a = Spread.ShotDirection(self, owner:EyeAngles(), 0)
-    Spread.AddShot(self, Spread.NearestArc(a), now)
-
+    local K = skills()
     local damage = self.Damage * self:GetCellDamageMult()
+    if K and K.ShotDamageMult then damage = damage * K.ShotDamageMult(owner, self) end   -- (First shot, before AddShot)
+    Spread.AddShot(self, Spread.NearestArc(a), now)
     -- Shotguns: Pellets bolts, one round each (fewer when the clip is low).
     local pellets = self.Pellets or 1
     if not self:InfiniteAmmo() then
@@ -488,7 +501,6 @@ function SWEP:FireShot()
         self:TakePrimaryAmmo(pellets)
     end
     if self.UsesCell and not self:InfiniteAmmo() then
-        local K = skills()
         local shots = self.CellShots * (K and K.CellMult and K.CellMult(owner) or 1)
         self:SetCell(math.max(0, self:GetCell() - 1 / shots))
     end
@@ -508,12 +520,14 @@ function SWEP:FireShot()
     end
 
     local origin = owner:GetShootPos()
+    local cone = self.PelletCone or 0
+    if self.Pellets and K and K.PelletConeMult then cone = cone * K.PelletConeMult(owner, self) end   -- (Shotgun drills)
     for i = 1, pellets do
         local d = dir
         if self.Pellets then
             -- Around the shot's own direction (the cone shown when firing).
             local pa = util.SharedRandom("rhylib.pellet.a", 0, 2 * math.pi, i)
-            local off = math.tan(math.rad(self.PelletCone or 0) * math.sqrt(util.SharedRandom("rhylib.pellet.r", 0, 1, i)))
+            local off = math.tan(math.rad(cone) * math.sqrt(util.SharedRandom("rhylib.pellet.r", 0, 1, i)))
             local da = d:Angle()
             d = da:Forward() + da:Right() * (math.cos(pa) * off) - da:Up() * (math.sin(pa) * off)
             d:Normalize()
@@ -628,8 +642,10 @@ if SERVER then
         end
         local full = self:Clip1() >= self:GetMagSize()
 
+        local K = skills()
         local function usable(id)
             if not self:TakesMag(id) or Pouch.Count(owner, id) == 0 then return false end
+            if K and K.MagAllowed and not K.MagAllowed(owner, self, id) then return false end   -- (Heavy feed)
             return not (full and cur and cur.id == id)  -- same type into a full gun does nothing
         end
 
@@ -649,7 +665,21 @@ if SERVER then
 
         if kind == RELOAD_MAG then
             local m = self:ChooseMag(owner, magId)
-            if not m then return end
+            if not m then
+                -- Only magazines this owner may not load (Heavy feed): say so.
+                local K = skills()
+                if self.MagSkills and K and K.MagAllowed and (owner.rhylibMagNote or 0) < CurTime() then
+                    for id, need in pairs(self.MagSkills) do
+                        if W.Pouch.Count(owner, id) > 0 and not K.MagAllowed(owner, self, id) then
+                            owner.rhylibMagNote = CurTime() + 2
+                            local n = K.byId and K.byId[need]
+                            owner:PrintMessage(HUD_PRINTCENTER, "Loading those needs the " .. (n and n.name or need) .. " skill")
+                            break
+                        end
+                    end
+                end
+                return
+            end
             self:SetReloadMag(m.index)
         elseif kind == RELOAD_CELL then
             if not self.UsesCell or (W.Pouch.Count(owner, W.CELL) == 0 and not self:InfiniteAmmo()) then return end
@@ -774,7 +804,7 @@ function SWEP:SetInventoryData(data)
     data = data or {}
     local W = Rhylib.Weapons
     local m = W.MagByIndex[data.mag or 0]
-    if not (m and self:TakesMag(m.id)) then m = W.MagTypes[self.Mags[1]] end
+    if not (m and self:TakesMag(m.id)) then m = W.MagTypes[self:FirstMagFor(self:GetOwner())] end
     if m then self:SetMagType(m.index) end
     self:SetClip1(math.min(data.clip or self:GetMagSize(), self:GetMagSize()))
     if self.UsesCell then self:SetCell(data.cell or 1) end

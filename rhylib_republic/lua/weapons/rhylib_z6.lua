@@ -62,6 +62,7 @@ SWEP.BoltColor = 1
 SWEP.FireSound = "weapons/airboat/airboat_gun_energy2.wav"
 
 SWEP.Mags = { "mag_large", "mag_medium", "mag_small" }
+SWEP.MagSkills = { mag_large = "heavy_feed" }   -- (rhylib_skills: Support > Heavy)
 SWEP.FireModes = { "auto" }
 SWEP.ReloadTime = 3.2
 

@@ -5,14 +5,16 @@
     Data "skills" key "s"..SteamID64 = { n = { ids } }.
     Nets: skills.learn (node index, 8 bits), skills.reset.
     K.SetSkills(ply, set) applies a set (NW2String, save, inventory grids).
-    K.DamageMult(ply, bolt, ent, tr) for rhylib_weapons (Point blank, crits);
+    K.DamageMult(ply, bolt, ent, tr, group) for rhylib_weapons (Point blank,
+    Headhunter, Shotgun drills, crits);
     returns mult, crit.
     K.ExtraGrids(ply) for rhylib_inventory: { [cid] = { w, h } } the
-    player's skills open (Load bearer: the cell rack).
+    player's skills open (Load bearer: the cell rack; Ammo belt).
     On a change: items the player may no longer carry are dropped
-    (droid poppers without Droid popper), Spring legs jump power.
+    (droid poppers without Droid popper), Spring legs jump power,
+    Reinforced max health.
     Damage taken (EntityTakeDamage 95, before armour): Hard landings,
-    Blast hardened, Aerial stability, Under fire, Adrenaline.
+    Blast hardened, Aerial stability, Juggernaut, Under fire, Adrenaline.
     Death from above: OnPlayerHitGround.
 ]]
 
@@ -67,6 +69,10 @@ function K.ExtraGrids(ply)
         local r = K.Cfg("cellRack") or { 5, 2 }
         out[Items.RACK] = { r[1], r[2] }
     end
+    if Items and Items.BELT and K.Stored(ply).ammo_belt then
+        local b = K.Cfg("ammoBelt") or { 5, 1 }
+        out[Items.BELT] = { b[1], b[2] }
+    end
     return out
 end
 
@@ -74,7 +80,7 @@ local function syncGrids(ply)
     local Inv, Items = Rhylib.Inventory, Rhylib.Items
     if not (Inv and Inv.SetGrid and Items and Items.RACK) then return end
     local want = K.ExtraGrids(ply)
-    for _, cid in ipairs({ Items.RACK }) do
+    for _, cid in ipairs({ Items.RACK, Items.BELT }) do
         local g = want[cid]
         Inv.SetGrid(ply, cid, g and g[1] or 0, g and g[2] or 0)
     end
@@ -90,6 +96,21 @@ local function dropForbidden(ply)
         if not Inv.MayHold(ply, o.id) then out[#out + 1] = uid end
     end
     for _, uid in ipairs(out) do Inv.Drop(ply, uid) end
+end
+
+-- Reinforced: max health on top of the job's. Health itself only goes
+-- up with it at spawn (relearning mid-fight doesn't heal).
+local function applyHealth(ply, spawned)
+    local want = K.Has(ply, "reinforced") and K.Cfg("reinforcedHealth") or 0
+    local have = ply.rhylibReinforced or 0
+    if want == have then return end
+    ply.rhylibReinforced = want
+    ply:SetMaxHealth(math.max(1, ply:GetMaxHealth() - have + want))
+    if ply:Alive() and not ply.rhylibDown then
+        local hp = ply:Health()
+        if spawned then hp = hp + math.max(0, want - have) end
+        ply:SetHealth(math.Clamp(hp, 1, ply:GetMaxHealth()))
+    end
 end
 
 -- Spring legs: jump power, applied on top of whatever the job set.
@@ -117,6 +138,7 @@ function K.SetSkills(ply, set)
     syncGrids(ply)
     dropForbidden(ply)
     applyJump(ply)
+    applyHealth(ply)
     -- A gun on a mode its owner lost goes back to its first mode.
     for _, w in ipairs(ply:GetWeapons()) do
         if w.IsRhylib and w.FixFireMode then w:FixFireMode() end
@@ -132,9 +154,16 @@ end)
 -- The spawn sets the job's jump power; ours goes on top a moment later.
 Rhylib.Hook.Add("PlayerSpawn", "skills.spawn", function(ply)
     ply.rhylibSpringBase = nil
+    -- Take Reinforced off now (this runs before the gamemode's spawn, which
+    -- may or may not set max health again); it goes back on just after.
+    if (ply.rhylibReinforced or 0) ~= 0 then
+        ply:SetMaxHealth(math.max(1, ply:GetMaxHealth() - ply.rhylibReinforced))
+        ply.rhylibReinforced = 0
+    end
     timer.Simple(0, function()
         if not IsValid(ply) then return end
         applyJump(ply)
+        applyHealth(ply, true)
         dropForbidden(ply)
     end)
 end)
@@ -186,7 +215,7 @@ Rhylib.Perms.Register("rhylib.skills.admin", "admin", "Reset other players' skil
 -- Damage (called by rhylib_weapons for each bolt hit)
 --------------------------------------------------------------------------
 
-function K.DamageMult(ply, bolt, ent, tr)
+function K.DamageMult(ply, bolt, ent, tr, group)
     if not IsValid(ply) or not ply:IsPlayer() then return 1, false end
     local set = K.Set(ply)
     if next(set) == nil then return 1, false end
@@ -196,6 +225,10 @@ function K.DamageMult(ply, bolt, ent, tr)
         local near, far = K.Cfg("pointBlankNear"), K.Cfg("pointBlankFar")
         local f = d <= near and 1 or (d >= far and 0 or 1 - (d - near) / math.max(far - near, 1))
         m = m * (1 + (K.Cfg("pointBlankMult") - 1) * f)
+    end
+    if set.headhunter and group == HITGROUP_HEAD then m = m * K.Cfg("headhunterMult") end
+    if set.shotgun_drills and IsValid(bolt.weapon) and bolt.weapon:GetClass() == K.DP24 then
+        m = m * K.Cfg("shotgunDamage")
     end
     if set.crits and math.random() < K.Cfg("critChance") then
         m = m * K.Cfg("critMult")
@@ -241,6 +274,7 @@ Rhylib.Hook.Add("EntityTakeDamage", "skills.resist", function(ent, dmg)
             and ent:GetMoveType() == MOVETYPE_WALK then
             m = m * K.Cfg("airMult")
         end
+        if set.juggernaut then m = m * K.Cfg("juggernautMult") end
         if set.under_fire then
             local Med = Rhylib.Medical
             local a = Med and Med.acts and Med.acts[ent]

@@ -287,6 +287,7 @@ Items.BACK = 2
 Items.SLOT_BACK = 3
 Items.EXT = 4
 Items.RACK = 5       -- cell rack (rhylib_skills Load bearer): power cells only
+Items.BELT = 6       -- ammo belt (rhylib_skills Ammo belt): no worn items, no 5-long guns
 Items.CONT_BITS = 3
 
 -- Hotbar: each item can sit in one numbered slot (inst.hb). 4 slots, or
@@ -305,6 +306,7 @@ function Items.ContainerAllows(cid, def)
     if cid == Items.EXT then return true end  -- the storage itself decides (sv_30_storage.lua)
     if cid == Items.BACK then return not def.large and not def.grid end
     if cid == Items.RACK then return def.id == "cell" end
+    if cid == Items.BELT then return not def.grid and not def.slot and not (def.weapon and def.w >= 5) end
     return true
 end
 

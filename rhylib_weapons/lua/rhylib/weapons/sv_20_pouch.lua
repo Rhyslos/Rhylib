@@ -117,7 +117,7 @@ end
 
 -- Gives a weapon's start ammo (testing only, until armouries exist).
 function Pouch.GiveStartAmmo(ply, swep, force)
-    local kind = swep.Mags and swep.Mags[1]
+    local kind = swep.Mags and (swep.FirstMagFor and swep:FirstMagFor(ply) or swep.Mags[1])
     if kind then
         for _ = 1, swep.StartMags or 0 do Pouch.Add(ply, kind, 1, force) end
     end

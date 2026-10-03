@@ -34,7 +34,7 @@ local Inv = Rhylib.Inventory
 local Items = Rhylib.Items
 local Config = Rhylib.Config
 
-local MAIN, BACK, SLOT_BACK, RACK = Items.MAIN, Items.BACK, Items.SLOT_BACK, Items.RACK
+local MAIN, BACK, SLOT_BACK, RACK, BELT = Items.MAIN, Items.BACK, Items.SLOT_BACK, Items.RACK, Items.BELT
 
 Config.Register("inventory", "width", 5, "Personal inventory width in cells")
 Config.Register("inventory", "height", 3, "Personal inventory height in cells")
@@ -238,7 +238,7 @@ end
 -- First free spot for a new item: worn slot if it fits there, then the
 -- main grid, then the backpack.
 local ROTS_SQUARE, ROTS_BOTH = { false }, { false, true }
-local SEARCH = { RACK, MAIN, BACK }   -- (the rack only takes cells)
+local SEARCH = { RACK, MAIN, BACK, BELT }   -- (the rack only takes cells)
 
 local function findSpot(st, id)
     local def = Items.defs[id]
@@ -281,11 +281,17 @@ local function load(ply, st)
                 if Items.defs[id] and Items.CanPlace(st, id, cid, x, y, rot) then
                     local inst = { uid = nextUid(st), id = id, count = count, data = istable(row[6]) and row[6] or {}, hb = tonumber(row[8]) }
                     place(ply, st, inst, cid, x, y, rot)
-                elseif Items.defs[id] and cid == RACK then
-                    -- The rack is gone or smaller (skills reset): anywhere else.
+                elseif Items.defs[id] and (cid == RACK or cid == BELT) then
+                    -- The rack or belt is gone or smaller (skills reset): anywhere else.
                     local c2, x2, y2, r2 = findSpot(st, id)
+                    local data = istable(row[6]) and row[6] or {}
                     if c2 then
-                        place(ply, st, { uid = nextUid(st), id = id, count = count, data = istable(row[6]) and row[6] or {}, hb = tonumber(row[8]) }, c2, x2, y2, r2)
+                        place(ply, st, { uid = nextUid(st), id = id, count = count, data = data, hb = tonumber(row[8]) }, c2, x2, y2, r2)
+                    elseif not data.loadout then
+                        -- No room anywhere: on the ground once they're in.
+                        timer.Simple(2, function()
+                            if IsValid(ply) then Inv.SpawnWorldItem(ply, id, count, data) end
+                        end)
                     end
                 end
             end
@@ -704,7 +710,7 @@ end
 
 local function partials(st)
     local groups, n = {}, 0
-    for _, cid in ipairs({ MAIN, BACK }) do
+    for _, cid in ipairs({ MAIN, BACK, RACK, BELT }) do
         local c = st.cont[cid]
         if c then
             for _, o in pairs(c.items) do
@@ -1020,9 +1026,21 @@ function Inv.SetGrid(ply, cid, w, h)
     st.cont[cid] = nil
     sendDims(ply, st, cid)
     for _, inst in ipairs(moved) do
-        st.byUid[inst.uid] = nil
-        if st.ready then updBatch:Send(ply, { op = OP_REMOVE, uid = inst.uid }) end
-        Inv.AddOrDrop(ply, inst.id, inst.count, inst.data)
+        -- Somewhere else in the inventory: same item, so it keeps its uid,
+        -- hotbar slot and weapon.
+        local c2, x2, y2, r2 = findSpot(st, inst.id)
+        if c2 then
+            inst.c = nil   -- (its old container is gone)
+            place(ply, st, inst, c2, x2, y2, r2)
+        else
+            -- No room: off the player (weapon stripped), onto the ground;
+            -- job loadout gear just goes.
+            captureWeapon(ply, inst)
+            st.cont[cid] = { w = 0, h = 0, items = { [inst.uid] = inst } }
+            removeInst(ply, st, inst.uid)
+            st.cont[cid] = nil
+            if not (inst.data and inst.data.loadout) then Inv.SpawnWorldItem(ply, inst.id, inst.count, inst.data) end
+        end
     end
     changed(ply)
 end

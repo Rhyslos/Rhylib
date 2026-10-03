@@ -125,7 +125,7 @@ local function applyHit(bolt, tr)
     local K = Rhylib.Skills
     if K and K.DamageMult and IsValid(owner) and owner:IsPlayer() then
         local sm
-        sm, crit = K.DamageMult(owner, bolt, ent, tr)
+        sm, crit = K.DamageMult(owner, bolt, ent, tr, group)
         mult = mult * sm
     end
 

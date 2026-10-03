@@ -16,6 +16,9 @@
         K.WeightPenaltyMult(ply)         rhylib_stamina weight penalty
         K.AdjustWeight(ply, state, weight, cap)  rhylib_inventory carry
         K.FreeSprint(ply)                Momentum: sprinting costs nothing
+        K.MagAllowed(ply, wep, magId)    SWEP.MagSkills (Heavy feed: Z-6 large mags)
+        K.PelletConeMult(ply, wep)       shotgun pellet cone (Shotgun drills)
+        K.ShotDamageMult(ply, wep)       per shot, after its spread (First shot)
         K.JetCfg(ply, key, value)        rhylib_jetpack settings per player (Airborne)
         K.Airborne(ply)                  has any Airborne skill
     Numbers are config "skills" values so they can be tuned without code.
@@ -64,10 +67,27 @@ reg("slamSpeed", 500, "Death from above: landing speed needed (units/s)")
 reg("slamRadius", 220, "Death from above: radius (units)")
 reg("slamDamage", 60, "Death from above: damage at the centre (more for faster landings)")
 reg("underFireMult", 0.7, "Under fire: damage multiplier while reviving or treating")
+reg("stanceSpread", 0.8, "Steady stance: spread multiplier while crouched")
+reg("steadyAimSpread", 0.75, "Steady aim: spread multiplier while aiming")
+reg("headhunterMult", 1.25, "Headhunter: headshot damage multiplier")
+reg("boltDrillsRate", 1.2, "Bolt drills: DC-15X fire rate multiplier")
+reg("lightFrameWeight", 0.5, "Light frame: DC-15X weight multiplier")
+reg("firstShotWait", 3, "First shot: seconds without firing before it's ready")
+reg("firstShotMult", 1.5, "First shot: damage multiplier")
+reg("firstShotSpread", 0.05, "First shot: spread multiplier")
+reg("reinforcedHealth", 25, "Reinforced: extra max health")
+reg("plantedMult", 0.5, "Planted: Z-6 spread and kick multiplier while crouched")
+reg("ammoBelt", { 5, 1 }, "Ammo belt: size in inventory cells")
+reg("shotgunDamage", 1.3, "Shotgun drills: DP-24 pellet damage multiplier")
+reg("shotgunCone", 0.8, "Shotgun drills: DP-24 pellet cone multiplier")
+reg("sidearmWeight", 0.5, "Shotgun drills: weight multiplier for guns 4 cells long or shorter")
+reg("juggernautMult", 0.85, "Juggernaut: damage multiplier")
 
 local function cfg(k) return Config.Get("skills", k) end
 
 K.Z6 = "rhylib_z6"
+K.DC15X = "rhylib_dc15x"
+K.DP24 = "rhylib_dp24"
 K.PISTOLS = { rhylib_dc17 = true, rhylib_dc17_stun = true }
 
 local function isPly(p) return IsValid(p) and p:IsPlayer() end
@@ -101,11 +121,49 @@ function K.SpreadMult(ply, wep)
     if steady then m = m * cfg("steadySpread") end
     if set.run_gun and not steady and sprinting(ply, wep) then m = m * cfg("runGunSpread") end
     if set.pistol_prof and K.PISTOLS[class] then m = m * cfg("pistolSpread") end
+    local crouched = ply:Crouching()
+    if set.steady_stance and crouched then m = m * cfg("stanceSpread") end
+    if set.planted and crouched and class == K.Z6 then m = m * cfg("plantedMult") end
+    local aiming = wep.GetAiming and wep:GetAiming()
+    if set.steady_aim and aiming then m = m * cfg("steadyAimSpread") end
+    if set.first_shot and K.FirstShotReady(ply, wep) then m = m * cfg("firstShotSpread") end
     return m
 end
 
 function K.RecoilMult(ply, wep)
-    if isPly(ply) and wep:GetClass() == K.Z6 and K.Has(ply, "steady_barrels") then return cfg("steadyRecoil") end
+    if not isPly(ply) then return 1 end
+    local m = 1
+    if wep:GetClass() == K.Z6 then
+        if K.Has(ply, "steady_barrels") then m = m * cfg("steadyRecoil") end
+        if K.Has(ply, "planted") and ply:Crouching() then m = m * cfg("plantedMult") end
+    end
+    return m
+end
+
+-- First shot: aiming a single-bolt gun, and nothing fired from it for a
+-- while (the predicted KickTime, so client and server agree).
+function K.FirstShotReady(ply, wep)
+    if wep.Pellets or not (wep.GetAiming and wep:GetAiming() and wep.GetKickTime) then return false end
+    if not K.Has(ply, "first_shot") then return false end
+    return CurTime() - wep:GetKickTime() >= cfg("firstShotWait")
+end
+
+-- Called by the weapon base for each shot, before the shot is recorded:
+-- damage multiplier for this shot.
+function K.ShotDamageMult(ply, wep)
+    if isPly(ply) and K.FirstShotReady(ply, wep) then return cfg("firstShotMult") end
+    return 1
+end
+
+-- Heavy feed: SWEP.MagSkills = { [magId] = skill }.
+function K.MagAllowed(ply, wep, magId)
+    local need = wep.MagSkills and wep.MagSkills[magId]
+    if not need then return true end
+    return isPly(ply) and K.Has(ply, need)
+end
+
+function K.PelletConeMult(ply, wep)
+    if wep:GetClass() == K.DP24 and isPly(ply) and K.Has(ply, "shotgun_drills") then return cfg("shotgunCone") end
     return 1
 end
 
@@ -113,6 +171,7 @@ function K.FireRateMult(ply, wep, mode)
     if not isPly(ply) then return 1 end
     local m = 1
     if K.PISTOLS[wep:GetClass()] and K.Has(ply, "pistol_prof") then m = m * cfg("pistolRate") end
+    if wep:GetClass() == K.DC15X and K.Has(ply, "bolt_drills") then m = m * cfg("boltDrillsRate") end
     if wep:GetClass() == "rhylib_dc15s" and wep.FireRate and K.Has(ply, "rapid_fire") then
         m = m * cfg("rapidFireRPM") / wep.FireRate
     end
@@ -153,20 +212,40 @@ function K.WeightPenaltyMult(ply)
     return 1
 end
 
+-- Rhylib blasters only (not kits, grenades, tools); cached per class.
+local gunCache = {}
+local function isGun(class)
+    local v = gunCache[class]
+    if v == nil then
+        local t = weapons.Get(class)
+        v = t and t.IsRhylib and t.Mags ~= nil and not t.Stun or false
+        gunCache[class] = v
+    end
+    return v
+end
+
 -- Carry: Load bearer raises the limit; Gun runner halves the Z-6's weight.
 -- state is the inventory state ({ cont = { [cid] = { items } } }).
 function K.AdjustWeight(ply, state, weight, cap)
     if not isPly(ply) then return weight, cap end
     local set = K.Set(ply)
     if set.load_bearer then cap = cap + cfg("loadBearerCarry") end
-    if set.gun_runner then
+    if set.gun_runner or set.light_frame or set.shotgun_drills then
         local Items = Rhylib.Items
-        local def = Items and Items.defs and Items.defs[K.Z6]
-        if def and def.weight then
-            for cid, c in pairs(state.cont or {}) do
-                if cid ~= Items.EXT then
-                    for _, o in pairs(c.items) do
-                        if o.id == K.Z6 then weight = weight - def.weight * (1 - cfg("gunRunnerWeight")) * (o.count or 1) end
+        if not (Items and Items.defs) then return weight, cap end
+        for cid, c in pairs(state.cont or {}) do
+            if cid ~= Items.EXT then
+                for _, o in pairs(c.items) do
+                    local def = Items.defs[o.id]
+                    if def and def.weight and def.weapon then
+                        -- The lightest that applies (they don't stack).
+                        local mult = 1
+                        if set.gun_runner and o.id == K.Z6 then mult = math.min(mult, cfg("gunRunnerWeight")) end
+                        if set.light_frame and o.id == K.DC15X then mult = math.min(mult, cfg("lightFrameWeight")) end
+                        if set.shotgun_drills and def.w <= 4 and isGun(def.weapon) then mult = math.min(mult, cfg("sidearmWeight")) end
+                        -- (backpack contents count at 0.7 in Items.Weight)
+                        local share = cid == Items.BACK and 0.7 or 1
+                        if mult < 1 then weight = weight - def.weight * (1 - mult) * (o.count or 1) * share end
                     end
                 end
             end

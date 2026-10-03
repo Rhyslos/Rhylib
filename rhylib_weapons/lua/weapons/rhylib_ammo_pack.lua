@@ -154,7 +154,7 @@ if SERVER then
         end
 
         -- 3. New magazines of the best type, up to Spares.
-        local best = gun.Mags[1]
+        local best = gun.FirstMagFor and gun:FirstMagFor(t) or gun.Mags[1]
         if best and takes[best] then
             local rounds = W.MagTypes[best].rounds
             local have = Inv.Count(t, best)

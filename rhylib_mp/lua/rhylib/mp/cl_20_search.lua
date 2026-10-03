@@ -6,7 +6,7 @@
 
 local MP = Rhylib.MP
 
-local CONT_NAMES = { [1] = "Carried", [2] = "Backpack", [3] = "Back slot" }
+local CONT_NAMES = { [1] = "Carried", [2] = "Backpack", [3] = "Back slot", [5] = "Cell rack", [6] = "Ammo belt" }
 
 function MP.OpenSearch(target)
     Rhylib.Net.Start("mp.search")
