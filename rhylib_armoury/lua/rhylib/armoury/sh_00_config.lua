@@ -53,7 +53,7 @@ A.CLASSES = {
 }
 A.CRATES = { "rhylib_crate_small", "rhylib_crate_medium", "rhylib_crate_large", "rhylib_med_crate" }
 
-A.AMMO_STOCK = { "mag_small", "mag_medium", "mag_large", "cell", "rocket", "grapple" }
+A.AMMO_STOCK = { "mag_small", "mag_medium", "mag_large", "cell", "rocket", "grapple", "rhylib_thermal", "rhylib_droidpopper", "rhylib_ammo_pack" }
 
 local Config = Rhylib.Config
 Config.Register("armoury", "weapons", {}, "Weapon classes in the armoury, in order. Empty = every Rhylib weapon")
@@ -65,6 +65,8 @@ Config.Register("armoury", "crateH", 4, "Supply crate height in cells")
 Config.Register("armoury", "medCrate", {
     { "rhylib_medkit", 10 }, { "rhylib_firstaid", 2 }, { "rhylib_revivekit", 3 },
     { "rhylib_antiviral", 2 }, { "rhylib_antidote", 2 }, { "rhylib_antibiotics", 2 },
+    { "rhylib_splint", 4 }, { "rhylib_burngel", 3 }, { "rhylib_painkiller", 4 }, { "rhylib_bactastim", 4 },
+    { "rhylib_bloodpack", 2 }, { "rhylib_med_supplies", 10 },
 }, "What a medical crate is filled with: { item, count }")
 
 -- Everyone has the "trooper" role; mp / medic come from the DarkRP job
@@ -73,7 +75,8 @@ Config.Register("armoury", "medCrate", {
 Config.Register("armoury", "roles", {
     trooper = { weapons = {}, gear = { "sw_datapad" } },
     mp = { weapons = { "rhylib_dc17_stun", "rhylib_dc15s_stun" }, gear = { "rhylib_stunbaton", "rhylib_handcuffs" } },
-    medic = { weapons = {}, gear = { "rhylib_medkit", "rhylib_firstaid", "rhylib_revivekit", "rhylib_antiviral", "rhylib_antidote", "rhylib_antibiotics" } },
+    medic = { weapons = {}, gear = { "rhylib_medkit", "rhylib_firstaid", "rhylib_revivekit", "rhylib_antiviral", "rhylib_antidote", "rhylib_antibiotics",
+        "rhylib_med_supplies" } },
 }, "Specialist armoury stock per role: { weapons = {...}, gear = {...} }")
 
 -- Role names a player has, sorted (so the same set always gives the same key).

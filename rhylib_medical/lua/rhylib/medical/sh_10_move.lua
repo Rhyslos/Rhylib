@@ -11,7 +11,8 @@
              players don't collide with other players (collision group).
     Helpers: no shooting while doing an action; stabilising and treating
              lock you in place, and pressing a move key, Jump or E stops.
-    Dragger: capped at dragSpeed, no sprint; letting go of attack drops.
+    Dragger: capped at dragSpeed (Field drag: dragSpeedSkill), no sprint;
+    letting go of attack drops.
 ]]
 
 local Med = Rhylib.Medical
@@ -115,7 +116,7 @@ Rhylib.Hook.Add("SetupMove", "medical.move", function(ply, mv, cmd)
 
     local dragging = Med.Dragging(ply)
     if dragging then
-        mv:SetMaxClientSpeed(math.min(mv:GetMaxClientSpeed(), Med.Cfg("dragSpeed")))
+        mv:SetMaxClientSpeed(math.min(mv:GetMaxClientSpeed(), Med.DragSpeed(ply)))
         if SERVER and (not mv:KeyDown(IN_ATTACK) or not Med.HoldingHands(ply)) then
             Med.StopDrag(ply)
         end

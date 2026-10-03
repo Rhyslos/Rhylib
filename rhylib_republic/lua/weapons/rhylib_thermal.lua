@@ -6,3 +6,4 @@ SWEP.Category = "Rhylib: Republic"
 SWEP.Spawnable = true
 SWEP.GrenadeKind = "fuse"
 SWEP.FuseTime = 3
+SWEP.ImpactMode = true   -- E + R switches between timed and impact

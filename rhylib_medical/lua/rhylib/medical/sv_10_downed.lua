@@ -87,6 +87,7 @@ function Med.Down(ply, attacker, inflictor)
     if J and J.DT_THRUST and ply:GetDTBool(J.DT_THRUST) then ply:SetDTBool(J.DT_THRUST, false) end
     Med.Cancel(ply)
     Med.StopDrag(ply)
+    if Med.TankExit and ply.rhylibTank then Med.TankExit(ply) end   -- (out of the bacta tank first)
     if Rhylib.Inventory and Rhylib.Inventory.Stow then Rhylib.Inventory.Stow(ply) end
 
     ply:SetHealth(Med.Cfg("downHealth"))

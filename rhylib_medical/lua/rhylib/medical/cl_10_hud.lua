@@ -168,8 +168,11 @@ local function drawPrompt(ply)
     text(str, 14, W / 2, H * 0.5 + S(60), C.text)
 end
 
+local COL_URGENT = Color(235, 80, 70)
+
 local function drawMarkers(ply)
-    local range = Med.Cfg("markerRange")
+    local triage = Med.Skill(ply, "triage")
+    local range = Med.Cfg("markerRange") * (triage and 2 or 1)
     local eye = ply:EyePos()
     local s = S(1)
     for _, t in ipairs(Med.clientDown) do
@@ -181,11 +184,25 @@ local function drawMarkers(ply)
                 if sp.visible then
                     local x, y = math.floor(sp.x), math.floor(sp.y)
                     local r, th = 7 * s, 2 * s
-                    surface.SetDrawColor(COL_MARK)
+                    local left = Med.TimeLeft(t)
+                    -- Triage: flashes when time runs short.
+                    local urgent = triage and left < Med.Cfg("triageFlash") and not Med.StabilisedBy(t)
+                        and math.floor(RealTime() * 3) % 2 == 0
+                    surface.SetDrawColor(urgent and COL_URGENT or COL_MARK)
                     surface.DrawRect(x - r, y - th, r * 2, th * 2)
                     surface.DrawRect(x - th, y - r, th * 2, r * 2)
-                    local status = Med.StabilisedBy(t) and "stabilised" or clock(Med.TimeLeft(t))
+                    local status = Med.StabilisedBy(t) and "stabilised" or clock(left)
                     text(math.floor(dist * 0.019) .. " m · " .. status, 12, x, y + 14 * s, C.text)
+                    if triage then
+                        local by = t:GetNW2Entity("rhylib_healBy")
+                        local stab = Med.StabilisedBy(t)
+                        local who = IsValid(by) and by or stab
+                        if IsValid(who) then
+                            text((IsValid(by) and "with " or "held by ") .. who:Nick(), 11, x, y + 28 * s, C.textDim)
+                        else
+                            text(clock(left) .. " left · nobody with them", 11, x, y + 28 * s, urgent and COL_URGENT or C.textDim)
+                        end
+                    end
                 end
             end
         end
@@ -231,6 +248,17 @@ end
 
 local openM
 
+-- How many of an item the local player carries (rhylib_inventory).
+local function carried(id)
+    local Inv = Rhylib.Inventory
+    if not (Inv and Inv.byUid) then return 0 end
+    local n = 0
+    for _, o in pairs(Inv.byUid) do
+        if o.id == id then n = n + (o.count or 1) end
+    end
+    return n
+end
+
 local function openMenu(ply, t)
     local Menus = Rhylib.Menus
     if Menus and Menus.RegisterCloser and not Med.closerAdded then
@@ -259,8 +287,17 @@ local function openMenu(ply, t)
             m:AddOption("Revive · first aid kit (slow, uses charge)", function() if IsValid(t) then send(Med.A_FA_REVIVE, t) end end)
             any = true
         end
-        if not ply:HasWeapon(Med.REVIVE_KIT) and not ply:HasWeapon(Med.FIRST_AID) then
+        local hands = Med.Skill(ply, "hands_on")
+        if hands then
+            m:AddOption("Revive · hands-on (very slow, no kit)", function() if IsValid(t) then send(Med.A_HAND_REVIVE, t) end end)
+            any = true
+        end
+        if not hands and not ply:HasWeapon(Med.REVIVE_KIT) and not ply:HasWeapon(Med.FIRST_AID) then
             m:AddOption("No revive kit or first aid kit", function() end)
+            any = true
+        end
+        if carried(Med.BLOOD_PACK) > 0 then
+            m:AddOption("Blood pack (+" .. Med.Cfg("bloodPackAdd") .. " s bleed-out)", function() if IsValid(t) then send(Med.A_BLOOD, t) end end)
             any = true
         end
     end

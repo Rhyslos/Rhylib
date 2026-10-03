@@ -375,6 +375,10 @@ function Inv.Take(ply, suid, cid, x, y, rot, single)
         Inv.Note(ply, "You already carry one")
         return
     end
+    if not Inv.MayHold(ply, so.id) then
+        Inv.Note(ply, Inv.HoldReason(so.id))
+        return
+    end
 
     local depot = storage.kind == "depot"
     local n = single and 1 or so.count

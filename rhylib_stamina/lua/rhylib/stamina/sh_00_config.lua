@@ -98,6 +98,8 @@ end
 function S.Penalty(ply)
     local load, pack = S.Load(ply)
     local maxPen = pack and cfg("maxPenaltyPack") or cfg("maxPenalty")
+    local K = Rhylib.Skills
+    if K and K.WeightPenaltyMult then maxPen = maxPen * K.WeightPenaltyMult(ply) end   -- (Load bearer)
     return maxPen * math.min(load, 1) ^ cfg("penaltyCurve"), load > 1
 end
 

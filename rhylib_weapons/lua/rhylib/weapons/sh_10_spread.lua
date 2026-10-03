@@ -74,16 +74,23 @@ function Spread.GetState(wep, t)
     return b * bd, k1 * kd, k2 * kd, k3 * kd
 end
 
+-- Skills (rhylib_skills): sprint-firing, Z-6 and pistol handling.
+function Spread.SkillMult(wep)
+    local K = Rhylib.Skills
+    if not (K and K.SpreadMult) then return 1 end
+    return K.SpreadMult(wep:GetOwner(), wep)
+end
+
 -- Resting cone size (the arc radius).
 function Spread.BaseCone(wep)
-    return wep:GetAiming() and wep.Spread.aim or wep.Spread.hip
+    return (wep:GetAiming() and wep.Spread.aim or wep.Spread.hip) * Spread.SkillMult(wep)
 end
 
 -- How far each arc has moved outward, in degrees. Low stamina (with
 -- rhylib_stamina) pushes all three arcs out evenly.
 function Spread.Offsets(wep, t)
     local bloom, k1, k2, k3 = Spread.GetState(wep, t)
-    local m = wep:GetAiming() and wep.Spread.aimOffsetMult or 1
+    local m = (wep:GetAiming() and wep.Spread.aimOffsetMult or 1) * Spread.SkillMult(wep)
     local tired = 0
     local S = Rhylib.Stamina
     local owner = wep:GetOwner()

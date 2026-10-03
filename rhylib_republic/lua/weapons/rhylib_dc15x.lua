@@ -87,5 +87,6 @@ SWEP.Spread = {
 }
 
 SWEP.Scope = true
+SWEP.ScopeSkill = "long_gun"                 -- (rhylib_skills: Marksman; others aim it like a rifle)
 SWEP.AimPos = Vector(-2.5, 0, 1)
 SWEP.AimFov = 0.18           -- about x5.5

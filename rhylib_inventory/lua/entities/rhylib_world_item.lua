@@ -66,8 +66,11 @@ if SERVER then
             ply:EmitSound("items/ammo_pickup.wav", 60)
         else
             local def = Rhylib.Items.Get(self.itemId)
-            local dupe = Rhylib.Items.Unique(def) and Rhylib.Inventory.Has(ply, self.itemId)
-            ply:PrintMessage(HUD_PRINTCENTER, dupe and "You already carry one" or "No room in your inventory")
+            local Inv = Rhylib.Inventory
+            local dupe = Rhylib.Items.Unique(def) and Inv.Has(ply, self.itemId)
+            local text = dupe and "You already carry one" or "No room in your inventory"
+            if Inv.MayHold and not Inv.MayHold(ply, self.itemId) then text = Inv.HoldReason(self.itemId) end
+            ply:PrintMessage(HUD_PRINTCENTER, text)
         end
     end
 end

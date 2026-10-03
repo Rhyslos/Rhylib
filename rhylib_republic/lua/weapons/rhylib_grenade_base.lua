@@ -3,6 +3,9 @@
     throws hard, RMB lobs short. Each throw uses one from the inventory
     (none in rhylib_infammo test mode) and spawns rhylib_grenade.
 
+    SWEP.ImpactMode = true: E + R switches it between timed (fuse) and
+    impact; the choice is the player's NW2Bool rhylib_nadeImpact.
+    SWEP.RequiresSkill: a skill (rhylib_skills) needed to throw it.
     SWEP.GrenadeKind: "fuse" (explodes FuseTime after the throw), "impact"
     (explodes on the first hit) or "emp" (fuse; kills Rhylib droids in
     range, harmless to everything else). Blast numbers are on the entity.
@@ -66,8 +69,29 @@ function SWEP:Deploy()
     return true
 end
 
+-- Impact mode on (E + R, for ImpactMode grenades)?
+function SWEP:IsImpact()
+    local o = self:GetOwner()
+    return self.ImpactMode and IsValid(o) and o:GetNW2Bool("rhylib_nadeImpact") or false
+end
+
+-- May the owner throw it (SWEP.RequiresSkill)?
+function SWEP:SkillOK()
+    local K = Rhylib.Skills
+    if not (self.RequiresSkill and K and K.Has) then return true end
+    return K.Has(self:GetOwner(), self.RequiresSkill)
+end
+
 -- The next grenade comes up after a throw.
 function SWEP:Think()
+    -- E + R: timed / impact.
+    local o = self:GetOwner()
+    if SERVER and self.ImpactMode and IsValid(o) and o:KeyPressed(IN_RELOAD) and o:KeyDown(IN_USE) then
+        local on = not o:GetNW2Bool("rhylib_nadeImpact")
+        o:SetNW2Bool("rhylib_nadeImpact", on)
+        o:EmitSound("weapons/smg1/switch_single.wav", 60)
+        o:ChatPrint(on and "Thermal detonator: impact" or "Thermal detonator: timed (" .. self.FuseTime .. " s)")
+    end
     if self:GetNeedDraw() and CurTime() >= self:GetLastThrow() + self.RedrawTime then
         self:SetNeedDraw(false)
         self:SendWeaponAnim(ACT_VM_DRAW)
@@ -87,6 +111,12 @@ function SWEP:SecondaryAttack() self:Throw(self.LobForce, 0.25) end
 function SWEP:Throw(force, lift)
     local o = self:GetOwner()
     if not IsValid(o) or not o:IsPlayer() then return end
+    if not self:SkillOK() then
+        self:SetNextPrimaryFire(CurTime() + 1)
+        self:SetNextSecondaryFire(CurTime() + 1)
+        if SERVER then o:ChatPrint("You need the " .. (self.SkillName or "right") .. " skill to throw this") end
+        return
+    end
     self:SetNextPrimaryFire(CurTime() + self.ThrowDelay)
     self:SetNextSecondaryFire(CurTime() + self.ThrowDelay)
     self:SetLastThrow(CurTime())
@@ -105,11 +135,12 @@ function SWEP:Throw(force, lift)
     if not IsValid(g) then return end
     g:SetPos(pos)
     g:SetAngles(ang)
-    g.kind = self.GrenadeKind
+    g.kind = self:IsImpact() and "impact" or self.GrenadeKind
     g.fuse = self.FuseTime
     g.thrower = o
     g:SetOwner(o)
-    if self.PropColor then g:SetColor(self.PropColor) end
+    local tint = self:IsImpact() and (self.ImpactColor or Color(255, 190, 150)) or self.PropColor
+    if tint then g:SetColor(tint) end
     g:Spawn()
     local phys = g:GetPhysicsObject()
     if IsValid(phys) then
@@ -138,6 +169,23 @@ function SWEP:UseOne(o)
 end
 
 if CLIENT then
+    local IMPACT_TINT = Color(255, 190, 150)
+    local WHITE = Color(255, 255, 255)
+
+    -- Mode under the crosshair (thermal: timed / impact; locked grenades).
+    function SWEP:DrawHUD()
+        local text
+        if not self:SkillOK() then
+            text = "Needs the " .. (self.SkillName or "right") .. " skill"
+        elseif self.ImpactMode then
+            text = self:IsImpact() and "IMPACT  ·  E + R" or ("TIMED " .. self.FuseTime .. " S  ·  E + R")
+        end
+        if not text then return end
+        local font = Rhylib.UI and Rhylib.UI.Font and Rhylib.UI.Font(13, 700) or "DermaDefaultBold"
+        draw.SimpleTextOutlined(text, font, ScrW() * 0.5, ScrH() * 0.5 + ScrH() * 0.05, Color(225, 225, 225, 220),
+            TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER, 1, Color(0, 0, 0, 160))
+    end
+
     -- Model centre in its own coordinates (the thermal's origin is off to
     -- one side), per model.
     local centres = {}
@@ -165,9 +213,11 @@ if CLIENT then
             e = ClientsideModel(self.PropModel, RENDERGROUP_OPAQUE)
             if not IsValid(e) then return nil end
             e:SetNoDraw(true)
-            if self.PropColor then e:SetColor(self.PropColor) end
             self[key] = e
         end
+        -- Impact mode shows as a warmer tint.
+        local tint = self:IsImpact() and (self.ImpactColor or IMPACT_TINT) or self.PropColor or WHITE
+        if e.rhylibTint ~= tint then e:SetColor(tint) e.rhylibTint = tint end
         sc = sc or self.PropScale or 1
         if e.rhylibScale ~= sc then e:SetModelScale(sc, 0) e.rhylibScale = sc end
         return e

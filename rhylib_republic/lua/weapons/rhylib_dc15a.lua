@@ -75,7 +75,8 @@ SWEP.FireSound = "weapons/airboat/airboat_gun_energy2.wav"
 SWEP.Mags = { "mag_medium", "mag_small" }
 
 SWEP.Grapple = true     -- grapple fire mode while carrying a grapple hook
-SWEP.FireModes = { "semi" }
+SWEP.FireModes = { "semi", "auto" }
+SWEP.SkillModes = { auto = "full_auto" }     -- (rhylib_skills: Autorifleman)
 
 SWEP.UsesCell = true
 SWEP.CellShots = 500

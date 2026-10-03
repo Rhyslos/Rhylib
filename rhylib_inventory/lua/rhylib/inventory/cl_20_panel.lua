@@ -25,7 +25,7 @@ local Inv = Rhylib.Inventory
 local Items = Rhylib.Items
 local UI = Rhylib.UI
 
-local MAIN, BACK, SLOT_BACK, EXT = Items.MAIN, Items.BACK, Items.SLOT_BACK, Items.EXT
+local MAIN, BACK, SLOT_BACK, EXT, RACK = Items.MAIN, Items.BACK, Items.SLOT_BACK, Items.EXT, Items.RACK
 
 local keyVar = CreateClientConVar("rhylib_inventory_key", "i", true, false, "Key that opens the Rhylib inventory")
 local sizeVar = CreateClientConVar("rhylib_inventory_cellsize", "100", true, false, "Inventory cell size in pixels at 1080p (48-128); everything else scales with it. Reopen the inventory to apply.")
@@ -196,9 +196,9 @@ function PANEL:SpanPx(n)
 end
 
 function PANEL:LayoutKey()
-    local m, b, e = Inv.cont[MAIN], Inv.cont[BACK], Inv.cont[EXT]
+    local m, b, e, r = Inv.cont[MAIN], Inv.cont[BACK], Inv.cont[EXT], Inv.cont[RACK]
     return (m and (m.w .. "x" .. m.h) or "-") .. "|" .. (b and (b.w .. "x" .. b.h) or "-")
-        .. "|" .. (e and (e.w .. "x" .. e.h) or "-")
+        .. "|" .. (e and (e.w .. "x" .. e.h) or "-") .. "|" .. (r and (r.w .. "x" .. r.h) or "-")
 end
 
 -- Works out where every region sits and sizes the window.
@@ -227,6 +227,13 @@ function PANEL:Relayout()
         self.regions[#self.regions + 1] = { cid = BACK, x = gridX, y = top + gridsH, gw = back.w, gh = back.h }
         gridsH = gridsH + self:SpanPx(back.h)
         gridsW = math.max(gridsW, self:SpanPx(back.w))
+    end
+    -- The cell rack (rhylib_skills Load bearer), under the backpack.
+    local rack = Inv.cont[RACK]
+    if rack then
+        self.regions[#self.regions + 1] = { cid = RACK, x = gridX, y = top + gridsH + label, gw = rack.w, gh = rack.h, title = "Cell rack" }
+        gridsH = gridsH + label + self:SpanPx(rack.h)
+        gridsW = math.max(gridsW, self:SpanPx(rack.w))
     end
     self.rightX = gridX
 
@@ -386,7 +393,7 @@ function PANEL:PaintRegion(r, dragUid)
             draw.SimpleText("Empty", self:Font(14), r.x + r.pw * 0.5, r.y + r.ph * 0.5, UI.Colors.textDim, TEXT_ALIGN_CENTER, TEXT_ALIGN_CENTER)
         end
     else
-        local isBack, isExt = r.cid == BACK, r.cid == EXT
+        local isBack, isExt = r.cid == BACK or r.cid == RACK, r.cid == EXT
         local cellCol = isExt and COL_EXT_CELL or (isBack and COL_BACK_CELL or COL_CELL)
         local borderCol = isExt and COL_EXT_BORDER or (isBack and COL_BACK_BORDER or COL_BORDER)
         for y = 0, r.gh - 1 do
@@ -402,6 +409,8 @@ function PANEL:PaintRegion(r, dragUid)
             label(self, Inv.ext.title, r.x, r.y - self.label * 0.5, TEXT_ALIGN_LEFT, UI.Colors.text)
         elseif r.cid == MAIN then
             label(self, "Carried", r.x, r.y - self.label * 0.5)
+        elseif r.cid == RACK then
+            label(self, "Cell rack · power cells only", r.x, r.y - self.label * 0.5)
         end
         ticks(r.x - 3, r.y - 3, self:SpanPx(r.gw) + 6, self:SpanPx(r.gh) + 6, self.s)
     end
@@ -528,6 +537,8 @@ local COL_TRACK = Color(255, 255, 255, 28)
 function PANEL:PaintWeight(pw)
     local s = self.s
     local weight, cap = Items.Weight(Inv)
+    local K = Rhylib.Skills
+    if K and K.AdjustWeight then weight, cap = K.AdjustWeight(LocalPlayer(), Inv, weight, cap) end
     local over = weight > cap
     local frac = math.min(weight / cap, 1)
     local col = over and UI.Colors.bad or (frac > 0.8 and UI.Colors.warn or UI.Colors.text)

@@ -56,7 +56,14 @@ SWEP.FireSound = "weapons/airboat/airboat_gun_energy1.wav"
 
 SWEP.Mags = { "mag_small" }
 SWEP.Grapple = true     -- grapple fire mode while carrying a grapple hook
-SWEP.FireModes = { "semi" }
+SWEP.FireModes = { "semi", "dual" }
+SWEP.SkillModes = { dual = "dual_dc17" }     -- (rhylib_skills: Officer)
+SWEP.DualHoldType = "duel"
+-- Dual: the second pistol (first guesses, tune in game).
+SWEP.DualPropVMPos = Vector(14, -9, -6)      -- floating at the left of the view
+SWEP.DualPropVMAng = Angle(0, 0, 0)
+SWEP.DualPropWMPos = Vector(3, 1.5, -1)      -- left hand
+SWEP.DualPropWMAng = Angle(0, 0, 180)
 
 SWEP.UsesCell = false
 SWEP.StartMags = 4

@@ -76,6 +76,13 @@ SWEP.SprintRaiseTime = 0.25         -- seconds after sprinting before the gun ca
 SWEP.Grapple = false                -- true: gets a "grapple" fire mode while you carry a grapple hook
 SWEP.BurstCount = 3
 SWEP.BurstDelay = 0.25              -- extra pause after a burst
+SWEP.BurstFireRate = nil            -- rounds per minute inside a burst (nil = FireRate)
+SWEP.SkillModes = nil               -- { [mode] = skill id }: modes that need a skill (rhylib_skills)
+SWEP.DualHoldType = nil             -- hold type for the "dual" fire mode
+SWEP.DualPropVMPos = nil            -- "dual" mode: a second prop floating at the left (forward, right, up)
+SWEP.DualPropVMAng = Angle(0, 0, 0)
+SWEP.DualPropWMPos = nil            -- "dual" mode: a second prop on the left hand (forward, right, up)
+SWEP.DualPropWMAng = Angle(0, 0, 0)
 
 -- Magazine types this gun takes, preferred first (ids from W.MagTypes).
 SWEP.Mags = { "mag_small" }
@@ -126,6 +133,7 @@ SWEP.Spread = {
 SWEP.AimPos = Vector(-2, 0, 1)      -- viewmodel offset when aiming (right, forward, up)
 SWEP.AimFov = 0.85                  -- FOV multiplier when aiming
 SWEP.Scope = nil                    -- true: aiming looks through a scope (gun hidden, AimFov zoom, scope overlay)
+SWEP.ScopeSkill = nil               -- skill needed to use the scope (rhylib_skills); without it, a normal aim
 SWEP.ClipCap = nil                  -- most rounds loaded from one magazine (the rest stays in it)
 SWEP.Pellets = nil                  -- bolts per shot (shotguns), each uses one round
 SWEP.PelletCone = 0                 -- extra spread of the pellets, degrees
@@ -192,7 +200,23 @@ function SWEP:SetupDataTables()
     -- Lowered hold on every client as soon as safety or sprinting changes.
     self:NetworkVarNotify("Safety", self.OnLoweredChanged)
     self:NetworkVarNotify("Lowered", self.OnLoweredChanged)
+    self:NetworkVarNotify("FireMode", self.OnFireModeChanged)
 end
+
+-- Hold type for the current fire mode (dual pistols hold both).
+function SWEP:ActiveHoldType(modeIndex)
+    local m = modeIndex or self:GetFireMode()
+    if self.DualHoldType and self.FireModes[m] == "dual" then return self.DualHoldType end
+    return self.HoldType
+end
+
+function SWEP:OnFireModeChanged(_, _, new)
+    if self:IsLowered() then return end
+    self:SetHoldType(self:ActiveHoldType(new))
+end
+
+-- rhylib_skills (nil without it: nothing is gated).
+local function skills() return Rhylib.Skills end
 
 -- Safety on, or lowered while sprinting: gun down, can't fire or aim.
 function SWEP:IsLowered()
@@ -203,7 +227,7 @@ end
 function SWEP:OnLoweredChanged(name, _, on)
     local safety = name == "Safety" and on or (name ~= "Safety" and self:GetSafety())
     local lowered = name == "Lowered" and on or (name ~= "Lowered" and self:GetLowered())
-    self:SetHoldType((safety or lowered) and "passive" or self.HoldType)
+    self:SetHoldType((safety or lowered) and "passive" or self:ActiveHoldType())
 end
 
 -- Test mode (rhylib_infammo, admins): firing uses nothing, reloads are free.
@@ -226,7 +250,7 @@ function SWEP:Initialize()
         self.CarrierFOV = self.ViewModelFOV
         self.rhylibCarrier = true
     end
-    self:SetHoldType(self:IsLowered() and "passive" or self.HoldType)
+    self:SetHoldType(self:IsLowered() and "passive" or self:ActiveHoldType())
     if self.UsesCell then self:SetCell(1) end
     if self:GetFireMode() == 0 then self:SetFireMode(1) end
     if self:GetMagType() == 0 then
@@ -240,7 +264,33 @@ end
 function SWEP:GetFireModeName()
     local m = self:GetFireMode()
     if self.Grapple and m == #self.FireModes + 1 then return "grapple" end
+    if not self:ModeAllowed(m) then m = 1 end   -- (a skill since lost)
     return self.FireModes[m] or self.FireModes[1] or "semi"
+end
+
+-- Is fire mode i usable by the owner (SkillModes)?
+function SWEP:ModeAllowed(i)
+    local name = self.FireModes[i]
+    if not name then return true end
+    local K = skills()
+    if not (K and K.ModeAllowed) then return true end
+    return K.ModeAllowed(self:GetOwner(), self, name)
+end
+
+-- Back to the first mode if the current one isn't allowed any more.
+function SWEP:FixFireMode()
+    local m = self:GetFireMode()
+    if self.FireModes[m] and not self:ModeAllowed(m) then
+        self:SetFireMode(1)
+        self:SetBurstLeft(0)
+    end
+end
+
+-- The scope, if the owner may use it (SWEP.ScopeSkill).
+function SWEP:HasScope()
+    if self.Scope ~= true then return false end
+    local K = skills()
+    return not (K and K.ScopeAllowed) or K.ScopeAllowed(self:GetOwner(), self)
 end
 
 function SWEP:InGrappleMode()
@@ -261,10 +311,19 @@ function SWEP:GetMag()
     return Rhylib.Weapons.MagByIndex[self:GetMagType()]
 end
 
+-- Rounds a full magazine of type m holds for this gun's owner (skills
+-- can add some: Extended mags).
+function SWEP:MagRounds(m)
+    local n = m.rounds
+    local K = skills()
+    if K and K.MagBonus then n = n + K.MagBonus(self:GetOwner(), m.id) end
+    return n
+end
+
 -- Shots the loaded magazine holds when full.
 function SWEP:GetMagSize()
     local m = self:GetMag()
-    local n = m and m.rounds or self.Primary.ClipSize
+    local n = m and self:MagRounds(m) or self.Primary.ClipSize
     if self.ClipCap then n = math.min(n, self.ClipCap) end
     return n
 end
@@ -298,7 +357,16 @@ if SERVER then
         end
         local cur = self:GetFireMode()
         if cur < 1 or cur > total then cur = 1 end
-        local nextMode = cur % total + 1
+        -- Next mode the owner may use (skill-gated modes are skipped).
+        local nextMode = cur
+        for _ = 1, total do
+            nextMode = nextMode % total + 1
+            if nextMode > n or self:ModeAllowed(nextMode) then break end
+        end
+        if nextMode == cur then
+            self:EmitSound("Weapon_AR2.Empty", 60)
+            return
+        end
         if nextMode == n + 1 then self.preGrappleMode = cur end
         self:SetFireMode(nextMode)
         self:SetBurstLeft(0)
@@ -391,13 +459,22 @@ function SWEP:PrimaryAttack()
     self:FireShot()
 end
 
+-- Rounds per minute right now (burst, dual and skills).
+function SWEP:CurrentFireRate()
+    local mode = self:GetFireModeName()
+    local rate = (mode == "burst" and self.BurstFireRate) or self.FireRate
+    local K = skills()
+    if K and K.FireRateMult then rate = rate * K.FireRateMult(self:GetOwner(), self, mode) end
+    return rate
+end
+
 -- One shot: spread, recoil, ammo, sound and the bolt.
 function SWEP:FireShot()
     local owner = self:GetOwner()
     if not IsValid(owner) then return end
 
     local now = CurTime()
-    self:SetNextPrimaryFire(now + 60 / self.FireRate)
+    self:SetNextPrimaryFire(now + 60 / self:CurrentFireRate())
 
     local Spread = Rhylib.Weapons.Spread
     local dir, a = Spread.ShotDirection(self, owner:EyeAngles(), 0)
@@ -411,7 +488,9 @@ function SWEP:FireShot()
         self:TakePrimaryAmmo(pellets)
     end
     if self.UsesCell and not self:InfiniteAmmo() then
-        self:SetCell(math.max(0, self:GetCell() - 1 / self.CellShots))
+        local K = skills()
+        local shots = self.CellShots * (K and K.CellMult and K.CellMult(owner) or 1)
+        self:SetCell(math.max(0, self:GetCell() - 1 / shots))
     end
 
     self:EmitSound(self.FireSound, 80, util.SharedRandom("rhylib.pitch", 96, 104), 1, CHAN_WEAPON)
@@ -487,7 +566,11 @@ end
 
 -- Walk speed multiplier for this weapon right now (see sh_20_move.lua).
 function SWEP:GetMoveMult()
-    if self:IsSpinning() then return self.SpinMoveMult end
+    if self:IsSpinning() then
+        local K = skills()
+        if K and K.SpinMoveMult then return K.SpinMoveMult(self:GetOwner(), self, self.SpinMoveMult) end
+        return self.SpinMoveMult
+    end
     return 1
 end
 
@@ -583,6 +666,12 @@ if SERVER then
             duration = duration * self.CellReloadMult
             rate = rate / self.CellReloadMult
         end
+        local K = skills()
+        local sm = K and K.ReloadMult and K.ReloadMult(owner, self, kind == RELOAD_CELL) or 1
+        if sm ~= 1 then
+            duration = duration * sm
+            rate = rate / sm
+        end
         if IsValid(vm) and rate ~= 1 then vm:SetPlaybackRate(rate) end
 
         local finish = CurTime() + duration
@@ -624,7 +713,8 @@ if SERVER then
             if not best then return end
             local old = self:GetMag()
             local clip = math.max(self:Clip1(), 0)
-            local rounds = math.floor(best * m.rounds + 0.5)
+            local full = self:MagRounds(m)
+            local rounds = math.floor(best * full + 0.5)
             local oldIssued = self.magIssued
             self.magIssued = issued
             self:SetMagType(m.index)
@@ -634,16 +724,16 @@ if SERVER then
                 -- goes back as one magazine.
                 local total = clip + rounds
                 local load = math.min(total, cap)
-                if total > load then Pouch.Add(owner, m.id, (total - load) / m.rounds, true, issued or oldIssued) end
+                if total > load then Pouch.Add(owner, m.id, (total - load) / full, true, issued or oldIssued) end
                 self:SetClip1(load)
             else
                 -- ClipCap: what doesn't fit stays in the new magazine (back
                 -- first, it frees the room it came from).
                 local load = math.min(rounds, cap)
-                if rounds > load then Pouch.Add(owner, m.id, (rounds - load) / m.rounds, true, issued) end
+                if rounds > load then Pouch.Add(owner, m.id, (rounds - load) / full, true, issued) end
                 -- The old magazine goes back with what's left in it (still
                 -- issued if it came from an armoury).
-                if old and clip > 0 then Pouch.Add(owner, old.id, clip / old.rounds, true, oldIssued) end
+                if old and clip > 0 then Pouch.Add(owner, old.id, math.min(1, clip / self:MagRounds(old)), true, oldIssued) end
                 self:SetClip1(load)
             end
         elseif kind == RELOAD_CELL then
@@ -688,7 +778,7 @@ function SWEP:SetInventoryData(data)
     if m then self:SetMagType(m.index) end
     self:SetClip1(math.min(data.clip or self:GetMagSize(), self:GetMagSize()))
     if self.UsesCell then self:SetCell(data.cell or 1) end
-    if data.mode and self.FireModes[data.mode] then self:SetFireMode(data.mode) end
+    if data.mode and self.FireModes[data.mode] and self:ModeAllowed(data.mode) then self:SetFireMode(data.mode) end
     if data.safe then self:SetSafety(true) end
     -- An issued gun's own magazine and cell count as issued too.
     self.magIssued = data.magIssued or data.issued or nil
@@ -706,6 +796,8 @@ end
 
 function SWEP:UpdateLowered(owner)
     local sprint = self:OwnerSprinting(owner)
+    local K = skills()
+    if sprint and K and K.RunAndGun and K.RunAndGun(owner, self) then sprint = false end   -- (Run and gun)
     if sprint == self:GetLowered() then return end
     self:SetLowered(sprint)
     if sprint then
@@ -774,12 +866,12 @@ if CLIENT then
     end
 
     function SWEP:Scoped()
-        return self.Scope == true and (self.aimFrac or 0) >= 0.8 and not thirdPerson()
+        return (self.aimFrac or 0) >= 0.8 and self:HasScope() and not thirdPerson()
     end
 
     -- Aim zoom; a scope only zooms in first person.
     function SWEP:EffectiveAimFov()
-        if self.Scope and thirdPerson() then return 0.85 end
+        if self.Scope and (thirdPerson() or not self:HasScope()) then return 0.85 end
         return self.AimFov
     end
 
@@ -1052,6 +1144,18 @@ if CLIENT then
         self.propMuzzleVM = ent:LocalToWorld(self.PropMuzzle * (scale or self.PropScale) / self.PropScale)
     end
 
+    -- "dual" mode: the second gun, floating at the left of the view.
+    local function drawDualVM(self, vm)
+        if not self.DualPropVMPos or self:GetFireModeName() ~= "dual" then return end
+        local ent = self:GetPropEntity("propVML", self.PropBoneScale or self.PropScale)
+        if not ent then return end
+        local pos, ang = offsetTransform(vm:GetPos(), vm:GetAngles(), self.DualPropVMPos, self.DualPropVMAng)
+        ent:SetPos(pos)
+        ent:SetAngles(ang)
+        ent:SetupBones()
+        ent:DrawModel()
+    end
+
     -- First person. Carrier: it draws (gun bone shrunk) and the prop goes
     -- on that bone in PostDrawViewModel. Otherwise the placeholder isn't
     -- drawn and the prop floats in its place. Both inside the viewmodel
@@ -1069,6 +1173,7 @@ if CLIENT then
     end
 
     function SWEP:PostDrawViewModel(vm)
+        if self.PropModel and not self:Scoped() then drawDualVM(self, vm) end
         if not self.PropModel or not self:UsesCarrier() then return end
         local b = carrierBone(self, vm)
         local m = b and vm:GetBoneMatrix(b)
@@ -1472,10 +1577,31 @@ if CLIENT then
         ent:SetupBones()
         ent:DrawModel()
         self.propMuzzleWM = ent:LocalToWorld(self.PropMuzzle)
+
+        -- "dual" mode: the second gun in the left hand.
+        if self.DualPropWMPos and self:GetFireModeName() == "dual" then
+            local key = mdl .. "|L"
+            local lb = handBone[key]
+            if lb == nil then
+                lb = owner:LookupBone("ValveBiped.Bip01_L_Hand") or false
+                handBone[key] = lb
+            end
+            local lm = lb and owner:GetBoneMatrix(lb)
+            local le = lm and self:GetPropEntity("propWML")
+            if le then
+                local lp, la = offsetTransform(lm:GetTranslation(), lm:GetAngles(), self.DualPropWMPos, self.DualPropWMAng)
+                le:SetPos(lp)
+                le:SetAngles(la)
+                le:SetupBones()
+                le:DrawModel()
+            end
+        end
     end
 
     function SWEP:OnRemove()
         if IsValid(self.propVM) then self.propVM:Remove() end
         if IsValid(self.propWM) then self.propWM:Remove() end
+        if IsValid(self.propVML) then self.propVML:Remove() end
+        if IsValid(self.propWML) then self.propWML:Remove() end
     end
 end

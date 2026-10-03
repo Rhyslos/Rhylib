@@ -19,6 +19,11 @@
                      firstAidCharge); each use costs the health it heals
                      (at least firstAidMinCost). Empty kits are used up.
       revive kit     medics. One per revive.
+      field items    splint, burn gel, painkillers, bacta stim (anyone, H
+                     menu), blood pack (medics, E menu on a downed player).
+    Skills (Med.Skill): Steady hands and Quick revive shorten the timers,
+    Hands-on revive needs no kit, Adrenaline and Full recovery change
+    how revived players get up.
 
     Started by the kit weapons (left click: someone else, right click:
     yourself, selfMult times longer), the E menu on a downed player
@@ -147,20 +152,40 @@ local KIT = {
     [Med.A_FA_REVIVE] = Med.FIRST_AID,
     [Med.A_FA_HEAL] = Med.FIRST_AID,
     [Med.A_MEDKIT] = Med.MEDKIT,
+    [Med.A_BLOOD] = Med.BLOOD_PACK,
 }
 
 local function kitOf(a) return a.kit or KIT[a.kind] end
 
-local function duration(kind, self, kit)
+local TREAT_TIME = {
+    [Med.FIRST_AID] = "firstAidLimbTime", [Med.MEDKIT] = "medkitLimbTime", [Med.SPLINT] = "splintTime",
+    [Med.BURN_GEL] = "burnGelTime", [Med.PAINKILLER] = "pillTime", [Med.BACTA_STIM] = "pillTime",
+}
+
+local function baseDuration(kind, self, kit)
     local mult = self and math.max(1, tonumber(Med.Cfg("selfMult")) or 2) or 1
     if kind == Med.A_REVIVE then return Med.Cfg("reviveKitTime") end
     if kind == Med.A_FA_REVIVE then return Med.Cfg("firstAidReviveTime") end
+    if kind == Med.A_HAND_REVIVE then return Med.Cfg("handReviveTime") end
+    if kind == Med.A_BLOOD then return Med.Cfg("bloodPackTime") end
     if kind == Med.A_FA_HEAL then return Med.Cfg("firstAidHealTime") * mult end
     if kind == Med.A_MEDKIT then return Med.Cfg("medkitHealTime") * mult end
     if kind == Med.A_TREAT then
-        return (kit == Med.FIRST_AID and Med.Cfg("firstAidLimbTime") or Med.Cfg("medkitLimbTime")) * mult
+        return Med.Cfg(TREAT_TIME[kit] or "medkitLimbTime") * mult
     end
     return 0
+end
+
+local function duration(helper, kind, self, kit)
+    local d = baseDuration(kind, self, kit)
+    if Med.Skill(helper, "steady_hands") then d = d * Med.Cfg("steadyMult") end
+    if Med.REVIVES[kind] and Med.Skill(helper, "quick_revive") then d = d * Med.Cfg("quickReviveMult") end
+    return d
+end
+
+local function itemName(id)
+    local def = Rhylib.Items and Rhylib.Items.Get(id)
+    return def and def.name or "kit"
 end
 
 local function bleeding(target)
@@ -181,7 +206,7 @@ local function refuse(helper, kind, target, opts)
     local down = target.rhylibDown
     local medic = Med.IsMedic(helper)
 
-    if kind == Med.A_STAB or kind == Med.A_REVIVE or kind == Med.A_FA_REVIVE then
+    if kind == Med.A_STAB or Med.REVIVES[kind] or kind == Med.A_BLOOD then
         if self or not down then return "" end
     elseif kind == Med.A_FA_HEAL or kind == Med.A_MEDKIT or kind == Med.A_TREAT then
         if down then return "Revive them first" end
@@ -205,16 +230,22 @@ local function refuse(helper, kind, target, opts)
             return (h:Nick() or "Someone") .. " is already treating them"
         end
     end
+    if kind == Med.A_HAND_REVIVE then
+        if not Med.Skill(helper, "hands_on") then return "You need the Hands-on revive skill" end
+        return nil
+    end
     local kit = kind == Med.A_TREAT and opts and opts.kit or KIT[kind]
+    if not kit then return "" end
     if kit == Med.MEDKIT then
         if Med.Cfg("medkitMedicOnly") and not medic then return "Only medics can use medkits" end
-    elseif not medic then
+    elseif not medic and not Med.ANYONE[kit] then
         return kit == Med.FIRST_AID and "Only medics can use a first aid kit" or "Only medics can do that"
     end
     if not Med.Has(helper, kit) then
         if kit == Med.REVIVE_KIT then return "You have no revive kit" end
         if kit == Med.FIRST_AID then return "You have no first aid kit" end
-        return "You have no medkit"
+        if kit == Med.MEDKIT then return "You have no medkit" end
+        return "You have no " .. string.lower(itemName(kit))
     end
     if kit == Med.FIRST_AID and Med.KitCharge(helper) < 1 then return "Your first aid kit is empty" end
 end
@@ -237,9 +268,9 @@ function Med.Start(helper, kind, target, opts)
     end
 
     local a = { kind = kind, target = target, kit = opts and opts.kit, limb = opts and opts.limb, started = now }
-    a.endTime = now + duration(kind, target == helper, a.kit)
+    a.endTime = now + duration(helper, kind, target == helper, a.kit)
     -- Reviving pauses the bleed-out (unless someone already stabilises).
-    if (kind == Med.A_REVIVE or kind == Med.A_FA_REVIVE) and not Med.StabilisedBy(target) then
+    if Med.REVIVES[kind] and not Med.StabilisedBy(target) then
         target:SetNW2Float("rhylib_downLeft", Med.TimeLeft(target))
         target:SetNW2Entity("rhylib_stabBy", helper)
         a.paused = true
@@ -254,7 +285,7 @@ end
 local function resume(t, helper)
     if not IsValid(t) or t:GetNW2Entity("rhylib_stabBy") ~= helper then return end
     for h, o in pairs(Med.acts) do
-        if h ~= helper and o.target == t and (o.kind == Med.A_REVIVE or o.kind == Med.A_FA_REVIVE or o.kind == Med.A_STAB) then
+        if h ~= helper and o.target == t and (Med.REVIVES[o.kind] or o.kind == Med.A_STAB) then
             t:SetNW2Entity("rhylib_stabBy", h)
             o.paused = true
             return
@@ -306,6 +337,21 @@ local function stopBleeding(t, all)
     Med.MarkInjuries(t)
 end
 
+-- A revive by helper: Adrenaline and Full recovery change how they get up.
+local function revive(helper, t, hp)
+    local full = Med.Skill(helper, "full_recovery")
+    if full then hp = t:GetMaxHealth() end
+    if Med.Skill(helper, "adrenaline") then
+        hp = math.max(hp, t:GetMaxHealth() * Med.Cfg("adrenalineHealth"))
+        t.rhylibAdrenaline = CurTime() + Med.Cfg("adrenalineTime")
+    end
+    Med.Revive(t, hp, helper)
+    if full and Med.ClearInjuries then
+        Med.ClearInjuries(t)
+        t:SetNW2Float("rhylib_painkill", 0)
+    end
+end
+
 local function finishAct(helper, a)
     Med.acts[helper] = nil
     setAct(helper, Med.A_NONE)
@@ -316,7 +362,7 @@ local function finishAct(helper, a)
 
     if a.kind == Med.A_REVIVE then
         if not Med.Consume(helper, kit) then resume(t, helper) return end
-        Med.Revive(t, t:GetMaxHealth() * Med.Cfg("reviveKitHealth"), helper)
+        revive(helper, t, t:GetMaxHealth() * Med.Cfg("reviveKitHealth"))
     elseif a.kind == Med.A_FA_REVIVE then
         local hp, cost = kitHeal(helper, Med.Cfg("firstAidReviveHealth"))
         if hp < 1 then
@@ -325,7 +371,18 @@ local function finishAct(helper, a)
             return
         end
         Med.SpendCharge(helper, cost)
-        Med.Revive(t, hp, helper)
+        revive(helper, t, hp)
+    elseif a.kind == Med.A_HAND_REVIVE then
+        revive(helper, t, Med.Cfg("handReviveHealth"))
+    elseif a.kind == Med.A_BLOOD then
+        if not Med.Consume(helper, kit) then return end
+        local add = Med.Cfg("bloodPackAdd")
+        if Med.StabilisedBy(t) then
+            t:SetNW2Float("rhylib_downLeft", t:GetNW2Float("rhylib_downLeft", 0) + add)
+        else
+            t:SetNW2Float("rhylib_downEnd", t:GetNW2Float("rhylib_downEnd", 0) + add)
+        end
+        Med.Note(helper, "Blood pack in: +" .. add .. " s")
     elseif a.kind == Med.A_FA_HEAL then
         -- As much health as is missing (and the kit holds); stops all bleeding.
         if t:Health() >= t:GetMaxHealth() and not bleeding(t) then return end   -- (nothing left to do)
@@ -335,6 +392,7 @@ local function finishAct(helper, a)
         stopBleeding(t, true)
         hook.Run("Rhylib.PlayerHealed", t, helper)
     elseif a.kind == Med.A_MEDKIT then
+        if t:Health() >= t:GetMaxHealth() and not bleeding(t) then return end   -- (nothing left to do)
         if not Med.Consume(helper, kit) then return end
         heal(t, medic and Med.Cfg("medkitHealMedic") or Med.Cfg("medkitHeal"))
         stopBleeding(t, medic)
@@ -342,7 +400,7 @@ local function finishAct(helper, a)
     elseif a.kind == Med.A_TREAT then
         if Med.TreatPart then Med.TreatPart(helper, t, a.limb, kit) end
     end
-    if IsValid(t) and a.kind ~= Med.A_REVIVE and a.kind ~= Med.A_FA_REVIVE then t:EmitSound("items/medshot4.wav", 60) end
+    if IsValid(t) and not Med.REVIVES[a.kind] then t:EmitSound("items/medshot4.wav", 60) end
 end
 
 function Med.CheckActions(now)
@@ -351,10 +409,11 @@ function Med.CheckActions(now)
         local ok = IsValid(helper) and helper:Alive() and not helper.rhylibDown
             and IsValid(t) and t:Alive()
         if ok then
-            local needDown = a.kind == Med.A_STAB or a.kind == Med.A_REVIVE or a.kind == Med.A_FA_REVIVE
+            local needDown = a.kind == Med.A_STAB or Med.REVIVES[a.kind] or a.kind == Med.A_BLOOD
+            local kit = kitOf(a)
             ok = (t.rhylibDown and true or false) == needDown
                 and (t == helper or Med.InRange(helper, t, 50))
-                and (a.kind == Med.A_STAB or Med.Has(helper, kitOf(a)))
+                and (not kit or Med.Has(helper, kit))
                 and not (needDown and Med.DraggedBy(t))
         end
         if not ok then
@@ -425,7 +484,8 @@ function Med.OpenMenuFor(ply, patient)
 end
 
 -- From the E menu on a downed player: stabilise or revive with a chosen kit.
-local MENU_KINDS = { [Med.A_STAB] = true, [Med.A_REVIVE] = true, [Med.A_FA_REVIVE] = true }
+local MENU_KINDS = { [Med.A_STAB] = true, [Med.A_REVIVE] = true, [Med.A_FA_REVIVE] = true,
+    [Med.A_HAND_REVIVE] = true, [Med.A_BLOOD] = true }
 
 Rhylib.Net.Receive("med.act", function(ply)
     local kind = net.ReadUInt(Med.ACT_BITS)

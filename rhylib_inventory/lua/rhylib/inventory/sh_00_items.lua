@@ -116,6 +116,7 @@ function Items.RegisterWeapons()
                     fill = (full.InvUses or full.InvCharge) and true or nil,
                     rounds = full.InvUses,
                     unit = full.InvUses and "uses" or nil,
+                    carrySkill = full.CarrySkill,   -- (rhylib_skills: only players with it may carry it)
                 })
             end
         end
@@ -274,6 +275,7 @@ end
 --   1  main grid (5 x 3)
 --   2  backpack grid, only while a backpack is worn (size from the backpack)
 --   3  back slot: holds one item with slot = "back"
+--   5  cell rack: only power cells, opened by a skill (rhylib_skills)
 --   4  an outside container the player has open (locker, armoury, crate),
 --      see sv_30_storage.lua. Its items have their own uids.
 -- Both server and client keep state shaped like { cont = { [id] = { w, h, items } } }
@@ -284,6 +286,7 @@ Items.MAIN = 1
 Items.BACK = 2
 Items.SLOT_BACK = 3
 Items.EXT = 4
+Items.RACK = 5       -- cell rack (rhylib_skills Load bearer): power cells only
 Items.CONT_BITS = 3
 
 -- Hotbar: each item can sit in one numbered slot (inst.hb). 4 slots, or
@@ -301,6 +304,7 @@ function Items.ContainerAllows(cid, def)
     if cid == Items.SLOT_BACK then return def.slot == "back" end
     if cid == Items.EXT then return true end  -- the storage itself decides (sv_30_storage.lua)
     if cid == Items.BACK then return not def.large and not def.grid end
+    if cid == Items.RACK then return def.id == "cell" end
     return true
 end
 

@@ -34,7 +34,7 @@ local Inv = Rhylib.Inventory
 local Items = Rhylib.Items
 local Config = Rhylib.Config
 
-local MAIN, BACK, SLOT_BACK = Items.MAIN, Items.BACK, Items.SLOT_BACK
+local MAIN, BACK, SLOT_BACK, RACK = Items.MAIN, Items.BACK, Items.SLOT_BACK, Items.RACK
 
 Config.Register("inventory", "width", 5, "Personal inventory width in cells")
 Config.Register("inventory", "height", 3, "Personal inventory height in cells")
@@ -165,6 +165,8 @@ Rhylib.Hook.Add("Tick", "inventory.changed", function()
             local st = Inv.states[ply]
             if st then
                 local weight, cap = Items.Weight(st)
+                local K = Rhylib.Skills
+                if K and K.AdjustWeight then weight, cap = K.AdjustWeight(ply, st, weight, cap) end
                 ply:SetNW2Float("rhylib_weight", math.Round(weight, 2))
                 ply:SetNW2Float("rhylib_carry", cap)
             end
@@ -236,7 +238,7 @@ end
 -- First free spot for a new item: worn slot if it fits there, then the
 -- main grid, then the backpack.
 local ROTS_SQUARE, ROTS_BOTH = { false }, { false, true }
-local SEARCH = { MAIN, BACK }
+local SEARCH = { RACK, MAIN, BACK }   -- (the rack only takes cells)
 
 local function findSpot(st, id)
     local def = Items.defs[id]
@@ -279,6 +281,12 @@ local function load(ply, st)
                 if Items.defs[id] and Items.CanPlace(st, id, cid, x, y, rot) then
                     local inst = { uid = nextUid(st), id = id, count = count, data = istable(row[6]) and row[6] or {}, hb = tonumber(row[8]) }
                     place(ply, st, inst, cid, x, y, rot)
+                elseif Items.defs[id] and cid == RACK then
+                    -- The rack is gone or smaller (skills reset): anywhere else.
+                    local c2, x2, y2, r2 = findSpot(st, id)
+                    if c2 then
+                        place(ply, st, { uid = nextUid(st), id = id, count = count, data = istable(row[6]) and row[6] or {}, hb = tonumber(row[8]) }, c2, x2, y2, r2)
+                    end
                 end
             end
         end
@@ -307,6 +315,11 @@ function Inv.Get(ply)
         nextUid = 1,
         ready = false,  -- true once the client has its full copy
     }
+    -- Grids from skills (the cell rack), before the saved items go in.
+    local K = Rhylib.Skills
+    if K and K.ExtraGrids then
+        for cid, g in pairs(K.ExtraGrids(ply)) do st.cont[cid] = { w = g[1], h = g[2], items = {} } end
+    end
     Inv.states[ply] = st
     if ply:SteamID64() then load(ply, st) end
     return st
@@ -328,11 +341,29 @@ function Inv.Has(ply, id)
     return Inv.Count(ply, id) > 0
 end
 
+-- May this player carry this item at all (def.carrySkill, rhylib_skills)?
+function Inv.MayHold(ply, id)
+    local def = Items.defs[id]
+    if not (def and def.carrySkill) then return true end
+    local K = Rhylib.Skills
+    if not (K and K.Has) then return true end
+    return K.Has(ply, def.carrySkill)
+end
+
+-- Why ply can't carry id, for messages.
+function Inv.HoldReason(id)
+    local def = Items.defs[id]
+    local K = Rhylib.Skills
+    local n = def and def.carrySkill and K and K.byId and K.byId[def.carrySkill]
+    return "You need the " .. (n and n.name or "right") .. " skill to carry that"
+end
+
 -- Would one item of this type fit right now?
 function Inv.CanAdd(ply, id)
     local st = Inv.Get(ply)
     local def = Items.defs[id]
     if not def then return false end
+    if not Inv.MayHold(ply, id) then return false end
     if Items.Unique(def) and Inv.Has(ply, id) then return false end
     local cap = Items.StackFor(def, ply)
     if cap > 1 then
@@ -351,6 +382,7 @@ function Inv.AddItem(ply, id, count, data)
     if not def then return count end
     data = data or {}
     if Items.Unique(def) and Inv.Has(ply, id) then return count end
+    if not Inv.MayHold(ply, id) then return count end
 
     local cap = Items.StackFor(def, ply)
     local stackable = cap > 1 and (not def.fill or (data.fill or 1) >= 1)
@@ -859,6 +891,14 @@ Rhylib.Hook.Add("PlayerCanPickupWeapon", "inventory.pickup", function(ply, wep)
         timer.Simple(0, function() if IsValid(wep) then wep:Remove() end end)
         return false
     end
+    if not Inv.MayHold(ply, class) then
+        ply.rhylibPickupNoWep, ply.rhylibPickupNoUntil = wep, CurTime() + 0.5
+        if (ply.rhylibFullNotice or 0) < CurTime() then
+            ply.rhylibFullNotice = CurTime() + 2
+            ply:PrintMessage(HUD_PRINTCENTER, Inv.HoldReason(class))
+        end
+        return false
+    end
     if not Inv.CanAdd(ply, class) then
         ply.rhylibPickupNoWep, ply.rhylibPickupNoUntil = wep, CurTime() + 0.5
         if (ply.rhylibFullNotice or 0) < CurTime() then
@@ -961,6 +1001,36 @@ Rhylib.Hook.Add("ShutDown", "inventory.save", function()
         if IsValid(ply) then Inv.Save(ply) end
     end
 end, -10)  -- before the data layer's final flush
+
+-- A grid from a skill (cid, w x h); 0 removes it, and what was in it moves
+-- to the other grids (or the ground).
+function Inv.SetGrid(ply, cid, w, h)
+    local st = Inv.states[ply]
+    if not st then return end
+    local cur = st.cont[cid]
+    if w > 0 and h > 0 then
+        if cur and cur.w == w and cur.h == h then return end
+        st.cont[cid] = { w = w, h = h, items = cur and cur.items or {} }
+        sendDims(ply, st, cid)
+        return
+    end
+    if not cur then return end
+    local moved = {}
+    for _, inst in pairs(cur.items) do moved[#moved + 1] = inst end
+    st.cont[cid] = nil
+    sendDims(ply, st, cid)
+    for _, inst in ipairs(moved) do
+        st.byUid[inst.uid] = nil
+        if st.ready then updBatch:Send(ply, { op = OP_REMOVE, uid = inst.uid }) end
+        Inv.AddOrDrop(ply, inst.id, inst.count, inst.data)
+    end
+    changed(ply)
+end
+
+-- Weight and carry limit sent again (a skill changed the limit).
+function Inv.MarkChanged(ply)
+    if Inv.states[ply] then changed(ply) end
+end
 
 -- For sv_30_storage.lua: the low-level helpers that keep the client, the
 -- weapons and the save in step.

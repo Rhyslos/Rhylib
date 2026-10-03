@@ -22,6 +22,15 @@ local function cfg(key)
     return Config.Get("jetpack", key)
 end
 
+-- Per-player values (rhylib_skills Airborne changes fuel and speed).
+local PER_PLAYER = { fuelTime = true, rechargeTime = true, climbSpeed = true, airAccel = true, maxAirSpeed = true }
+local function pcfg(ply, key)
+    local v = cfg(key)
+    local K = Rhylib.Skills
+    if PER_PLAYER[key] and K and K.JetCfg then return K.JetCfg(ply, key, v) end
+    return v
+end
+
 Rhylib.Hook.Add("SetupMove", "jetpack.move", function(ply, mv)
     if not ply:GetDTBool(J.DT_HAS) then return end
     if IsValid(ply:GetDTEntity(31)) then
@@ -44,7 +53,7 @@ Rhylib.Hook.Add("SetupMove", "jetpack.move", function(ply, mv)
             ply:SetDTFloat(J.DT_LANDED, now)
         end
         if now - landed >= cfg("rechargeDelay") then
-            fuel = math.min(1, fuel + dt / cfg("rechargeTime"))
+            fuel = math.min(1, fuel + dt / pcfg(ply, "rechargeTime"))
         end
         if locked and fuel >= cfg("unlockAt") then locked = false end
     elseif ply:GetDTFloat(J.DT_LANDED) ~= 0 then
@@ -62,7 +71,7 @@ Rhylib.Hook.Add("SetupMove", "jetpack.move", function(ply, mv)
         -- Heavier loads burn fuel faster (weight and cap come from rhylib_inventory).
         local cap = ply:GetNW2Float("rhylib_carry", 0)
         local load = cap > 0 and math.min(ply:GetNW2Float("rhylib_weight", 0) / cap, 1) or 0
-        fuel = fuel - dt / cfg("fuelTime") * (1 + cfg("loadFuelMult") * load)
+        fuel = fuel - dt / pcfg(ply, "fuelTime") * (1 + cfg("loadFuelMult") * load)
         if fuel <= 0 then
             fuel = 0
             locked = true
@@ -72,7 +81,7 @@ Rhylib.Hook.Add("SetupMove", "jetpack.move", function(ply, mv)
 
         -- Vertical: steer toward the climb speed, hard when falling.
         local vz = vel.z
-        local target = hover and 0 or cfg("climbSpeed")
+        local target = hover and 0 or pcfg(ply, "climbSpeed")
         local tau = vz < 0 and cfg("brakeTau") or cfg("climbTau")
         local change = (target - vz) * (1 - math.exp(-dt / tau))
         local cap = (vz < 0 and cfg("brakeAccel") or cfg("maxAccel")) * dt
@@ -93,11 +102,11 @@ Rhylib.Hook.Add("SetupMove", "jetpack.move", function(ply, mv)
             local along = h:Dot(wish)
             h = wish * along + (h - wish * along) * damp   -- keep the wanted direction, kill sideways drift
             local speed = h:Length()
-            local nh = h + wish * (cfg("airAccel") * dt)
-            local limit = math.max(cfg("maxAirSpeed"), speed)
+            local nh = h + wish * (pcfg(ply, "airAccel") * dt)
+            local limit = math.max(pcfg(ply, "maxAirSpeed"), speed)
             if nh:Length() > limit then nh = nh:GetNormalized() * limit end
             -- Faster than the jetpack's own top speed (e.g. launched): bleed it off.
-            if limit > cfg("maxAirSpeed") then nh = nh * damp end
+            if limit > pcfg(ply, "maxAirSpeed") then nh = nh * damp end
             h = nh
         else
             h = h * damp  -- no keys: slow to a stop and hover in place

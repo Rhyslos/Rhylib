@@ -24,6 +24,15 @@
     doesn't bleed while it runs.
     Medicines (antiviral, antidote, antibiotics, ...) are items with no
     effect yet.
+    Field items (H menu, drag onto a part; anyone): splint (a broken bone
+    holds until the med bay), burn gel, painkillers, bacta stim. Medics:
+    blood pack (E menu on a downed player, more bleed-out time). Medical
+    supplies are what Chemists turn into all of these at a chemistry
+    bench (sv_40_medbay.lua).
+    Med bay: near a bacta tank or a medical holotable. Only there does a
+    first aid kit fully set bones and heal burns (or anywhere with the
+    Field surgeon skill); elsewhere it splints them and halves burns.
+    Skills (rhylib_skills, medic jobs): Med.Skill(ply, id).
 
     State, all NW2 (changes only on events):
       downed player:  rhylib_down (bool), rhylib_downEnd (CurTime when the
@@ -67,6 +76,36 @@ Config.Register("medical", "dragWeapons", { rhylib_stowed = true, keys = true },
 Config.Register("medical", "noTarget", true, "NPCs ignore downed players")
 Config.Register("medical", "downSequences", { "death_04", "death_03", "death_02", "death_01", "zombie_slump_idle_02" }, "Lying poses to try, first that exists on the model wins (last frame is used)")
 Config.Register("medical", "markerRange", 2500, "Downed markers show within this distance")
+Config.Register("medical", "dragSpeedSkill", 180, "Field drag: top speed while dragging")
+Config.Register("medical", "handReviveTime", 25, "Hands-on revive: seconds")
+Config.Register("medical", "handReviveHealth", 15, "Hands-on revive: health they get up with")
+Config.Register("medical", "steadyMult", 0.85, "Steady hands: treatment and revive time multiplier")
+Config.Register("medical", "quickReviveMult", 0.7, "Quick revive: revive time multiplier")
+Config.Register("medical", "deepPockets", 3, "Deep pockets: extra medkits per stack")
+Config.Register("medical", "triageFlash", 30, "Triage: markers flash under this many seconds left")
+Config.Register("medical", "adrenalineTime", 5, "Adrenaline: seconds of half damage after a revive")
+Config.Register("medical", "adrenalineHealth", 0.5, "Adrenaline: least health after a revive, as a share of max")
+Config.Register("medical", "medBayRange", 400, "Med bay: this close to a bacta tank or medical holotable")
+Config.Register("medical", "medBayClasses", { "rhylib_bacta_tank", "rhylib_med_holotable" }, "Entities that make a med bay around them")
+Config.Register("medical", "splintTime", 4, "Seconds to splint a fracture")
+Config.Register("medical", "burnGelTime", 3, "Seconds to apply burn gel")
+Config.Register("medical", "burnGel", 60, "Burns that burn gel removes")
+Config.Register("medical", "pillTime", 1.5, "Seconds to give painkillers or a bacta stim")
+Config.Register("medical", "painkillerTime", 60, "Painkillers: seconds that hurt limbs and burns don't slow you")
+Config.Register("medical", "stimHeal", 30, "Bacta stim: health")
+Config.Register("medical", "bloodPackTime", 4, "Seconds to hook up a blood pack")
+Config.Register("medical", "bloodPackAdd", 60, "Blood pack: seconds added to a downed player's bleed-out")
+Config.Register("medical", "tankModel", "models/props_combine/breenpod.mdl", "Bacta tank model (a missing model falls back to a fridge)")
+Config.Register("medical", "tankHeal", 5, "Bacta tank: health per second")
+Config.Register("medical", "tankRepair", 8, "Bacta tank: body part damage and burns healed per second")
+Config.Register("medical", "tankSetBones", 8, "Bacta tank: seconds inside before fractures are set")
+Config.Register("medical", "tankSpecialist", 300, "Bacta specialist: tanks within this range of you heal twice as fast")
+Config.Register("medical", "benchModel", "models/props_c17/FurnitureTable001a.mdl", "Chemistry bench model")
+Config.Register("medical", "craftTime", 3, "Chemistry bench: seconds per batch")
+Config.Register("medical", "chemRecipes", {
+    { "rhylib_bactastim", 1 }, { "rhylib_burngel", 1 }, { "rhylib_painkiller", 1 },
+    { "rhylib_splint", 1 }, { "rhylib_bloodpack", 2 }, { "rhylib_medkit", 2 },
+}, "Chemistry bench recipes: { item, medical supplies it takes }")
 
 function Med.Cfg(key)
     return Config.Get("medical", key)
@@ -80,7 +119,12 @@ Med.A_FA_REVIVE = 3 -- reviving with a first aid kit
 Med.A_FA_HEAL = 4   -- heal with a first aid kit
 Med.A_MEDKIT = 5    -- one medkit
 Med.A_TREAT = 6     -- one body part, from the H menu (kit in the action)
-Med.ACT_BITS = 3
+Med.A_BLOOD = 7     -- blood pack on a downed player
+Med.A_HAND_REVIVE = 8 -- revive with no kit (skill Hands-on revive)
+Med.ACT_BITS = 4
+
+-- Revives (pause the bleed-out, need a downed target).
+Med.REVIVES = { [Med.A_REVIVE] = true, [Med.A_FA_REVIVE] = true, [Med.A_HAND_REVIVE] = true }
 
 Med.ActName = {
     [1] = "Stabilising",
@@ -89,12 +133,39 @@ Med.ActName = {
     [4] = "Treating",
     [5] = "Healing",
     [6] = "Treating",
+    [7] = "Giving blood",
+    [8] = "Reviving (hands-on)",
 }
 
 -- Kit weapon classes.
 Med.REVIVE_KIT = "rhylib_revivekit"
 Med.FIRST_AID = "rhylib_firstaid"
 Med.MEDKIT = "rhylib_medkit"
+
+-- Plain medical items.
+Med.SUPPLIES = "rhylib_med_supplies"
+Med.SPLINT = "rhylib_splint"
+Med.BURN_GEL = "rhylib_burngel"
+Med.PAINKILLER = "rhylib_painkiller"
+Med.BACTA_STIM = "rhylib_bactastim"
+Med.BLOOD_PACK = "rhylib_bloodpack"
+
+-- H menu treatments: kind (3 bits on the wire) <-> item.
+Med.TREAT_FIRSTAID, Med.TREAT_MEDKIT = 0, 1
+Med.TREAT_ITEMS = { [0] = Med.FIRST_AID, [1] = Med.MEDKIT, [2] = Med.SPLINT, [3] = Med.BURN_GEL, [4] = Med.PAINKILLER, [5] = Med.BACTA_STIM }
+Med.TREAT_KIND = {}
+for k, v in pairs(Med.TREAT_ITEMS) do Med.TREAT_KIND[v] = k end
+-- Anyone may use these (first aid kits and blood packs are for medics).
+Med.ANYONE = { [Med.MEDKIT] = true, [Med.SPLINT] = true, [Med.BURN_GEL] = true, [Med.PAINKILLER] = true, [Med.BACTA_STIM] = true }
+
+Med.ITEMS = {
+    { Med.SUPPLIES, "Medical supplies", "Chemists turn these into medicine at a chemistry bench", 10, 0.2, "models/items/healthkit.mdl" },
+    { Med.SPLINT, "Splint", "Holds a broken bone until the med bay (drag onto the part)", 3, 0.3, "models/props_debris/wood_board04a.mdl" },
+    { Med.BURN_GEL, "Burn gel", "Takes most of the burns off a part", 3, 0.2, "models/healthvial.mdl" },
+    { Med.PAINKILLER, "Painkillers", "Hurt limbs and burns don't slow you for a minute", 5, 0.1, "models/healthvial.mdl" },
+    { Med.BACTA_STIM, "Bacta stim", "+30 health, quickly", 5, 0.1, "models/healthvial.mdl" },
+    { Med.BLOOD_PACK, "Blood pack", "Medics: buys a downed player another minute (E menu)", 3, 0.4, "models/healthvial.mdl" },
+}
 
 -- Medicines: items with no effect yet (ideas for later treatments).
 Med.MEDICINES = {
@@ -106,6 +177,14 @@ Med.MEDICINES = {
 local function registerMedicines()
     local Items = Rhylib.Items
     if not Items or not Items.Register then return end
+    for _, m in ipairs(Med.ITEMS) do
+        if not Items.Get(m[1]) then
+            Items.Register(m[1], {
+                name = m[2], desc = m[3], w = 1, h = 1, stack = m[4], weight = m[5],
+                category = "medical", model = m[6], usable = true,
+            })
+        end
+    end
     for _, m in ipairs(Med.MEDICINES) do
         if not Items.Get(m[1]) then
             Items.Register(m[1], {
@@ -117,12 +196,47 @@ local function registerMedicines()
 end
 registerMedicines()
 
--- Medkits stack 3 for troopers and 5 for medics (rhylib_inventory asks this).
+-- Medkits stack 3 for troopers and 5 for medics, +3 with Deep pockets
+-- (rhylib_inventory asks this).
 Rhylib.Hook.Add("Rhylib.ItemStack", "medical.stack", function(def, ply)
     if def.id == "rhylib_medkit" and IsValid(ply) then
-        return Med.IsMedic(ply) and Med.Cfg("medkitStackMedic") or Med.Cfg("medkitStack")
+        local n = Med.IsMedic(ply) and Med.Cfg("medkitStackMedic") or Med.Cfg("medkitStack")
+        if Med.Skill(ply, "deep_pockets") then n = n + Med.Cfg("deepPockets") end
+        return n
     end
 end)
+
+-- A medic skill (rhylib_skills); only counts while the player is a medic.
+function Med.Skill(ply, id)
+    local K = Rhylib.Skills
+    if not (K and K.Has and IsValid(ply) and ply:IsPlayer()) then return false end
+    return K.Has(ply, id) and Med.IsMedic(ply)
+end
+
+function Med.DragSpeed(ply)
+    return Med.Skill(ply, "field_drag") and Med.Cfg("dragSpeedSkill") or Med.Cfg("dragSpeed")
+end
+
+-- Is ply in a med bay (near a bacta tank or medical holotable)? The
+-- anchor list is refreshed every few seconds.
+local anchors, anchorsAt = {}, 0
+function Med.InMedBay(ply)
+    local now = CurTime()
+    if now - anchorsAt > 3 then
+        anchorsAt = now
+        anchors = {}
+        local list = Med.Cfg("medBayClasses")
+        for _, c in ipairs(istable(list) and list or {}) do
+            for _, e in ipairs(ents.FindByClass(c)) do anchors[#anchors + 1] = e end
+        end
+    end
+    local r = Med.Cfg("medBayRange")
+    local pos = ply:GetPos()
+    for _, e in ipairs(anchors) do
+        if IsValid(e) and e:GetPos():DistToSqr(pos) <= r * r then return true end
+    end
+    return false
+end
 
 --------------------------------------------------------------------------
 -- State readers (shared)

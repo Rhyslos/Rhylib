@@ -56,9 +56,9 @@ SWEP.Secondary = {
     Ammo = "rhylib_cell",   -- shows spare cells on the HUD
 }
 
-SWEP.FireRate = 500
+SWEP.FireRate = 440
 SWEP.Recoil = { up = 0.7, side = 0.25, bias = 0.05, recover = 0.6, aimMult = 0.6 }
-SWEP.Damage = 30
+SWEP.Damage = 27
 SWEP.BoltSpeed = 7500
 SWEP.BoltColor = 1
 SWEP.FireSound = "weapons/airboat/airboat_gun_energy2.wav"
@@ -80,8 +80,8 @@ SWEP.InvLarge = true
 SWEP.InvWeight = 4.0         -- kg
 
 SWEP.Spread = {
-    hip = 1.25,
-    aim = 0.55,
+    hip = 1.3,
+    aim = 0.6,
     kickMain = 0.4,
     kickSide = 0.11,
     bloomPerShot = 0.13,

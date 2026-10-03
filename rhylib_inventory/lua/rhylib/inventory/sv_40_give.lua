@@ -45,6 +45,10 @@ function Inv.GiveTo(ply, target, uid, single)
         Inv.Note(ply, "Job gear can't be given away")
         return 0
     end
+    if not Inv.MayHold(target, inst.id) then
+        Inv.Note(ply, target:Nick() .. " can't carry that (needs a skill)")
+        return 0
+    end
     local n = (single and inst.count > 1) and 1 or inst.count
     I.captureWeapon(ply, inst)
     local left = Inv.AddItem(target, inst.id, n, table.Copy(inst.data or {}))

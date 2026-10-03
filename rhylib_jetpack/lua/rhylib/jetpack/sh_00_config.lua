@@ -26,7 +26,7 @@ J.DT_FUEL = 30
 J.DT_LANDED = 31
 
 local Config = Rhylib.Config
-Config.Register("jetpack", "fuelTime", 15, "Seconds of thrust from a full tank")
+Config.Register("jetpack", "fuelTime", 10, "Seconds of thrust from a full tank (rhylib_skills Airborne: skills airborneFuel)")
 Config.Register("jetpack", "rechargeTime", 6, "Seconds to refill an empty tank while on the ground")
 Config.Register("jetpack", "rechargeDelay", 0.5, "Seconds on the ground before refilling starts")
 Config.Register("jetpack", "unlockAt", 0.35, "After running dry, fuel needed before the jetpack works again")

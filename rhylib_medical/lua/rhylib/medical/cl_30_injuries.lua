@@ -2,8 +2,9 @@
     The injury menu (H, convar rhylib_medical_key). Press it while looking
     at someone close to see their body instead of yours. Left: the body,
     each part white when fine and redder the more it's hurt, with small
-    tags; hover a part for details. Right: your inventory; drag a kit onto
-    a body part to treat it.
+    tags; hover a part for details. Right: your inventory; drag a kit or a
+    field item (splint, burn gel, painkillers, bacta stim) onto a body
+    part to treat it.
 
     Medics see exact damage, fractures, burns, health and effects.
     Troopers see roughly how hurt each part is and whether it bleeds (and
@@ -36,6 +37,7 @@ local TAGS = {
     { key = "bleed1", text = "BLEEDING", col = Color(226, 110, 90) },
     { key = "frac", text = "FRACTURE", col = Color(239, 199, 89) },
     { key = "burn", text = "BURNS", col = COL_BURN },
+    { key = "splint", text = "SPLINTED", col = Color(200, 190, 150) },
 }
 
 local function S(n) return math.floor(n * ScrH() / 1080 + 0.5) end
@@ -91,18 +93,19 @@ local function tagsFor(p, rough)
         return out
     end
     if p.bleed == 2 then out[#out + 1] = TAGS[1] elseif p.bleed == 1 then out[#out + 1] = TAGS[2] end
-    if p.frac then out[#out + 1] = TAGS[3] end
+    if p.frac then out[#out + 1] = p.splint and TAGS[5] or TAGS[3] end
     if p.burn > 0 then out[#out + 1] = TAGS[4] end
     return out
 end
 
--- Which treatment an inventory item is, or nil.
+-- Which treatment an inventory item is (Med.TREAT_ITEMS), or nil.
 local function treatKind(inst)
     if not inst then return nil end
-    if inst.id == Med.FIRST_AID then return Med.IsMedic(LocalPlayer()) and Med.TREAT_FIRSTAID or nil end
-    if inst.id == Med.MEDKIT then return Med.TREAT_MEDKIT end
+    local k = Med.TREAT_KIND[inst.id]
+    if not k then return nil end
+    if not Med.ANYONE[inst.id] and not Med.IsMedic(LocalPlayer()) then return nil end
+    return k
 end
-Med.TREAT_FIRSTAID, Med.TREAT_MEDKIT = 0, 1
 
 --------------------------------------------------------------------------
 -- The window
@@ -240,6 +243,9 @@ function PANEL:Paint(w, h)
     if t and (medic or me) then
         if Med.BleedLevel(ply) == 2 then lines[#lines + 1] = { "Losing blood fast", TAGS[1].col }
         elseif Med.BleedLevel(ply) == 1 then lines[#lines + 1] = { "Losing blood", TAGS[2].col } end
+        if Med.Painkilled(ply) then
+            lines[#lines + 1] = { string.format("Painkillers: %d s", ply:GetNW2Float("rhylib_painkill", 0) - CurTime()), UI.Colors.good }
+        end
         if Med.BrokenLeg(ply) then lines[#lines + 1] = { "Broken leg: limping, can't sprint", TAGS[3].col }
         elseif Med.NoSprint(ply) then lines[#lines + 1] = { "Hurt leg: can't sprint", COL_HURT } end
         if not Med.CanAim(ply) then lines[#lines + 1] = { "Hurt arm: can't aim, shaky", COL_HURT }
@@ -258,15 +264,22 @@ function PANEL:Paint(w, h)
     end
 
     -- How to treat
-    local hy = h - s(110)
+    local hy = h - s(130)
     draw.SimpleText("TREATMENT", font(12, 700), ex, hy, COL_LABEL, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-    draw.SimpleText("Drag a kit from the right onto a body part.", font(13), ex, hy + s(22), UI.Colors.textDim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+    local help = { { "Drag an item from the right onto a body part.", UI.Colors.textDim } }
     if medic then
-        draw.SimpleText("First aid kit: fixes the part completely (uses charge).", font(13), ex, hy + s(42), UI.Colors.textDim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-        draw.SimpleText("Medkit: stops bleeding, heals health, damage and burns, not bones.", font(13), ex, hy + s(62), UI.Colors.textDim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        local bay = Med.InMedBay(ply) or Med.Skill(LocalPlayer(), "field_surgeon")
+        help[2] = { "First aid kit: fixes the part, uses charge.", UI.Colors.textDim }
+        help[3] = bay and { "Med bay: sets bones and heals burns too.", UI.Colors.good }
+            or { "Away from the med bay: splints, half burns.", COL_BURN }
+        help[4] = { "Medkit: bleeding, health, damage, burns.", UI.Colors.textDim }
     else
-        draw.SimpleText("Medkit: stops the part's bleeding and heals some health.", font(13), ex, hy + s(42), UI.Colors.textDim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-        draw.SimpleText("Bones, burns and deep damage need a medic.", font(13), ex, hy + s(62), UI.Colors.textDim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
+        help[2] = { "Medkit: stops bleeding, some health.", UI.Colors.textDim }
+        help[3] = { "Splint: holds a bone until the med bay.", UI.Colors.textDim }
+        help[4] = { "Burn gel, painkillers, stims: drag on too.", UI.Colors.textDim }
+    end
+    for i, l in ipairs(help) do
+        draw.SimpleText(l[1], font(13), ex, hy + s(2) + i * s(20), l[2], TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
     end
 
     -- Inventory
@@ -296,7 +309,7 @@ function PANEL:Paint(w, h)
             sub = math.ceil((inst.data and inst.data.fill or 1) * 100) .. "% charge"
         end
         if inst.id == Med.FIRST_AID and not usable then sub = "medics only" end
-        if def and def.desc and not usable then sub = "no effect yet" end
+        if def and def.desc and not usable then sub = def.usable and (inst.count and inst.count > 1 and ("x" .. inst.count) or "") or "no effect yet" end
         draw.SimpleText(name, font(14, usable and 600 or 400), lx + s(12), ry + rh * 0.5, usable and UI.Colors.text or UI.Colors.textDim, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
         draw.SimpleText(sub, font(12), lx + lw - s(10), ry + rh * 0.5, UI.Colors.textDim, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
     end
@@ -338,7 +351,7 @@ function PANEL:PaintOver(w, h)
     else
         lines[#lines + 1] = "Damage " .. math.ceil(p.dmg) .. "%"
         if p.bleed == 2 then lines[#lines + 1] = "Heavy bleeding" elseif p.bleed == 1 then lines[#lines + 1] = "Light bleeding" end
-        if p.frac then lines[#lines + 1] = "Fractured" end
+        if p.frac then lines[#lines + 1] = p.splint and "Fracture, splinted" or "Fractured" end
         if p.burn > 0 then lines[#lines + 1] = "Burns " .. math.ceil(p.burn) .. "%" end
     end
     local bw, lh = S(170), S(18)
@@ -373,7 +386,7 @@ function PANEL:OnMouseReleased(code)
     Rhylib.Net.Start("med.treat")
     net.WriteEntity(self:Patient())
     net.WriteUInt(Med.LIMB_INDEX[limb], 3)
-    net.WriteUInt(treatKind(inst), 1)
+    net.WriteUInt(treatKind(inst), 3)
     net.SendToServer()
 end
 

@@ -61,7 +61,7 @@ SWEP.BoltSpeed = 7500
 SWEP.BoltColor = 1
 SWEP.FireSound = "weapons/airboat/airboat_gun_energy2.wav"
 
-SWEP.Mags = { "mag_large", "mag_small" }
+SWEP.Mags = { "mag_large", "mag_medium", "mag_small" }
 SWEP.FireModes = { "auto" }
 SWEP.ReloadTime = 3.2
 

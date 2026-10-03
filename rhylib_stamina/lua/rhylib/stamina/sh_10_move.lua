@@ -55,14 +55,16 @@ Rhylib.Hook.Add("SetupMove", "stamina.move", function(ply, mv)
 
     if sprinting then
         local drain = -cfg("sprintDrain") * (1 + penalty)
+        local K = Rhylib.Skills
+        if K and K.FreeSprint and K.FreeSprint(ply) then drain = 0 end   -- (Momentum)
         if math.abs(rate - drain) > 1e-3 then setLine(ply, st, now, drain) end
     else
         if wantsSprint then
             -- Can't sprint right now: hold the player to walking speed.
             mv:SetMaxClientSpeed(math.min(mv:GetMaxClientSpeed(), ply:GetWalkSpeed()))
         end
-        if rate < 0 then
-            -- Just stopped sprinting: rest a moment, then recover.
+        if rate < 0 or (rate == 0 and ply:GetDTFloat(S.DT_FROM) <= now) then
+            -- Just stopped sprinting (a Momentum sprint has rate 0): rest a moment, then recover.
             setLine(ply, st, now + cfg("regenDelay"), regen)
         elseif math.abs(rate - regen) > 1e-3 then
             -- The load changed: same stamina, new recovery speed (a wait

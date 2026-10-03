@@ -106,7 +106,7 @@ local function applyHit(bolt, tr)
     local group = tr.HitGroup
     if rag then
         group = L.HitGroup(rag, tr.HitPos)
-    elseif group == HITGROUP_GENERIC and ent:IsPlayer() and Rhylib.HitGroupAt then
+    elseif group == HITGROUP_GENERIC and (ent:IsPlayer() or ent:IsNextBot()) and Rhylib.HitGroupAt then
         group = Rhylib.HitGroupAt(ent, tr.HitPos)
     end
 
@@ -119,6 +119,15 @@ local function applyHit(bolt, tr)
 
     local owner = bolt.owner
     local attacker = IsValid(owner) and owner or game.GetWorld()
+
+    -- Skills (rhylib_skills): Point blank, critical hits.
+    local crit = false
+    local K = Rhylib.Skills
+    if K and K.DamageMult and IsValid(owner) and owner:IsPlayer() then
+        local sm
+        sm, crit = K.DamageMult(owner, bolt, ent, tr)
+        mult = mult * sm
+    end
 
     local dmg = DamageInfo()
     dmg:SetDamage(bolt.damage * mult)
@@ -137,7 +146,7 @@ local function applyHit(bolt, tr)
     if ent:IsPlayer() then ent.rhylibHitGroup = nil end
 
     if IsValid(owner) and owner:IsPlayer() and living then
-        local kind = group == HITGROUP_HEAD and Bolts.HIT_HEAD or Bolts.HIT_BODY
+        local kind = (group == HITGROUP_HEAD or crit) and Bolts.HIT_HEAD or Bolts.HIT_BODY
         -- Dropped them: killed, or downed (rhylib_medical).
         if ent:Health() <= 0 or (ent:IsPlayer() and not ent:Alive()) or (ent.rhylibDown and not wasDown) then
             kind = Bolts.HIT_KILL
@@ -246,6 +255,7 @@ function Bolts.Fire(owner, weapon, origin, dir, damage, opts)
         owner = owner,
         weapon = weapon,
         pos = origin,
+        start = Vector(origin),   -- (Point blank measures from here)
         dir = dir,
         speed = speed,
         damage = damage or weapon.Damage,

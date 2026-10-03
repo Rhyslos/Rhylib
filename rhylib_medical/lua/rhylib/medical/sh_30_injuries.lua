@@ -5,7 +5,11 @@
         dmg     0-100   how hurt it is (white -> red in the H menu)
         bleed   0/1/2   none, light, heavy: health lost over time
         frac    bool    fracture (arms and legs)
+        splint  bool    the fracture is splinted (no limp, can aim; still
+                        no sprinting, and only the med bay sets it)
         burn    0-100   burns (explosions, fire)
+    Painkillers (NW2Float rhylib_painkill, until): hurt limbs, a hurt
+    torso and burns don't count for a while; fractures still do.
 
     Effects (worked out here, used by movement, stamina and weapons):
         legs    hurt or broken: no sprinting; broken: slower walk
@@ -62,7 +66,7 @@ Config.Register("medical", "viewRange", 120, "How close you must be to open some
 local function cfg(k) return Config.Get("medical", k) end
 
 -- An empty part, for players we know nothing about.
-local EMPTY = { dmg = 0, bleed = 0, frac = false, burn = 0 }
+local EMPTY = { dmg = 0, bleed = 0, frac = false, splint = false, burn = 0 }
 Med.EMPTY_LIMB = EMPTY
 
 -- The injury table of a player: { [limb] = part }. Server: everyone's.
@@ -80,8 +84,14 @@ end
 
 -- Effects ------------------------------------------------------------
 
+function Med.Painkilled(ply)
+    return ply:GetNW2Float("rhylib_painkill", 0) > CurTime()
+end
+
+local function broken(p) return p.frac and not p.splint end
+
 function Med.NoSprint(ply)
-    local at = cfg("legNoSprintAt")
+    local at = Med.Painkilled(ply) and 1000 or cfg("legNoSprintAt")
     for _, l in ipairs(Med.LEGS) do
         local p = Med.Part(ply, l)
         if p.frac or p.dmg >= at then return true end
@@ -90,14 +100,14 @@ function Med.NoSprint(ply)
 end
 
 function Med.BrokenLeg(ply)
-    return Med.Part(ply, "lleg").frac or Med.Part(ply, "rleg").frac
+    return broken(Med.Part(ply, "lleg")) or broken(Med.Part(ply, "rleg"))
 end
 
 function Med.CanAim(ply)
-    local at = cfg("armNoAimAt")
+    local at = Med.Painkilled(ply) and 1000 or cfg("armNoAimAt")
     for _, l in ipairs(Med.ARMS) do
         local p = Med.Part(ply, l)
-        if p.frac or p.dmg >= at then return false end
+        if broken(p) or p.dmg >= at then return false end
     end
     return true
 end
@@ -106,11 +116,13 @@ end
 function Med.SpreadPenalty(ply, baseCone)
     local t = Med.Injuries(ply)
     if not t then return 0 end
+    local pk = Med.Painkilled(ply)
     local arm = 0
     for _, l in ipairs(Med.ARMS) do
         local p = t[l]
-        if p then arm = math.max(arm, p.frac and 1 or p.dmg / 100) end
+        if p then arm = math.max(arm, broken(p) and 1 or (p.frac and 0.5 or (pk and 0 or p.dmg / 100))) end
     end
+    if pk then return arm * cfg("armSpread") * baseCone end
     local burn = 0
     for _, l in ipairs(Med.LIMBS) do
         local p = t[l]
@@ -121,6 +133,7 @@ end
 
 -- Share of max stamina you can have (torso injuries lower it).
 function Med.StaminaCap(ply)
+    if Med.Painkilled(ply) then return 1 end
     local p = Med.Part(ply, "torso")
     return 1 - math.Clamp(p.dmg / 100, 0, 1) * cfg("torsoStaminaCap")
 end
@@ -153,13 +166,14 @@ Rhylib.Hook.Add("SetupMove", "medical.legs", function(ply, mv)
 end, -90)
 
 -- Wire format ("med.inj", server -> owner and viewers): the patient
--- (entity), then per part dmg 7 bits, bleed 2, fracture 1, burn 7.
+-- (entity), then per part dmg 7 bits, bleed 2, fracture 1, splint 1, burn 7.
 function Med.WriteInjuries(t)
     for _, l in ipairs(Med.LIMBS) do
         local p = t and t[l] or EMPTY
         net.WriteUInt(math.Clamp(math.ceil(p.dmg), 0, 100), 7)
         net.WriteUInt(p.bleed, 2)
         net.WriteBool(p.frac)
+        net.WriteBool(p.splint and true or false)
         net.WriteUInt(math.Clamp(math.ceil(p.burn), 0, 100), 7)
     end
 end
@@ -167,7 +181,7 @@ end
 function Med.ReadInjuries()
     local t = {}
     for _, l in ipairs(Med.LIMBS) do
-        t[l] = { dmg = net.ReadUInt(7), bleed = net.ReadUInt(2), frac = net.ReadBool(), burn = net.ReadUInt(7) }
+        t[l] = { dmg = net.ReadUInt(7), bleed = net.ReadUInt(2), frac = net.ReadBool(), splint = net.ReadBool(), burn = net.ReadUInt(7) }
     end
     return t
 end

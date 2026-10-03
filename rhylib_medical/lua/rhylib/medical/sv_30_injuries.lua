@@ -46,7 +46,7 @@ end
 
 local function newState()
     local t = {}
-    for _, l in ipairs(Med.LIMBS) do t[l] = { dmg = 0, bleed = 0, frac = false, burn = 0, bleedEnd = 0 } end
+    for _, l in ipairs(Med.LIMBS) do t[l] = { dmg = 0, bleed = 0, frac = false, splint = false, burn = 0, bleedEnd = 0 } end
     return t
 end
 
@@ -73,7 +73,7 @@ local function signature(t)
     local s = ""
     for _, l in ipairs(Med.LIMBS) do
         local p = t[l]
-        s = s .. math.ceil(p.dmg) .. "," .. p.bleed .. "," .. (p.frac and 1 or 0) .. "," .. math.ceil(p.burn) .. ";"
+        s = s .. math.ceil(p.dmg) .. "," .. p.bleed .. "," .. (p.frac and (p.splint and 2 or 1) or 0) .. "," .. math.ceil(p.burn) .. ";"
     end
     return s
 end
@@ -107,6 +107,7 @@ Rhylib.Hook.Add("Tick", "medical.injuries.send", function()
 end)
 
 function Med.ClearInjuries(ply)
+    if IsValid(ply) and ply:GetNW2Float("rhylib_painkill", 0) ~= 0 then ply:SetNW2Float("rhylib_painkill", 0) end
     if inj[ply] then
         inj[ply] = nil
         dirty[ply] = true
@@ -129,6 +130,17 @@ local IS_LIMB = { larm = true, rarm = true, lleg = true, rleg = true }
 -- No idea where it hit: a random part, torso most often.
 local RANDOM_LIMB = { "torso", "torso", "torso", "head", "larm", "rarm", "lleg", "rleg" }
 
+-- Can this part break? (rhylib_skills Hard landings: legs never do;
+-- other addons can answer Rhylib.CanFracture(ply, limb) with false.)
+local function canBreak(ply, limb)
+    if limb == "lleg" or limb == "rleg" then
+        local K = Rhylib.Skills
+        if K and K.Has and K.Has(ply, "hard_landings") then return false end
+    end
+    return hook.Run("Rhylib.CanFracture", ply, limb) ~= false
+end
+Med.CanFracture = canBreak
+
 local function hurt(ply, t, limb, amount, canBleed, now)
     local p = t[limb]
     p.dmg = math.min(100, p.dmg + amount)
@@ -140,7 +152,9 @@ local function hurt(ply, t, limb, amount, canBleed, now)
             p.bleedEnd = now + cfg("lightBleedStops")
         end
     end
-    if IS_LIMB[limb] and amount >= cfg("fractureAt") then p.frac = true end
+    if IS_LIMB[limb] and amount >= cfg("fractureAt") and canBreak(ply, limb) then
+        p.frac, p.splint = true, false
+    end
 end
 
 Rhylib.Hook.Add("PostEntityTakeDamage", "medical.injuries", function(ply, dmg, took)
@@ -158,7 +172,10 @@ Rhylib.Hook.Add("PostEntityTakeDamage", "medical.injuries", function(ply, dmg, t
     if bit.band(dtype, DMG_FALL) ~= 0 then
         hurt(ply, t, "lleg", amount * 0.6, false, now)
         hurt(ply, t, "rleg", amount * 0.6, false, now)
-        if amount >= cfg("fallFractureAt") then t[math.random(2) == 1 and "lleg" or "rleg"].frac = true end
+        local leg = math.random(2) == 1 and "lleg" or "rleg"
+        if amount >= cfg("fallFractureAt") and canBreak(ply, leg) then
+            t[leg].frac, t[leg].splint = true, false
+        end
     elseif bit.band(dtype, bit.bor(DMG_BLAST, DMG_BURN, DMG_SLOWBURN, DMG_PLASMA)) ~= 0 then
         for limb, share in pairs(SPREAD) do
             hurt(ply, t, limb, amount * share, false, now)
@@ -279,10 +296,35 @@ end)
 -- Treatment from the H menu
 --------------------------------------------------------------------------
 
-Med.TREAT_FIRSTAID, Med.TREAT_MEDKIT = 0, 1
-
 local function nothingWrong(p)
     return not p or (p.dmg <= 0 and p.bleed == 0 and not p.frac and p.burn <= 0)
+end
+
+-- What's wrong that this item can't help with, or nil if it can.
+-- p: the part (may be nil), hurtHP: missing health.
+local function wontHelp(kit, p, hurtHP, helper, patient)
+    local medic = Med.IsMedic(helper)
+    if kit == Med.MEDKIT then
+        -- Medkits stop bleeding and give health; medics also heal damage and burns.
+        local canBleed = p and p.bleed > 0
+        local canHeal = hurtHP or (medic and p and (p.dmg > 0 or p.burn > 0))
+        if not canBleed and not canHeal then
+            return medic and "A medkit can't set bones; use a first aid kit" or "A medkit can't fix that: find a medic"
+        end
+    elseif kit == Med.SPLINT then
+        if not (p and p.frac) then return "Nothing broken there" end
+        if p.splint then return "Already splinted: the med bay can set it" end
+    elseif kit == Med.BURN_GEL then
+        if not (p and p.burn > 0) then return "No burns there" end
+    elseif kit == Med.BACTA_STIM then
+        if not hurtHP then return (patient and patient:Nick() or "They") .. " is at full health" end
+    elseif kit == Med.FIRST_AID then
+        -- Only a splinted bone left, away from the med bay: nothing to gain.
+        if p and p.splint and not hurtHP and p.dmg <= 0 and p.bleed == 0 and p.burn <= 0
+            and not (Med.InMedBay(patient) or Med.Skill(helper, "field_surgeon")) then
+            return "Already splinted: the med bay can set it"
+        end
+    end
 end
 
 -- The effect of a part treatment, when its timer ends (sv_20_actions.lua).
@@ -293,25 +335,35 @@ function Med.TreatPart(helper, patient, limb, kit)
     local medic = Med.IsMedic(helper)
     -- Nothing left to do by now (healed meanwhile): no kit used.
     local hurtHP = patient:Health() < patient:GetMaxHealth()
-    if nothingWrong(p) and not hurtHP then
+    if nothingWrong(p) and not hurtHP and kit ~= Med.PAINKILLER then
         Med.Note(helper, name .. ": nothing left to treat")
         Med.MarkInjuries(patient)
         return
     end
-    if kit == Med.MEDKIT and p.bleed == 0 and not hurtHP and not (medic and (p.dmg > 0 or p.burn > 0)) then
-        Med.Note(helper, name .. ": nothing left to treat")
+    local why = wontHelp(kit, p, hurtHP, helper, patient)
+    if why then
+        Med.Note(helper, why)
         return
     end
     if kit == Med.FIRST_AID then
-        -- Fixes the part completely; heals some health from the charge.
+        -- Fixes the part; heals some health from the charge. Bones and
+        -- burns only fully in the med bay (or with Field surgeon).
         local want = math.min(cfg("firstAidLimbHealth"), patient:GetMaxHealth() - patient:Health())
         local have = Med.KitCharge(helper)
         local hp = math.max(0, math.min(want, have))
         Med.SpendCharge(helper, math.min(have, math.max(hp, cfg("firstAidMinCost"))))
-        p.dmg, p.bleed, p.frac, p.burn = 0, 0, false, 0
+        local full = Med.InMedBay(patient) or Med.Skill(helper, "field_surgeon")
+        local partial = not full and (p.frac or p.burn > 0)
+        p.dmg, p.bleed = 0, 0
+        if full then
+            p.frac, p.splint, p.burn = false, false, 0
+        else
+            if p.frac then p.splint = true end
+            p.burn = math.floor(p.burn * 0.5)
+        end
         patient:SetHealth(math.min(patient:GetMaxHealth(), patient:Health() + math.floor(hp + 0.5)))
-        Med.Note(helper, name .. " treated")
-    else
+        Med.Note(helper, name .. (partial and " patched up: the med bay can finish it" or " treated"))
+    elseif kit == Med.MEDKIT then
         if not Med.Consume(helper, Med.MEDKIT) then return end
         local bled = p.bleed > 0
         p.bleed = 0
@@ -322,18 +374,33 @@ function Med.TreatPart(helper, patient, limb, kit)
             p.burn = math.max(0, p.burn - r)
         end
         Med.Note(helper, name .. (medic and " patched up" or (bled and ": bleeding stopped" or " bandaged")))
+    else
+        if not Med.Consume(helper, kit) then return end
+        if kit == Med.SPLINT then
+            p.splint = true
+            Med.Note(helper, name .. " splinted")
+        elseif kit == Med.BURN_GEL then
+            p.burn = math.max(0, p.burn - cfg("burnGel"))
+            Med.Note(helper, name .. ": burn gel on")
+        elseif kit == Med.PAINKILLER then
+            patient:SetNW2Float("rhylib_painkill", CurTime() + cfg("painkillerTime"))
+            Med.Note(helper, "Painkillers given")
+        elseif kit == Med.BACTA_STIM then
+            patient:SetHealth(math.min(patient:GetMaxHealth(), patient:Health() + cfg("stimHeal")))
+            Med.Note(helper, "Bacta stim given")
+        end
     end
     hook.Run("Rhylib.PlayerHealed", patient, helper)
     Med.MarkInjuries(patient)
 end
 
--- treater drags a kit onto patient's body part (patient may be treater):
+-- treater drags an item onto patient's body part (patient may be treater):
 -- checks what can be done, then starts a timed treatment.
 Rhylib.Net.Receive("med.treat", function(ply)
     local patient = net.ReadEntity()
     local limb = Med.LIMBS[net.ReadUInt(3)]
-    local kind = net.ReadUInt(1)
-    if not limb or not ply:Alive() or ply.rhylibDown then return end
+    local kit = Med.TREAT_ITEMS[net.ReadUInt(3)]
+    if not limb or not kit or not ply:Alive() or ply.rhylibDown then return end
     if not (IsValid(patient) and patient:IsPlayer() and patient:Alive()) then return end
     if patient ~= ply then
         local r = cfg("viewRange")
@@ -346,22 +413,40 @@ Rhylib.Net.Receive("med.treat", function(ply)
     local t = inj[patient]
     local p = t and t[limb]
     local name = Med.LIMB_NAMES[limb]
-    local medic = Med.IsMedic(ply)
-    local kit = kind == Med.TREAT_FIRSTAID and Med.FIRST_AID or Med.MEDKIT
     -- Missing health can be treated on any part (limbs heal on their own, health doesn't).
     local hurtHP = patient:Health() < patient:GetMaxHealth()
-    if not hurtHP and nothingWrong(p) then
+    if not hurtHP and nothingWrong(p) and kit ~= Med.PAINKILLER then
         Med.Note(ply, name .. ": nothing to treat")
         return
     end
-    if kit == Med.MEDKIT then
-        -- Medkits stop bleeding and give health; medics also heal damage and burns.
-        local canBleed = p and p.bleed > 0
-        local canHeal = hurtHP or (medic and p and (p.dmg > 0 or p.burn > 0))
-        if not canBleed and not canHeal then
-            Med.Note(ply, medic and "A medkit can't set bones; use a first aid kit" or "A medkit can't fix that: find a medic")
-            return
-        end
+    local why = wontHelp(kit, p, hurtHP, ply, patient)
+    if why then
+        Med.Note(ply, why)
+        return
     end
     Med.Start(ply, Med.A_TREAT, patient, { kit = kit, limb = limb })
 end, { rate = 4, burst = 4 })
+
+--------------------------------------------------------------------------
+-- Bacta tank (rhylib_bacta_tank): heals the occupant over time
+--------------------------------------------------------------------------
+
+-- dt seconds in a tank at rate mult. Returns true when nothing is left.
+function Med.TankTick(ply, dt, mult)
+    local heal = cfg("tankHeal") * dt * mult
+    ply:SetHealth(math.min(ply:GetMaxHealth(), ply:Health() + math.max(1, math.floor(heal + 0.5))))
+    local t = inj[ply]
+    if t then
+        local rep = cfg("tankRepair") * dt * mult
+        ply.rhylibTankTime = (ply.rhylibTankTime or 0) + dt * mult
+        for _, l in ipairs(Med.LIMBS) do
+            local p = t[l]
+            p.bleed = 0
+            p.dmg = math.max(0, p.dmg - rep)
+            p.burn = math.max(0, p.burn - rep)
+            if p.frac and ply.rhylibTankTime >= cfg("tankSetBones") then p.frac, p.splint = false, false end
+        end
+        Med.MarkInjuries(ply)
+    end
+    return ply:Health() >= ply:GetMaxHealth() and (not inj[ply] or healthy(inj[ply]))
+end

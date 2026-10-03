@@ -30,6 +30,8 @@ function R.Kick(wep)
     if not cfg then return end
     local m = (wep.GetAiming and wep:GetAiming()) and (cfg.aimMult or 0.65) or 1
     m = m * (Rhylib.Config.Get("weapons", "recoilMult") or 1)
+    local K = Rhylib.Skills
+    if K and K.RecoilMult then m = m * K.RecoilMult(wep:GetOwner(), wep) end   -- (Steady barrels)
     local up = (cfg.up or 0.5) * m * math.Rand(0.85, 1.15)
     local side = (cfg.side or 0.2) * m
     pendP = pendP - up
