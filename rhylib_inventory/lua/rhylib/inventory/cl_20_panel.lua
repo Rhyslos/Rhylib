@@ -1,7 +1,7 @@
 --[[
     Inventory window (client only).
 
-    Press I (rhylib_inventory_key) or run rhylib_inventory to open or close.
+    Press G (rhylib_inventory_key) or run rhylib_inventory to open or close.
     Left to right: your player model (drag to turn it), the Back slot,
     then the main grid with the backpack grid under it while one is worn.
 
@@ -31,7 +31,7 @@ local UI = Rhylib.UI
 
 local MAIN, BACK, SLOT_BACK, EXT, RACK, BELT = Items.MAIN, Items.BACK, Items.SLOT_BACK, Items.EXT, Items.RACK, Items.BELT
 
-local keyVar = CreateClientConVar("rhylib_inventory_key", "i", true, false, "Key that opens the Rhylib inventory")
+local keyVar = CreateClientConVar("rhylib_inventory_key", "g", true, false, "Key that opens the Rhylib inventory")
 local sizeVar = CreateClientConVar("rhylib_inventory_cellsize", "100", true, false, "Inventory cell size in pixels at 1080p (48-128); everything else scales with it. Reopen the inventory to apply.")
 
 -- Same look as the HUD and the chat: dark plates, black outlines, a faint

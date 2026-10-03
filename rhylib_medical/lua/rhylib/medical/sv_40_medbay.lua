@@ -242,7 +242,8 @@ Rhylib.Hook.Add("PlayerDisconnected", "medical.craft", function(ply) crafting[pl
 
 --------------------------------------------------------------------------
 -- Med sofa: lie down (looks only). The lying body (rhylib_core Lying)
--- is laid flat along the sofa, face up, and frozen. E or Jump gets up.
+-- is laid face up along the sofa just above its surface, settles for a
+-- few seconds and is frozen. E or Jump gets up.
 --------------------------------------------------------------------------
 
 local function sofaUp(ply, quiet)
@@ -279,34 +280,44 @@ function Med.SofaUse(sofa, ply)
     if MP and MP.IsCuffed and (MP.IsCuffed(ply) or MP.IsStunned(ply)) then return end
     Med.Cancel(ply)
 
-    -- Long side of the sofa, and the point on top of it.
+    -- Long side of the sofa, and the point on top of it: the surface is
+    -- found with a trace down onto the model (config sofaHeight if it misses).
     local mins, maxs = sofa:OBBMins(), sofa:OBBMaxs()
     local alongX = (maxs.x - mins.x) >= (maxs.y - mins.y)
     local axis = alongX and sofa:GetForward() or sofa:GetRight()
-    local top = sofa:LocalToWorld(Vector((mins.x + maxs.x) * 0.5, (mins.y + maxs.y) * 0.5, mins.z + cfg("sofaHeight")))
+    if cfg("sofaFlip") then axis = -axis end   -- (which end the head goes)
+    local centre = sofa:LocalToWorld(Vector((mins.x + maxs.x) * 0.5, (mins.y + maxs.y) * 0.5, 0))
+    local high = sofa:LocalToWorld(Vector((mins.x + maxs.x) * 0.5, (mins.y + maxs.y) * 0.5, maxs.z + 20))
+    local tr = util.TraceLine({ start = high, endpos = centre + sofa:GetUp() * (mins.z - 4), mask = MASK_SOLID, ignoreworld = true,
+        filter = function(e) return e == sofa end })
+    local top = (tr.Hit and tr.Entity == sofa) and tr.HitPos or sofa:LocalToWorld(Vector((mins.x + maxs.x) * 0.5, (mins.y + maxs.y) * 0.5, mins.z + cfg("sofaHeight")))
 
     L.Begin(ply)
     local rag = L.Ragdoll(ply)
     if not IsValid(rag) then return end
-    -- The standing pose turned flat: the player's up runs along the sofa,
-    -- their front faces the ceiling; feet near one end.
+    -- The standing pose turned flat (front up, head along the sofa), a
+    -- little above the surface, then let go: it settles onto the sofa for
+    -- a few seconds and the Lying code freezes it (rag.rhylibFreezeAt).
     local from = Angle(0, ply:EyeAngles().y, 0)
     local to = Vector(0, 0, 1):AngleEx(axis)
     local origin = ply:GetPos()
     local half = (alongX and (maxs.x - mins.x) or (maxs.y - mins.y)) * 0.5
-    local base = top - axis * math.min(half - 6, 36)
+    local base = top - axis * math.min(half - 6, 36) + Vector(0, 0, cfg("sofaDrop"))
     for i = 0, rag:GetPhysicsObjectCount() - 1 do
         local phys = rag:GetPhysicsObjectNum(i)
         if IsValid(phys) then
             local lp, la = WorldToLocal(phys:GetPos(), phys:GetAngles(), origin, from)
             local wp, wa = LocalToWorld(lp, la, base, to)
+            phys:EnableMotion(true)
             phys:SetPos(wp)
             phys:SetAngles(wa)
             phys:SetVelocity(Vector(0, 0, 0))
-            phys:EnableMotion(false)
+            phys:AddAngleVelocity(-phys:GetAngleVelocity())
+            phys:Wake()
         end
     end
-    rag.rhylibFrozen = true   -- (so a drag, if they go down here, unfreezes it)
+    rag.rhylibFrozen = false
+    rag.rhylibFreezeAt = CurTime() + cfg("sofaSettle")
     ply.rhylibSofa = sofa
     ply.rhylibSofaIn = CurTime()
     sofa.rhylibUser = ply

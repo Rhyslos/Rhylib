@@ -86,6 +86,7 @@ function MP.ShowTerminal(term, cand, jailed)
     local minutes = 5
     local rowM = K.Row(left, "Sentence (minutes)")
     rowM:Dock(TOP)
+    rowM.right:SetWide(s(190))   -- (the default width ran over the title)
     rowM:DockMargin(0, s(10), 0, s(4))
     local sl = K.Slider(rowM.right, 1, MP.Cfg("maxSentence"), 0, function() return minutes end, function(v) minutes = v end)
     sl:Dock(FILL)

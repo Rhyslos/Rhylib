@@ -4,10 +4,9 @@
       Banner   centred near the top for 8 s when a call goes out (or when
                you join while one is up), with a sound and a chat line.
                Drawn after the menus (PostRenderVGUI), so it shows over them.
-      Timer    timed calls only. First person (helmet visor): a tile filling
-               the left cheek between the chat and the chin, its top
-               following the cheek like the hotbar tiles; the top line is
-               the time left. Otherwise: a plate in the top-right corner.
+      Timer    timed calls only: a plate in the top-left corner (the
+               visor's left cheek pocket is the radio's), the top line is
+               the time left.
                Last minute amber; at 0 a short "time's up" banner.
 ]]
 
@@ -191,96 +190,14 @@ local function lineColor(c)
     return GOLD
 end
 
-local quad = { { x = 0, y = 0 }, { x = 0, y = 0 }, { x = 0, y = 0 }, { x = 0, y = 0 } }
-local function trap(x0, t0, x1, t1, yb)
-    quad[1].x, quad[1].y = x0, t0
-    quad[2].x, quad[2].y = x1, t1
-    quad[3].x, quad[3].y = x1, yb
-    quad[4].x, quad[4].y = x0, yb
-    surface.DrawPoly(quad)
-end
 
--- Helmet visor: one tile filling the left cheek between the chat and the
--- chin, its top following the cheek (under the stamina strip), like the
--- hotbar tiles on the right cheek. The top line is the time left.
-local function drawVisorTimer(c, HUD)
-    local W, H = ScrW(), ScrH()
-    local s = H / 1080
-    local _, my = HUD.Margins("ammo")
-    local YB = H - my
-    local Chat = Rhylib.Chat
-    local x0 = math.floor(W * 0.27)
-    if Chat and Chat.Rect then
-        local cx, _, cw = Chat.Rect()
-        x0 = cx + cw + S(10)
-    end
-    local off = math.floor(26 * s)
-    local function top(x) return math.floor(HUD.VisorCheekY(x, -1) + off) end
-    -- As far toward the chin as still leaves room for the two rows.
-    local minH = math.floor(50 * s)
-    local xEnd = math.floor(W * 0.4) - S(4)
-    local step = math.max(2, S(4))
-    local x1 = x0
-    while x1 + step <= xEnd and YB - top(x1 + step) >= minH do x1 = x1 + step end
-    if x1 - x0 < S(110) or YB - top(x0) < minH then return false end
-
-    local steps = 10
-    draw.NoTexture()
-    surface.SetDrawColor(COL_PLATE)
-    local px, pt = x0, top(x0)
-    for i = 1, steps do
-        local nx = math.floor(x0 + (x1 - x0) * i / steps)
-        local nt = top(nx)
-        trap(px, pt, nx, nt, YB)
-        px, pt = nx, nt
-    end
-    -- Outline; the top line is gold for the time left, faint for the rest.
-    surface.SetDrawColor(COL_EDGE)
-    surface.DrawLine(x0, top(x0), x0, YB)
-    surface.DrawLine(x1 - 1, top(x1), x1 - 1, YB)
-    surface.DrawLine(x0, YB - 1, x1, YB - 1)
-    local frac = (c.total and c.total > 0) and math.Clamp(c.left / c.total, 0, 1) or 1
-    local split = x0 + (x1 - x0) * frac
-    local lc = lineColor(c)
-    px, pt = x0, top(x0)
-    for i = 1, steps * 2 do
-        local nx = x0 + (x1 - x0) * i / (steps * 2)
-        local nt = top(nx)
-        surface.SetDrawColor(COL_EDGE)
-        surface.DrawLine(px, pt, nx, nt)
-        if px < split then
-            local ex = math.min(nx, split)
-            local et = pt + (nt - pt) * ((ex - px) / math.max(nx - px, 0.001))
-            surface.SetDrawColor(lc)
-            surface.DrawLine(px, pt + 1, ex, et + 1)
-            surface.DrawLine(px, pt + 2, ex, et + 2)
-        else
-            surface.SetDrawColor(COL_HI2)
-            surface.DrawLine(px + 1, pt + 1, nx - 1, nt + 1)
-        end
-        px, pt = nx, nt
-    end
-
-    -- Title over the time, both from the left; the subtitle at the right
-    -- end of the time row when there's room.
-    local pad = S(10)
-    local w = x1 - x0 - pad * 2
-    local titleFont, timeFont, subFont = UI.Font(12, 700), UI.Font(26, 500), UI.Font(11, 400)
-    local ty = YB - S(16)
-    draw.SimpleText(fit(string.upper(c.title), titleFont, w), titleFont, x0 + pad, YB - S(40), lc, TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-    local tw = draw.SimpleText(clock(c.left), timeFont, x0 + pad, ty, timeColor(c), TEXT_ALIGN_LEFT, TEXT_ALIGN_CENTER)
-    local room = w - tw - S(10)
-    if c.sub ~= "" and room > S(50) then
-        draw.SimpleText(fit(c.sub, subFont, room), subFont, x1 - pad, ty + S(3), COL_LABEL, TEXT_ALIGN_RIGHT, TEXT_ALIGN_CENTER)
-    end
-    return true
-end
-
--- Third person: a plate in the top-right corner, in the same look.
+-- A plate in the top-left corner.
 local function drawCornerTimer(c)
-    local W = ScrW()
+    -- Top left (the killfeed is top right), under the visor's brow.
     local w, h = S(250), S(62)
-    local x, y = W - w - S(24), S(24)
+    local HUD = Rhylib.HUD
+    local visor = HUD and HUD.VisorActive and HUD.VisorActive()
+    local x, y = S(24), visor and math.floor(ScrH() * 0.075) or S(24)
     draw.NoTexture()
     surface.SetDrawColor(COL_PLATE)
     surface.DrawRect(x, y, w, h)
@@ -318,12 +235,8 @@ Rhylib.Hook.Add("HUDPaint", "admin.calls", function()
     if IsValid(wep) and wep:GetClass() == "gmod_camera" then return end
     local c = current()
     if not (c and c.left) then return end
-    local HUD = Rhylib.HUD
-    local drawn = false
-    if HUD and HUD.VisorActive and HUD.VisorActive() and HUD.VisorCheekY and HUD.Margins then
-        drawn = drawVisorTimer(c, HUD)
-    end
-    if not drawn then drawCornerTimer(c) end
+    -- (the left cheek pocket is the radio's now: always the top-right plate)
+    drawCornerTimer(c)
 end)
 
 -- The banner draws over menus too (a call matters even with the menu open).

@@ -2,6 +2,7 @@
     Who is talking: replaces GMod's voice panels (Steam avatar + volume
     meter) with a list on the right side of the screen: the speaker's
     helmet portrait, name and job, in the house style. No volume meter.
+    The stripe is white for local voice, else the radio channel's colour.
 ]]
 
 local UI = Rhylib.UI
@@ -9,7 +10,7 @@ local UI = Rhylib.UI
 local COL_BG = Color(14, 16, 15, 230)
 local COL_EDGE = Color(0, 0, 0, 230)
 local COL_LIGHT = Color(170, 176, 180, 70)
-local COL_TALK = Color(151, 196, 89)
+local COL_LOCAL = Color(233, 237, 239)   -- local voice; radio voices use their channel colour (rhylib_radio)
 local COL_DIM = Color(140, 142, 136)
 
 local FADE = 0.25
@@ -70,7 +71,9 @@ Rhylib.Hook.Add("HUDPaint", "chat.voice", function()
             surface.SetDrawColor(COL_BG.r, COL_BG.g, COL_BG.b, COL_BG.a * a)
             surface.DrawRect(x, yy, w, rowH)
             -- Talking stripe on the left.
-            surface.SetDrawColor(COL_TALK.r, COL_TALK.g, COL_TALK.b, A)
+            local R = Rhylib.Radio
+            local tc0 = R and R.SpeakerColor and R.SpeakerColor(ply) or COL_LOCAL
+            surface.SetDrawColor(tc0.r, tc0.g, tc0.b, A)
             surface.DrawRect(x, yy, math.max(2, math.floor(3 * s)), rowH)
             local pad = math.floor(4 * s)
             local ps = rowH - pad * 2

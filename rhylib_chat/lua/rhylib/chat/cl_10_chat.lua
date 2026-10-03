@@ -222,6 +222,9 @@ function Chat.Rect()
         local bottom = H - my
         local top = math.floor(visorEdgeY(mx))
         local w = math.floor(W * 0.25)
+        -- The radio's squad compass takes the right half (rhylib_radio).
+        local R = Rhylib.Radio
+        if R and R.RadarOn and R.RadarOn() then w = math.floor(W * 0.125) end
         return mx, top, w, bottom - top, true
     end
     local w, h = math.floor(W * 0.22), math.floor(260 * s)
