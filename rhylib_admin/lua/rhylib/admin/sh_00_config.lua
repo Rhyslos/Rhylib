@@ -33,7 +33,7 @@ Config.Register("admin", "ranks", {
                 "noclip", "noclip.self", "god", "cloak", "notarget", "hp", "armor", "give", "spawn",
                 "map", "cleanup", "announce", "setjob", "spectate", "info", "tell", "revive", "heal", "buddha",
                 "scale", "speed", "jump", "model", "playsound", "stopsound", "slap", "ignite", "free",
-                "freezeprops", "cleardecals", "rhylib.chat.event", "rhylib.weapons.infammo" } },
+                "freezeprops", "cleardecals", "call", "rhylib.chat.event", "rhylib.weapons.infammo" } },
     { id = "moderator", name = "Moderator", level = 50, color = Color(90, 170, 240), inherits = { "trialmod" },
       perms = { "ban", "slay", "teleport", "noclip", "god", "cloak", "notarget", "hp", "armor", "bans", "setjob",
                 "jail", "unjail", "revive", "heal", "stopsound", "freezeprops", "cleardecals", "ignite" } },
@@ -47,6 +47,14 @@ Config.Register("admin", "adminLevel", 70, "Level from which ply:IsAdmin() is tr
 Config.Register("admin", "superLevel", 90, "Level from which ply:IsSuperAdmin() is true")
 Config.Register("admin", "banMaxMinutes", 10080, "Longest ban without the permaban permission (minutes; 10080 = 7 days)")
 Config.Register("admin", "echo", true, "Tell everyone about admin actions (kicks, bans, ...); staff always see them")
+Config.Register("admin", "calls", {
+    { id = "briefing", name = "Call to briefing", sub = "All personnel report to the briefing room", minutes = 0 },
+    { id = "debrief", name = "Call to debrief", sub = "All personnel report for debrief", minutes = 0 },
+    { id = "prep", name = "Mission prep", sub = "Grab your gear at the armoury", minutes = 10 },
+    { id = "formup", name = "Form up", sub = "Fall in with your battalion", minutes = 0 },
+}, "!call presets: { id, name, sub, minutes (default timer, 0 = none) }; !call custom <minutes> <text> for anything else")
+Config.Register("admin", "callSound", "ambient/alarms/warningbell1.wav", "Sound when a call goes out")
+Config.Register("admin", "callShowFor", 900, "Seconds an untimed call is still shown to players who join")
 Config.Register("admin", "prefixes", { "!", "/" }, "Chat prefixes for admin commands (!kick ..., /kick ...)")
 
 function Admin.Cfg(k) return Config.Get("admin", k) end

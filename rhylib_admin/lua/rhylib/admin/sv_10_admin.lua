@@ -291,6 +291,13 @@ local function parseArg(kind, word)
         local m = Admin.ParseDuration(word)
         if not m then return nil, "Length like 30m, 2h, 1d, 1w or perm" end
         return m
+    elseif kind == "callmins" then
+        -- Timer minutes; "" / d = the preset's own (-1).
+        local w = string.lower(word or "")
+        if w == "" or w == "d" or w == "default" then return -1 end
+        local n = tonumber(w)
+        if not n or n ~= n or n < 0 or n > 600 then return nil, "Timer in minutes (0 = none)" end
+        return n
     elseif kind == "onoff" then
         local w = string.lower(word or "")
         if w == "on" or w == "1" or w == "yes" or w == "true" then return true end
@@ -402,8 +409,15 @@ function Admin.Exec(caller, id, words)
         else
             word = words[i]
             i = i + 1
+            -- Optional (opt = true): a word that doesn't fit is left for the next argument.
+            if a.opt and word ~= nil and word ~= "" and parseArg(kind, word) == nil then
+                word = nil
+                i = start
+            end
         end
-        if (word == nil or word == "") and (kind ~= "text" or a.need) then
+        if (word == nil or word == "") and a.opt then
+            word = ""
+        elseif (word == nil or word == "") and (kind ~= "text" or a.need) then
             -- Ask for this one and the rest; keep what was typed before it,
             -- with the target pinned to who it found (not "@" or a name part).
             local given = {}

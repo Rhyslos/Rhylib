@@ -7,12 +7,13 @@
               "opt"     an online player, or nobody when left out
               "id"      an online player or any SteamID / SteamID64
               nil       no target
-      args: { { key, label, kind, need = true } } in order (need: a text
-            argument that is asked for when left out); kinds:
+      args: { { key, label, kind, need = true, opt = true } } in order
+            (need: a text argument asked for when left out; opt: may be
+            left out, and a word that doesn't fit goes to the next one); kinds:
               text (the rest of the line), word, number, duration ("30m",
               "2h", "1d", "1w", "perm"), rank, rosterrank, battalion,
               qual, onoff, map (picker), class, job, minutes, scale, mult,
-              model, sound
+              model, sound, call (a preset id), callmins
       mass: true = "*" targets everyone you outrank (not you).
     Chat: !id target args  (or /id); quotes for names with spaces.
     Targets: name (or part of it), SteamID, SteamID64, ^ = you, @ = the
@@ -82,6 +83,10 @@ Admin.COMMANDS = {
     { id = "model", name = "Model", cat = "Events", mass = true, target = "self", args = { { "model", "Model path, or reset", "model" } }, aliases = { "setmodel" } },
     { id = "playsound", name = "Play sound", cat = "Events", args = { { "sound", "Sound path", "sound" } }, aliases = { "sound" }, desc = "Everyone hears it" },
     { id = "stopsound", name = "Stop sounds", cat = "Events", args = {}, desc = "Stops every sound for everyone" },
+    { id = "call", name = "Call (briefing, prep...)", cat = "Events",
+      args = { { "preset", "Call", "call" }, { "minutes", "Timer", "callmins", opt = true }, { "text", "Message (optional)", "text" } },
+      desc = "A banner for everyone (and anyone joining); timed calls show a countdown" },
+    { id = "endcall", name = "End call", cat = "Events", perm = "call", args = {}, aliases = { "callend" }, desc = "Takes the banner and countdown away" },
 
     -- Ranks
     { id = "rank", name = "Set staff rank", cat = "Ranks", target = "id", args = { { "rank", "Rank", "rank" } }, desc = "Below your own rank only" },

@@ -105,6 +105,17 @@ local function choices(kind)
     elseif kind == "scale" then
         return { { "0.5", "Small (0.5)" }, { "0.75", "Short (0.75)" }, { "1", "Normal" }, { "1.25", "Tall (1.25)" },
             { "1.5", "Big (1.5)" }, { "2", "Giant (2)" }, { "?", "Other..." } }
+    elseif kind == "call" then
+        local out = {}
+        for _, c in ipairs(Admin.Cfg("calls") or {}) do
+            local m = tonumber(c.minutes) or 0
+            out[#out + 1] = { c.id, (c.name or c.id) .. (m > 0 and (" (" .. m .. " min)") or "") }
+        end
+        out[#out + 1] = { "custom", "Custom text..." }
+        return out
+    elseif kind == "callmins" then
+        return { { "d", "Preset's own timer" }, { "0", "No timer" }, { "5", "5 minutes" }, { "10", "10 minutes" },
+            { "15", "15 minutes" }, { "20", "20 minutes" }, { "30", "30 minutes" }, { "?", "Other..." } }
     elseif kind == "mult" then
         return { { "0.5", "Half" }, { "1", "Normal" }, { "1.5", "x1.5" }, { "2", "Double" }, { "3", "Triple" }, { "?", "Other..." } }
     end
@@ -114,7 +125,7 @@ local HINT = {
     number = "A number", text = "", word = "", class = "Weapon class, e.g. rhylib_dc15a",
     map = "Map name, e.g. rp_venator", duration = "30m, 2h, 1d, 1w or perm", minutes = "Minutes",
     scale = "1 = normal", mult = "1 = normal", model = "models/....mdl, or reset",
-    sound = "e.g. ambient/alarms/klaxon1.wav",
+    sound = "e.g. ambient/alarms/klaxon1.wav", callmins = "Minutes, 0 = no timer",
 }
 
 -- Pickers opened from chat need the mouse; it's freed while any is open.
